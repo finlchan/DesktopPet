@@ -36,3 +36,5 @@ Notes
 --------
 - config.json is created automatically on first run.
 - Keep DesktopPet.exe, config.json, and paypal_qr.jpg in the same directory.
+- Contact: chanpofaihk@gmail.com
+- Support me via PayPal: scan the QR code below. 
