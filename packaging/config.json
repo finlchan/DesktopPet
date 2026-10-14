@@ -1,0 +1,26 @@
+{
+  "pet": {
+    "image_path": "",
+    "image_folder": "",
+    "auto_change": false,
+    "change_interval_sec": 5,
+    "switch_mode": "Loop",
+    "size": 120,
+    "opacity": 0.9,
+    "pos_x": 100,
+    "pos_y": 100
+  },
+  "window": {
+    "mode": "normal",
+    "stay_on_top": false,
+    "stay_on_bottom": false,
+    "normal": true
+  },
+  "shortcuts": [],
+  "document_area": {
+    "title": "Document record",
+    "folder": "",
+    "sort_by": "mtime",
+    "files": {}
+  }
+}

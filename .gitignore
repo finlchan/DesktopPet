@@ -1,0 +1,9 @@
+.venv/
+build/
+dist/
+__pycache__/
+*.pyc
+config.json
+!packaging/config.json
+DesktopPet.exe
+Data/
