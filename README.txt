@@ -28,13 +28,28 @@ Settings
    the app will automatically list all files in the folder.
 4. System: set window level (Normal / Always on top / Always on bottom).
 
+Download
+--------
+A ready-to-run build is on GitHub Releases. You do not need to build the EXE.
+
+https://github.com/finlchan/DesktopPet/releases
+
+Download these files and keep them in the same folder:
+
+- DesktopPet.exe
+- config.json
+- How to use.jpg
+
+Then start DesktopPet.exe.
+
 Build EXE
 --------
+Only needed if you want to build from source.
 Double-click build.bat to generate the executable at dist\DesktopPet.exe.
 
 Notes
 --------
-- config.json is created automatically on first run.
-- Keep DesktopPet.exe, config.json, and paypal_qr.jpg in the same directory.
+- config.json is created automatically on first run if it is missing.
+- Keep DesktopPet.exe and config.json in the same folder.
 - Contact: chanpofaihk@gmail.com
 - Support me via PayPal: scan the QR code below. 
