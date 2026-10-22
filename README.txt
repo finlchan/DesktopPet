@@ -24,8 +24,9 @@ Settings
 --------
 1. Pet Image: choose a single image or an image folder for automatic rotation.
 2. Folder shortcuts: set "Item name", "Item path", and "Description".
-3. Document record: set the "Title" and "Data storage folder";
-   the app will automatically list all files in the folder.
+3. Document record: set the "Title" and one or more "Data storage folders"
+   (click 「新增」 to add additional folders);
+   the app will automatically list all files in those folders.
 4. System: set window level (Normal / Always on top / Always on bottom).
 
 Download
@@ -78,7 +79,7 @@ Notes
 設定說明
 圖片 (Pet Image)：可選擇單張圖片，或指定圖片資料夾進行自動輪播。
 資料夾快捷方式 (Folder shortcuts)：可設定「項目名稱 (Item name)」、「項目路徑 (Item path)」及「描述 (Description)」。
-文檔記錄 (Document record)：設定「標題 (Title)」與「資料儲存資料夾 (Data storage folder)」；應用程式將自動列出該資料夾內的所有檔案。
+文檔記錄 (Document record)：設定「標題 (Title)」與一個或多個「資料儲存資料夾 (Data storage folders)」（按「新增」可加入更多資料夾）；應用程式將自動列出這些資料夾內的所有檔案。
 系統設定 (System)：設定視窗層級（一般 / 置頂 / 置底）。
 
 下載說明

@@ -20,6 +20,7 @@
   "document_area": {
     "title": "Document record",
     "folder": "",
+    "folders": [],
     "sort_by": "mtime",
     "files": {}
   }
