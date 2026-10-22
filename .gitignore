@@ -1,9 +1,38 @@
+# Virtual env / build junk
 .venv/
+venv/
 build/
 dist/
 __pycache__/
 *.pyc
+*.pyo
+*.spec
+
+# Local runtime / single-instance lock
+DesktopPet.lock
+
+# NEVER commit or ship the user's live config / save data / personal media.
+# Only packaging/config.json (blank template) is tracked.
 config.json
 !packaging/config.json
-DesktopPet.exe
 Data/
+data/
+save/
+saves/
+userdata/
+user_data/
+
+# Common local folders where pet images / private pics may sit
+pet_images/
+user_images/
+pics/
+private/
+personal/
+
+# Release staging folder (built by build.bat) — rebuild from packaging template only
+上載版/
+upload/
+release_upload/
+
+# Built binary at repo root
+DesktopPet.exe

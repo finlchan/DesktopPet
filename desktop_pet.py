@@ -40,6 +40,9 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
+# App / release version (YYMMDD.NN). Shown in Settings → About.
+APP_VERSION = "261022.01"
+
 
 # ---------------------------------------------------------------------------
 # Default settings (blank; safe to ship to other people)
@@ -65,7 +68,10 @@ DEFAULT_CONFIG = {
     "shortcuts": [],
     "document_area": {
         "title": "Document record",
+        # "folder" kept for backward compatibility with older builds.
         "folder": "",
+        # Primary list of storage folders (supports more than one).
+        "folders": [],
         "sort_by": "mtime",
         "files": {}
     }
@@ -96,6 +102,69 @@ def apply_window_mode(window, mode):
     window["normal"] = mode == "normal"
     window["stay_on_top"] = mode == "top"
     window["stay_on_bottom"] = mode == "bottom"
+
+
+def normalize_document_folders(doc):
+    """Ensure document_area has a folders list; migrate legacy single folder."""
+    if not isinstance(doc, dict):
+        return []
+
+    folders = doc.get("folders")
+    if not isinstance(folders, list):
+        folders = []
+
+    cleaned = []
+    seen = set()
+    for item in folders:
+        if not isinstance(item, str):
+            continue
+        path = item.strip()
+        if path and path not in seen:
+            seen.add(path)
+            cleaned.append(path)
+
+    legacy = doc.get("folder")
+    if isinstance(legacy, str):
+        legacy = legacy.strip()
+    else:
+        legacy = ""
+
+    # Old configs only had document_area.folder — promote it into folders.
+    if legacy and legacy not in seen:
+        if not cleaned:
+            cleaned = [legacy]
+            seen.add(legacy)
+        else:
+            # Prefer existing folders list; still keep legacy as folder sync below.
+            pass
+
+    doc["folders"] = cleaned
+    # Keep single folder field in sync (first entry) so older builds still work.
+    doc["folder"] = cleaned[0] if cleaned else ""
+    return cleaned
+
+
+def menu_button_style(base_color, hover_factor=0.72):
+    """Button style with a visibly darker hover state."""
+    hover = darken_color(base_color, hover_factor)
+    return (
+        f"QPushButton {{ background-color: {base_color}; }}"
+        f"QPushButton:hover {{ background-color: {hover}; }}"
+    )
+
+
+def darken_color(color, factor=0.72):
+    """Darken a #RRGGBB color for hover feedback."""
+    text = (color or "").strip().lstrip("#")
+    if len(text) != 6:
+        return "rgba(0, 0, 0, 100)"
+    try:
+        r = int(int(text[0:2], 16) * factor)
+        g = int(int(text[2:4], 16) * factor)
+        b = int(int(text[4:6], 16) * factor)
+        return f"#{r:02x}{g:02x}{b:02x}"
+    except ValueError:
+        return "rgba(0, 0, 0, 100)"
 
 
 def screen_available_geometry(widget):
@@ -131,6 +200,7 @@ class ConfigManager:
         apply_window_mode(self.config.setdefault("window", {}), mode)
         doc = self.config.setdefault("document_area", {})
         doc["sort_by"] = normalize_sort(doc.get("sort_by"))
+        normalize_document_folders(doc)
 
     def save(self):
         try:
@@ -283,10 +353,24 @@ class SettingsDialog(QDialog):
         self.tabs.addTab(shortcut_tab, "Shortcuts")
 
         doc_tab = QWidget()
-        doc_layout = QFormLayout(doc_tab)
+        doc_layout = QVBoxLayout(doc_tab)
 
+        doc_form = QFormLayout()
         self.doc_title_edit = QLineEdit()
-        doc_layout.addRow("Document Record Title:", self.doc_title_edit)
+        doc_form.addRow("Document Record Title:", self.doc_title_edit)
+
+        self.doc_sort_by = QComboBox()
+        for code, label in SORT_LABELS.items():
+            self.doc_sort_by.addItem(label, code)
+        doc_form.addRow("Sort by:", self.doc_sort_by)
+        doc_layout.addLayout(doc_form)
+
+        doc_folder_label = QLabel("Data Storage Folders:")
+        doc_layout.addWidget(doc_folder_label)
+
+        self.doc_folder_list = QListWidget()
+        self.doc_folder_list.setMinimumHeight(100)
+        doc_layout.addWidget(self.doc_folder_list)
 
         self.doc_folder_edit = QLineEdit()
         self.btn_doc_browse = QPushButton("Browse")
@@ -294,19 +378,29 @@ class SettingsDialog(QDialog):
         h_doc = QHBoxLayout()
         h_doc.addWidget(self.doc_folder_edit)
         h_doc.addWidget(self.btn_doc_browse)
-        doc_layout.addRow("Data Storage Folder:", h_doc)
+        doc_layout.addLayout(h_doc)
 
-        self.doc_sort_by = QComboBox()
-        for code, label in SORT_LABELS.items():
-            self.doc_sort_by.addItem(label, code)
-        doc_layout.addRow("Sort by:", self.doc_sort_by)
+        doc_btn_layout = QHBoxLayout()
+        self.btn_doc_add = QPushButton("新增")
+        self.btn_doc_update = QPushButton("Update")
+        self.btn_doc_delete = QPushButton("Delete")
+        self.btn_doc_add.clicked.connect(self.add_doc_folder)
+        self.btn_doc_update.clicked.connect(self.update_doc_folder)
+        self.btn_doc_delete.clicked.connect(self.delete_doc_folder)
+        doc_btn_layout.addWidget(self.btn_doc_add)
+        doc_btn_layout.addWidget(self.btn_doc_update)
+        doc_btn_layout.addWidget(self.btn_doc_delete)
+        doc_layout.addLayout(doc_btn_layout)
+        self.doc_folder_list.currentRowChanged.connect(self.load_doc_folder_to_form)
 
         info = QLabel(
-            "Files in this folder will be listed automatically. "
+            "Files in these folders will be listed automatically. "
+            "Click 「新增」 to add more storage folder locations. "
             "You can add Time, Comment, Publisher, and Version for each file."
         )
         info.setWordWrap(True)
-        doc_layout.addRow(info)
+        doc_layout.addWidget(info)
+        doc_layout.addStretch()
 
         self.tabs.addTab(doc_tab, "Document Record")
 
@@ -359,7 +453,11 @@ class SettingsDialog(QDialog):
             self.shortcut_list.addItem(item)
 
         self.doc_title_edit.setText(self.cfg.get("document_area", "title") or "Document record")
-        self.doc_folder_edit.setText(self.cfg.get("document_area", "folder") or "")
+        self.doc_folder_list.clear()
+        self.doc_folder_edit.clear()
+        folders = normalize_document_folders(self.cfg.get("document_area") or {})
+        for folder in folders:
+            self.doc_folder_list.addItem(folder)
         sort_code = normalize_sort(self.cfg.get("document_area", "sort_by"))
         sort_index = self.doc_sort_by.findData(sort_code)
         self.doc_sort_by.setCurrentIndex(sort_index if sort_index >= 0 else 0)
@@ -390,7 +488,7 @@ class SettingsDialog(QDialog):
         <html>
         <body style="font-family: Microsoft JhengHei, Segoe UI, sans-serif; font-size: 13px;">
         <h2>Desktop Pet</h2>
-        <p><b>Version:</b> 261013.01</p>
+        <p><b>Version:</b> {html.escape(APP_VERSION)}</p>
         <p><b>Developer:</b> pf.chan</p>
         <hr>
         <pre style="white-space: pre-wrap; font-family: Microsoft JhengHei, Segoe UI, sans-serif;">{html.escape(readme_content)}</pre>
@@ -434,6 +532,49 @@ class SettingsDialog(QDialog):
         folder = QFileDialog.getExistingDirectory(self, "Select Data Storage Folder")
         if folder:
             self.doc_folder_edit.setText(folder)
+
+    def load_doc_folder_to_form(self, row):
+        if row < 0:
+            return
+        item = self.doc_folder_list.item(row)
+        if item:
+            self.doc_folder_edit.setText(item.text())
+
+    def add_doc_folder(self):
+        folder = self.doc_folder_edit.text().strip()
+        if not folder:
+            folder_pick = QFileDialog.getExistingDirectory(self, "Select Data Storage Folder")
+            if not folder_pick:
+                return
+            folder = folder_pick
+            self.doc_folder_edit.setText(folder)
+        existing = {
+            self.doc_folder_list.item(i).text()
+            for i in range(self.doc_folder_list.count())
+        }
+        if folder in existing:
+            QMessageBox.information(self, "Already added", "This folder is already in the list.")
+            return
+        self.doc_folder_list.addItem(folder)
+        self.doc_folder_list.setCurrentRow(self.doc_folder_list.count() - 1)
+
+    def update_doc_folder(self):
+        row = self.doc_folder_list.currentRow()
+        if row < 0:
+            return
+        folder = self.doc_folder_edit.text().strip()
+        if not folder:
+            return
+        for i in range(self.doc_folder_list.count()):
+            if i != row and self.doc_folder_list.item(i).text() == folder:
+                QMessageBox.information(self, "Already added", "This folder is already in the list.")
+                return
+        self.doc_folder_list.item(row).setText(folder)
+
+    def delete_doc_folder(self):
+        row = self.doc_folder_list.currentRow()
+        if row >= 0:
+            self.doc_folder_list.takeItem(row)
 
     def load_shortcut_to_form(self, row):
         if row < 0:
@@ -511,7 +652,16 @@ class SettingsDialog(QDialog):
             self.doc_title_edit.text().strip() or "Document record",
             save=False
         )
-        self.cfg.set(["document_area", "folder"], self.doc_folder_edit.text().strip(), save=False)
+        folders = []
+        seen = set()
+        for i in range(self.doc_folder_list.count()):
+            path = self.doc_folder_list.item(i).text().strip()
+            if path and path not in seen:
+                seen.add(path)
+                folders.append(path)
+        # Persist folders list; keep legacy "folder" synced to the first entry.
+        self.cfg.set(["document_area", "folders"], folders, save=False)
+        self.cfg.set(["document_area", "folder"], folders[0] if folders else "", save=False)
         self.cfg.set(["document_area", "sort_by"], self.doc_sort_by.currentData() or "mtime", save=False)
 
         mode = self.window_mode.currentData() or "normal"
@@ -580,7 +730,7 @@ MENU_STYLE = """
         text-align: left;
     }
     QPushButton:hover {
-        background-color: rgba(255,255,255,40);
+        background-color: rgba(0, 0, 0, 90);
     }
     QLabel {
         color: white;
@@ -621,8 +771,8 @@ class DocumentSubMenu(PopupPanel):
     def __init__(self, config_manager):
         super().__init__()
         self.cfg = config_manager
+        # Each entry is (folder_path, filename)
         self.files = []
-        self.folder = ""
         self.files_meta = {}
         self.current_page = 0
         self.items_per_page = 20
@@ -663,43 +813,57 @@ class DocumentSubMenu(PopupPanel):
         """)
 
     def button_style(self, base_color):
-        return f"QPushButton {{ background-color: {base_color}; }}"
+        return menu_button_style(base_color)
 
     def refresh_and_show(self, anchor_geometry):
         self.files = []
-        self.folder = self.cfg.get("document_area", "folder") or ""
         self.files_meta = dict(self.cfg.get("document_area", "files") or {})
         self.title_label.setText(self.cfg.get("document_area", "title") or "Document record")
 
-        if self.folder and Path(self.folder).exists():
-            try:
-                folder_path = Path(self.folder)
-                all_files = [p.name for p in folder_path.iterdir() if p.is_file()]
-                sort_by = normalize_sort(self.cfg.get("document_area", "sort_by"))
+        folders = normalize_document_folders(self.cfg.get("document_area") or {})
+        entries = []
+        seen_names = set()
+        try:
+            for folder in folders:
+                folder_path = Path(folder)
+                if not folder_path.exists():
+                    continue
+                for path in folder_path.iterdir():
+                    if path.is_file():
+                        entries.append((str(folder_path), path.name))
+                        seen_names.add(path.name)
 
-                if sort_by == "name":
-                    all_files.sort(key=lambda x: x.lower())
-                elif sort_by == "edit_time":
-                    all_files.sort(
-                        key=lambda x: self.files_meta.get(x, {}).get("time", ""),
-                        reverse=True
-                    )
-                elif sort_by == "publisher":
-                    all_files.sort(
-                        key=lambda x: self.files_meta.get(x, {}).get("publisher", "").lower()
-                    )
-                else:
-                    all_files.sort(key=lambda x: (folder_path / x).stat().st_mtime, reverse=True)
+            sort_by = normalize_sort(self.cfg.get("document_area", "sort_by"))
 
-                stale = [name for name in self.files_meta if name not in set(all_files)]
-                if stale:
-                    for name in stale:
-                        del self.files_meta[name]
-                    self.cfg.set(["document_area", "files"], self.files_meta)
+            def entry_mtime(item):
+                try:
+                    return (Path(item[0]) / item[1]).stat().st_mtime
+                except OSError:
+                    return 0
 
-                self.files = all_files
-            except Exception:
-                self.files = []
+            if sort_by == "name":
+                entries.sort(key=lambda x: x[1].lower())
+            elif sort_by == "edit_time":
+                entries.sort(
+                    key=lambda x: self.files_meta.get(x[1], {}).get("time", ""),
+                    reverse=True
+                )
+            elif sort_by == "publisher":
+                entries.sort(
+                    key=lambda x: self.files_meta.get(x[1], {}).get("publisher", "").lower()
+                )
+            else:
+                entries.sort(key=entry_mtime, reverse=True)
+
+            stale = [name for name in self.files_meta if name not in seen_names]
+            if stale:
+                for name in stale:
+                    del self.files_meta[name]
+                self.cfg.set(["document_area", "files"], self.files_meta)
+
+            self.files = entries
+        except Exception:
+            self.files = []
 
         screen_height = screen_available_geometry(self).height()
         self.items_per_page = max(5, int((screen_height / 2) / 22))
@@ -742,23 +906,26 @@ class DocumentSubMenu(PopupPanel):
         start = self.current_page * self.items_per_page
         end = min(start + self.items_per_page, len(self.files))
 
-        for fname in self.files[start:end]:
-            fpath = os.path.join(self.folder, fname)
+        for folder, fname in self.files[start:end]:
+            fpath = os.path.join(folder, fname)
             meta = self.files_meta.get(fname, {})
-            info_parts = []
-            if meta.get("time"):
-                info_parts.append(meta["time"])
-            if meta.get("version"):
-                info_parts.append(f"v{meta['version']}")
-            display = fname
-            if info_parts:
-                display += f"  [{', '.join(info_parts)}]"
+            comment = " ".join((meta.get("comment") or "").split())
+            if comment:
+                display = f"{fname}  —  {comment}"
+            else:
+                display = fname
             btn = QPushButton(display)
-            btn.setToolTip(
-                f"Click to open file\n{fname}\n"
-                f"Comment: {meta.get('comment', '')}\n"
-                f"Publisher: {meta.get('publisher', '')}"
-            )
+            tip_parts = [
+                "Click to open file",
+                fpath,
+                f"Comment: {meta.get('comment', '')}",
+                f"Publisher: {meta.get('publisher', '')}",
+            ]
+            if meta.get("time"):
+                tip_parts.append(f"Time: {meta['time']}")
+            if meta.get("version"):
+                tip_parts.append(f"Version: {meta['version']}")
+            btn.setToolTip("\n".join(tip_parts))
             btn.setStyleSheet(self.button_style("#5c4a72"))
             btn.clicked.connect(lambda checked=False, p=fpath: self.open_path(p))
             btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -857,7 +1024,9 @@ class PetMenu(PopupPanel):
         self.doc_title.setStyleSheet("color: white; font-weight: bold;")
         self.btn_doc_open = QPushButton(">>")
         self.btn_doc_open.setFixedWidth(30)
-        self.btn_doc_open.setStyleSheet("text-align: center; background-color: #4a4a4a;")
+        self.btn_doc_open.setStyleSheet(
+            "text-align: center;" + menu_button_style("#4a4a4a")
+        )
         self.btn_doc_open.clicked.connect(self.open_document_submenu)
         doc_header.addWidget(self.doc_title)
         doc_header.addStretch()
@@ -879,7 +1048,7 @@ class PetMenu(PopupPanel):
         """)
 
     def button_style(self, base_color):
-        return f"QPushButton {{ background-color: {base_color}; }}"
+        return menu_button_style(base_color)
 
     def refresh(self):
         while self.shortcuts_container.count():
