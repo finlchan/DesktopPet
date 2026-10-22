@@ -1,6 +1,9 @@
 Desktop Pet
 ==================
 
+Version: 261022.01
+Published: 2026-10-22
+
 A floating shortcut menu and document record gadget on the Windows desktop.
 
 Features
@@ -28,6 +31,14 @@ Settings
    (click 「新增」 to add additional folders);
    the app will automatically list all files in those folders.
 4. System: set window level (Normal / Always on top / Always on bottom).
+
+What's new in 261022.01 (2026-10-22)
+--------
+1. Document record: multiple storage folders, with 「新增」 in Settings to add more.
+2. Document list shows filename and comment.
+3. Hover state on options (slightly darker).
+4. build.bat fixed for Windows cmd; shareable output goes to upload\.
+5. Packaging ignores personal config / save / pics (blank template only).
 
 Download
 --------
@@ -60,6 +71,9 @@ Notes
 
 --------------------------------------------------------------------------------
 
+版本：261022.01
+發布日期：2026-10-22
+
 一款位於 Windows 桌面上的浮動快捷選單與文檔記錄小工具。
 
 功能特點
@@ -83,6 +97,13 @@ Notes
 資料夾快捷方式 (Folder shortcuts)：可設定「項目名稱 (Item name)」、「項目路徑 (Item path)」及「描述 (Description)」。
 文檔記錄 (Document record)：設定「標題 (Title)」與一個或多個「資料儲存資料夾 (Data storage folders)」（按「新增」可加入更多資料夾）；應用程式將自動列出這些資料夾內的所有檔案。
 系統設定 (System)：設定視窗層級（一般 / 置頂 / 置底）。
+
+261022.01 更新內容（2026-10-22）
+1. 文檔記錄：支援多個儲存資料夾，設定中可按「新增」加入更多資料夾。
+2. 列表同時顯示檔名與備註 (comment)。
+3. 選項加入滑鼠懸停狀態（略為變深）。
+4. 修正 build.bat 在 Windows cmd 下執行；輸出資料夾為 upload\。
+5. 包裝流程忽略個人 config / 存檔 / 圖片（僅附空白模板）。
 
 下載說明
 GitHub Releases 已提供免安裝、可直接執行的版本，您無需自行編譯 EXE 檔案：
