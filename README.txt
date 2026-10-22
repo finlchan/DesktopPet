@@ -46,7 +46,9 @@ Then start DesktopPet.exe.
 Build EXE
 --------
 Only needed if you want to build from source.
-Double-click build.bat to generate the executable at dist\DesktopPet.exe.
+Double-click build.bat to generate the shareable folder upload\
+(DesktopPet.exe, blank packaging config.json, How to use.jpg).
+Do not copy your personal config.json, save data, or pet pictures into uploads.
 
 Notes
 --------
@@ -93,7 +95,9 @@ How to use.jpg
 
 編譯 EXE 檔案
 僅在您希望從原始碼自行建置時才需要操作。
-雙擊執行 build.bat，即可在 dist\DesktopPet.exe 生成執行檔。
+雙擊執行 build.bat，即可在 upload\ 資料夾產生可分享內容
+（DesktopPet.exe、空白包裝用 config.json、How to use.jpg）。
+請勿把個人 config.json、存檔或寵物圖片放入上載內容。
 注意事項
 若初次執行時缺少 config.json，系統將自動建立該檔案。
 請務必將 DesktopPet.exe 與 config.json 保持在同一資料夾下。
