@@ -41,7 +41,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261022.01"
+APP_VERSION = "261023.01"
 
 
 # ---------------------------------------------------------------------------
@@ -65,7 +65,10 @@ DEFAULT_CONFIG = {
         "stay_on_bottom": False,
         "normal": True
     },
+    # Folder shortcuts (name / path / description). Kept for older configs.
     "shortcuts": [],
+    # File shortcuts — same shape as folder shortcuts, but targeting files.
+    "file_shortcuts": [],
     "document_area": {
         "title": "Document record",
         # "folder" kept for backward compatibility with older builds.
@@ -174,6 +177,21 @@ def screen_available_geometry(widget):
     if screen is None:
         screen = QApplication.primaryScreen()
     return screen.availableGeometry()
+
+
+def open_local_path(path):
+    """Open a folder or file with the platform default handler."""
+    target = Path(path)
+    if not target.exists():
+        raise FileNotFoundError(path)
+    if sys.platform.startswith("win"):
+        os.startfile(str(target))  # type: ignore[attr-defined]
+    elif sys.platform == "darwin":
+        import subprocess
+        subprocess.Popen(["open", str(target)])
+    else:
+        import subprocess
+        subprocess.Popen(["xdg-open", str(target)])
 
 
 class ConfigManager:
@@ -309,6 +327,7 @@ class SettingsDialog(QDialog):
 
         self.tabs.addTab(pet_tab, "Pet Image")
 
+        # --- Folder shortcuts (existing config key: "shortcuts") ---
         shortcut_tab = QWidget()
         shortcut_layout = QVBoxLayout(shortcut_tab)
 
@@ -321,13 +340,13 @@ class SettingsDialog(QDialog):
         self.sc_name = QLineEdit()
         self.sc_path = QLineEdit()
         self.btn_sc_browse = QPushButton("Browse")
-        self.btn_sc_browse.clicked.connect(self.browse_shortcut_path)
+        self.btn_sc_browse.clicked.connect(self.browse_shortcut_folder)
         h_sc = QHBoxLayout()
         h_sc.addWidget(self.sc_path)
         h_sc.addWidget(self.btn_sc_browse)
         self.sc_desc = QLineEdit()
         sc_form.addRow("Item Name:", self.sc_name)
-        sc_form.addRow("Item Path:", h_sc)
+        sc_form.addRow("Folder Path:", h_sc)
         sc_form.addRow("Description:", self.sc_desc)
         shortcut_layout.addLayout(sc_form)
 
@@ -350,7 +369,51 @@ class SettingsDialog(QDialog):
         shortcut_layout.addLayout(btn_layout)
 
         self.shortcut_list.currentRowChanged.connect(self.load_shortcut_to_form)
-        self.tabs.addTab(shortcut_tab, "Shortcuts")
+        self.tabs.addTab(shortcut_tab, "Folder Shortcuts")
+
+        # --- File shortcuts (config key: "file_shortcuts") ---
+        file_sc_tab = QWidget()
+        file_sc_layout = QVBoxLayout(file_sc_tab)
+
+        self.file_shortcut_list = QListWidget()
+        self.file_shortcut_list.setMaximumHeight(180)
+        file_sc_layout.addWidget(QLabel("Item list (Name | Path | Description):"))
+        file_sc_layout.addWidget(self.file_shortcut_list)
+
+        fsc_form = QFormLayout()
+        self.fsc_name = QLineEdit()
+        self.fsc_path = QLineEdit()
+        self.btn_fsc_browse = QPushButton("Browse")
+        self.btn_fsc_browse.clicked.connect(self.browse_file_shortcut)
+        h_fsc = QHBoxLayout()
+        h_fsc.addWidget(self.fsc_path)
+        h_fsc.addWidget(self.btn_fsc_browse)
+        self.fsc_desc = QLineEdit()
+        fsc_form.addRow("Item Name:", self.fsc_name)
+        fsc_form.addRow("File Path:", h_fsc)
+        fsc_form.addRow("Description:", self.fsc_desc)
+        file_sc_layout.addLayout(fsc_form)
+
+        fsc_btn_layout = QHBoxLayout()
+        self.btn_add_fsc = QPushButton("Add")
+        self.btn_update_fsc = QPushButton("Update")
+        self.btn_delete_fsc = QPushButton("Delete")
+        self.btn_move_up_fsc = QPushButton("Move Up")
+        self.btn_move_down_fsc = QPushButton("Move Down")
+        self.btn_add_fsc.clicked.connect(self.add_file_shortcut)
+        self.btn_update_fsc.clicked.connect(self.update_file_shortcut)
+        self.btn_delete_fsc.clicked.connect(self.delete_file_shortcut)
+        self.btn_move_up_fsc.clicked.connect(self.move_up_file_shortcut)
+        self.btn_move_down_fsc.clicked.connect(self.move_down_file_shortcut)
+        fsc_btn_layout.addWidget(self.btn_add_fsc)
+        fsc_btn_layout.addWidget(self.btn_update_fsc)
+        fsc_btn_layout.addWidget(self.btn_delete_fsc)
+        fsc_btn_layout.addWidget(self.btn_move_up_fsc)
+        fsc_btn_layout.addWidget(self.btn_move_down_fsc)
+        file_sc_layout.addLayout(fsc_btn_layout)
+
+        self.file_shortcut_list.currentRowChanged.connect(self.load_file_shortcut_to_form)
+        self.tabs.addTab(file_sc_tab, "File Shortcuts")
 
         doc_tab = QWidget()
         doc_layout = QVBoxLayout(doc_tab)
@@ -381,7 +444,7 @@ class SettingsDialog(QDialog):
         doc_layout.addLayout(h_doc)
 
         doc_btn_layout = QHBoxLayout()
-        self.btn_doc_add = QPushButton("新增")
+        self.btn_doc_add = QPushButton("Add")
         self.btn_doc_update = QPushButton("Update")
         self.btn_doc_delete = QPushButton("Delete")
         self.btn_doc_add.clicked.connect(self.add_doc_folder)
@@ -395,7 +458,7 @@ class SettingsDialog(QDialog):
 
         info = QLabel(
             "Files in these folders will be listed automatically. "
-            "Click 「新增」 to add more storage folder locations. "
+            "Click Add to add more storage folder locations. "
             "You can add Time, Comment, Publisher, and Version for each file."
         )
         info.setWordWrap(True)
@@ -451,6 +514,15 @@ class SettingsDialog(QDialog):
             item = QListWidgetItem(f"{name} | {path} | {desc}")
             item.setData(Qt.ItemDataRole.UserRole, sc)
             self.shortcut_list.addItem(item)
+
+        self.file_shortcut_list.clear()
+        for sc in self.cfg.get("file_shortcuts") or []:
+            name = sc.get("name", "")
+            path = sc.get("path", "")
+            desc = sc.get("description", "")
+            item = QListWidgetItem(f"{name} | {path} | {desc}")
+            item.setData(Qt.ItemDataRole.UserRole, sc)
+            self.file_shortcut_list.addItem(item)
 
         self.doc_title_edit.setText(self.cfg.get("document_area", "title") or "Document record")
         self.doc_folder_list.clear()
@@ -512,21 +584,15 @@ class SettingsDialog(QDialog):
             self.image_folder_edit.setText(folder)
             self.auto_change_check.setChecked(True)
 
-    def browse_shortcut_path(self):
-        menu = QMenu(self)
-        menu.addAction("Folder", self._browse_shortcut_folder)
-        menu.addAction("File", self._browse_shortcut_file)
-        menu.exec(self.btn_sc_browse.mapToGlobal(self.btn_sc_browse.rect().bottomLeft()))
-
-    def _browse_shortcut_folder(self):
-        folder = QFileDialog.getExistingDirectory(self, "Select Item Folder")
+    def browse_shortcut_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, "Select Folder")
         if folder:
             self.sc_path.setText(folder)
 
-    def _browse_shortcut_file(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Select Item File")
+    def browse_file_shortcut(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Select File")
         if path:
-            self.sc_path.setText(path)
+            self.fsc_path.setText(path)
 
     def browse_doc_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Data Storage Folder")
@@ -632,6 +698,61 @@ class SettingsDialog(QDialog):
         self.shortcut_list.insertItem(row + 1, item)
         self.shortcut_list.setCurrentItem(item)
 
+    def _file_shortcut_from_form(self):
+        return {
+            "name": self.fsc_name.text().strip() or "Unnamed",
+            "path": self.fsc_path.text().strip(),
+            "description": self.fsc_desc.text().strip(),
+        }
+
+    def load_file_shortcut_to_form(self, row):
+        if row < 0:
+            return
+        item = self.file_shortcut_list.item(row)
+        if not item:
+            return
+        data = item.data(Qt.ItemDataRole.UserRole) or {}
+        self.fsc_name.setText(data.get("name", ""))
+        self.fsc_path.setText(data.get("path", ""))
+        self.fsc_desc.setText(data.get("description", ""))
+
+    def add_file_shortcut(self):
+        sc = self._file_shortcut_from_form()
+        item = QListWidgetItem(f"{sc['name']} | {sc['path']} | {sc['description']}")
+        item.setData(Qt.ItemDataRole.UserRole, sc)
+        self.file_shortcut_list.addItem(item)
+        self.file_shortcut_list.setCurrentItem(item)
+
+    def update_file_shortcut(self):
+        row = self.file_shortcut_list.currentRow()
+        if row < 0:
+            return
+        item = self.file_shortcut_list.item(row)
+        sc = self._file_shortcut_from_form()
+        item.setText(f"{sc['name']} | {sc['path']} | {sc['description']}")
+        item.setData(Qt.ItemDataRole.UserRole, sc)
+
+    def delete_file_shortcut(self):
+        row = self.file_shortcut_list.currentRow()
+        if row >= 0:
+            self.file_shortcut_list.takeItem(row)
+
+    def move_up_file_shortcut(self):
+        row = self.file_shortcut_list.currentRow()
+        if row <= 0:
+            return
+        item = self.file_shortcut_list.takeItem(row)
+        self.file_shortcut_list.insertItem(row - 1, item)
+        self.file_shortcut_list.setCurrentItem(item)
+
+    def move_down_file_shortcut(self):
+        row = self.file_shortcut_list.currentRow()
+        if row < 0 or row >= self.file_shortcut_list.count() - 1:
+            return
+        item = self.file_shortcut_list.takeItem(row)
+        self.file_shortcut_list.insertItem(row + 1, item)
+        self.file_shortcut_list.setCurrentItem(item)
+
     def save_settings(self):
         self.cfg.set(["pet", "image_path"], self.image_path_edit.text().strip(), save=False)
         self.cfg.set(["pet", "image_folder"], self.image_folder_edit.text().strip(), save=False)
@@ -646,6 +767,12 @@ class SettingsDialog(QDialog):
             item = self.shortcut_list.item(i)
             shortcuts.append(item.data(Qt.ItemDataRole.UserRole))
         self.cfg.set(["shortcuts"], shortcuts, save=False)
+
+        file_shortcuts = []
+        for i in range(self.file_shortcut_list.count()):
+            item = self.file_shortcut_list.item(i)
+            file_shortcuts.append(item.data(Qt.ItemDataRole.UserRole))
+        self.cfg.set(["file_shortcuts"], file_shortcuts, save=False)
 
         self.cfg.set(
             ["document_area", "title"],
@@ -951,10 +1078,9 @@ class DocumentSubMenu(PopupPanel):
 
     def open_path(self, path):
         try:
-            if Path(path).exists():
-                os.startfile(path)
-            else:
-                QMessageBox.warning(self, "Path does not exist", f"Not found:\n{path}")
+            open_local_path(path)
+        except FileNotFoundError:
+            QMessageBox.warning(self, "Path does not exist", f"Not found:\n{path}")
         except Exception as e:
             QMessageBox.warning(self, "Open failed", str(e))
 
@@ -977,6 +1103,96 @@ class DocumentSubMenu(PopupPanel):
 
 
 # ---------------------------------------------------------------------------
+# File shortcuts submenu (opened via >> like Document record)
+# ---------------------------------------------------------------------------
+class FileShortcutsSubMenu(PopupPanel):
+    """Submenu listing file shortcuts; opened from the main pet menu >> control."""
+
+    open_shortcut = Signal(str)
+
+    def __init__(self, config_manager):
+        super().__init__()
+        self.cfg = config_manager
+        self.build_ui()
+
+    def build_ui(self):
+        top_layout = QVBoxLayout(self)
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.setSpacing(0)
+
+        self.container = QFrame(self)
+        self.container.setObjectName("subMenuContainer")
+        top_layout.addWidget(self.container)
+
+        self.main_layout = QVBoxLayout(self.container)
+        self.main_layout.setContentsMargins(8, 8, 8, 8)
+        self.main_layout.setSpacing(4)
+
+        self.title_label = QLabel("File shortcuts")
+        self.title_label.setStyleSheet("color: white; font-weight: bold;")
+        self.main_layout.addWidget(self.title_label)
+
+        sep = QLabel()
+        sep.setFixedHeight(1)
+        sep.setStyleSheet("background-color: rgba(255,255,255,120);")
+        self.main_layout.addWidget(sep)
+
+        self.items_container = QVBoxLayout()
+        self.items_container.setSpacing(2)
+        self.main_layout.addLayout(self.items_container)
+
+        self.setStyleSheet(MENU_STYLE + """
+            FileShortcutsSubMenu { background-color: transparent; }
+        """)
+
+    def button_style(self, base_color):
+        return menu_button_style(base_color)
+
+    def refresh_and_show(self, anchor_geometry):
+        while self.items_container.count():
+            item = self.items_container.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        shortcuts = self.cfg.get("file_shortcuts") or []
+        if not shortcuts:
+            lbl = QLabel("(No file shortcuts)")
+            lbl.setStyleSheet("color: #dddddd;")
+            self.items_container.addWidget(lbl)
+        else:
+            for sc in shortcuts:
+                name = sc.get("name", "Unnamed")
+                path = sc.get("path", "")
+                desc = sc.get("description", "")
+                text = name
+                if desc:
+                    text += f" ({desc})"
+                btn = QPushButton(text)
+                btn.setToolTip(path)
+                btn.setStyleSheet(self.button_style("#2a6f6f"))
+                btn.clicked.connect(lambda checked=False, p=path: self.open_shortcut.emit(p))
+                self.items_container.addWidget(btn)
+
+        self.adjustSize()
+        screen_geo = screen_available_geometry(self)
+        x = anchor_geometry.x() + anchor_geometry.width()
+        y = anchor_geometry.y()
+        if x + self.width() > screen_geo.right():
+            x = anchor_geometry.x() - self.width()
+        if y + self.height() > screen_geo.bottom():
+            y = screen_geo.bottom() - self.height()
+        self.move(max(screen_geo.left(), x), max(screen_geo.top(), y))
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _hide_if_inactive(self):
+        if self._suppress_hide or self.isActiveWindow():
+            return
+        self.hide()
+
+
+# ---------------------------------------------------------------------------
 # Main menu (semi-transparent popup)
 # ---------------------------------------------------------------------------
 class PetMenu(PopupPanel):
@@ -990,6 +1206,7 @@ class PetMenu(PopupPanel):
         super().__init__()
         self.cfg = config_manager
         self.doc_submenu = None
+        self.file_shortcuts_submenu = None
         self.build_ui()
 
     def build_ui(self):
@@ -1012,6 +1229,27 @@ class PetMenu(PopupPanel):
         self.shortcuts_container = QVBoxLayout()
         self.shortcuts_container.setSpacing(3)
         self.main_layout.addLayout(self.shortcuts_container)
+
+        sep0 = QLabel()
+        sep0.setFixedHeight(1)
+        sep0.setStyleSheet("background-color: rgba(255,255,255,120);")
+        self.main_layout.addWidget(sep0)
+
+        # File shortcuts: collapsed header + >> (same pattern as Document record)
+        file_sc_header = QHBoxLayout()
+        file_sc_header.setSpacing(4)
+        self.file_shortcuts_title = QLabel("File shortcuts")
+        self.file_shortcuts_title.setStyleSheet("color: white; font-weight: bold;")
+        self.btn_file_sc_open = QPushButton(">>")
+        self.btn_file_sc_open.setFixedWidth(30)
+        self.btn_file_sc_open.setStyleSheet(
+            "text-align: center;" + menu_button_style("#4a4a4a")
+        )
+        self.btn_file_sc_open.clicked.connect(self.open_file_shortcuts_submenu)
+        file_sc_header.addWidget(self.file_shortcuts_title)
+        file_sc_header.addStretch()
+        file_sc_header.addWidget(self.btn_file_sc_open)
+        self.main_layout.addLayout(file_sc_header)
 
         sep1 = QLabel()
         sep1.setFixedHeight(1)
@@ -1050,40 +1288,61 @@ class PetMenu(PopupPanel):
     def button_style(self, base_color):
         return menu_button_style(base_color)
 
-    def refresh(self):
-        while self.shortcuts_container.count():
-            item = self.shortcuts_container.takeAt(0)
+    def _fill_shortcut_buttons(self, container, shortcuts, empty_hint, color):
+        while container.count():
+            item = container.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
-        shortcuts = self.cfg.get("shortcuts") or []
         if not shortcuts:
-            btn = QPushButton("-Please add a target in Settings-")
+            btn = QPushButton(empty_hint)
             btn.setEnabled(False)
             btn.setStyleSheet("color: #dddddd; background-color: transparent;")
-            self.shortcuts_container.addWidget(btn)
-        else:
-            for sc in shortcuts:
-                name = sc.get("name", "Unnamed")
-                path = sc.get("path", "")
-                desc = sc.get("description", "")
-                text = name
-                if desc:
-                    text += f" ({desc})"
-                btn = QPushButton(text)
-                btn.setToolTip(path)
-                btn.setStyleSheet(self.button_style("#3d5a80"))
-                btn.clicked.connect(lambda checked=False, p=path: self.open_shortcut.emit(p))
-                self.shortcuts_container.addWidget(btn)
+            container.addWidget(btn)
+            return
+
+        for sc in shortcuts:
+            name = sc.get("name", "Unnamed")
+            path = sc.get("path", "")
+            desc = sc.get("description", "")
+            text = name
+            if desc:
+                text += f" ({desc})"
+            btn = QPushButton(text)
+            btn.setToolTip(path)
+            btn.setStyleSheet(self.button_style(color))
+            btn.clicked.connect(lambda checked=False, p=path: self.open_shortcut.emit(p))
+            container.addWidget(btn)
+
+    def refresh(self):
+        self._fill_shortcut_buttons(
+            self.shortcuts_container,
+            self.cfg.get("shortcuts") or [],
+            "-Please add a folder in Settings-",
+            "#3d5a80",
+        )
 
         title = self.cfg.get("document_area", "title") or "Document record"
         self.doc_title.setText(title)
         self.adjustSize()
 
+    def open_file_shortcuts_submenu(self):
+        if self.file_shortcuts_submenu is None:
+            self.file_shortcuts_submenu = FileShortcutsSubMenu(self.cfg)
+            self.file_shortcuts_submenu.open_shortcut.connect(self.open_shortcut.emit)
+        # Hide the other submenu so only one flyout is open at a time.
+        if self.doc_submenu is not None and self.doc_submenu.isVisible():
+            self.doc_submenu.hide()
+        self._suppress_hide = True
+        self.file_shortcuts_submenu.refresh_and_show(self.geometry())
+        QTimer.singleShot(300, self._release_suppress)
+
     def open_document_submenu(self):
         if self.doc_submenu is None:
             self.doc_submenu = DocumentSubMenu(self.cfg)
             self.doc_submenu.open_file_meta.connect(self.open_file_meta.emit)
+        if self.file_shortcuts_submenu is not None and self.file_shortcuts_submenu.isVisible():
+            self.file_shortcuts_submenu.hide()
         self._suppress_hide = True
         self.doc_submenu.refresh_and_show(self.geometry())
         QTimer.singleShot(300, self._release_suppress)
@@ -1094,6 +1353,8 @@ class PetMenu(PopupPanel):
     def hideEvent(self, event):
         if self.doc_submenu is not None:
             self.doc_submenu.hide()
+        if self.file_shortcuts_submenu is not None:
+            self.file_shortcuts_submenu.hide()
         super().hideEvent(event)
 
     def _hide_if_inactive(self):
@@ -1103,8 +1364,13 @@ class PetMenu(PopupPanel):
             self.doc_submenu.isVisible() or self.doc_submenu.isActiveWindow()
         ):
             return
+        if self.file_shortcuts_submenu is not None and (
+            self.file_shortcuts_submenu.isVisible()
+            or self.file_shortcuts_submenu.isActiveWindow()
+        ):
+            return
         active = QApplication.activeWindow()
-        if isinstance(active, (QMenu, DocumentSubMenu)):
+        if isinstance(active, (QMenu, DocumentSubMenu, FileShortcutsSubMenu)):
             return
         self.hide()
 
@@ -1359,10 +1625,9 @@ class PetWindow(QWidget):
 
     def open_shortcut(self, path):
         try:
-            if Path(path).exists():
-                os.startfile(path)
-            else:
-                QMessageBox.warning(self, "Path does not exist", f"Not found:\n{path}")
+            open_local_path(path)
+        except FileNotFoundError:
+            QMessageBox.warning(self, "Path does not exist", f"Not found:\n{path}")
         except Exception as e:
             QMessageBox.warning(self, "Open failed", str(e))
 
