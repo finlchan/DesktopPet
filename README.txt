@@ -11,7 +11,7 @@ Features
 1. Displays a small icon on the desktop (custom image or auto-rotating image set).
 2. Click the icon to open a semi-transparent menu.
 3. The top of the menu shows "Folder shortcuts" for opening local folders.
-4. Below that, "File shortcuts" opens specific files (each with a name and description).
+4. Below that, "File shortcuts"; click ">>" to open the submenu and open specific files (each with a name and description).
 5. The middle section shows "Document record"; click the ">>" button to open the submenu and browse files.
 6. The bottom has a "Settings" button to edit all configurations.
 7. Window level can be set to Normal, Always on top, or Always on bottom.
@@ -36,7 +36,7 @@ Settings
 
 What's new in 261023.01 (2026-10-23)
 --------
-1. File shortcuts: Settings tab + pet menu section for named file links with descriptions.
+1. File shortcuts: Settings tab + pet menu section (header + >> submenu, like Document record).
 2. Document record Settings: 「新增」 button label changed to English "Add".
 3. Config adds "file_shortcuts" (existing "shortcuts" folder list unchanged).
 
@@ -90,7 +90,7 @@ Notes
 桌面小圖示：在桌面上顯示一個小圖示（可自訂單張圖片或設定圖片資料夾自動輪播）。
 半透明選單：點擊圖示即可開啟半透明快捷選單。
 資料夾快捷方式：選單頂部顯示「資料夾快捷方式」，方便快速開啟本地資料夾。
-檔案快捷方式：其下顯示「檔案快捷方式」，可開啟指定檔案（含名稱與描述）。
+檔案快捷方式：其下顯示「檔案快捷方式」，點擊「>>」開啟子選單以開啟指定檔案（含名稱與描述）。
 文檔記錄：選單中部顯示「文檔記錄」，點擊「>>」按鈕可開啟子選單並瀏覽檔案。
 設定選項：選單底部設有「設定」按鈕，可編輯所有配置參數。
 視窗層級：視窗層級可設定為「一般 (Normal)」、「置頂 (Always on top)」或「置底 (Always on bottom)」。
@@ -110,7 +110,7 @@ Notes
 系統設定 (System)：設定視窗層級（一般 / 置頂 / 置底）。
 
 261023.01 更新內容（2026-10-23）
-1. 新增檔案快捷方式：設定分頁與選單區塊，可為檔案加上名稱與描述。
+1. 新增檔案快捷方式：設定分頁與選單標題列＋「>>」子選單（與文檔記錄相同交互）。
 2. 文檔記錄設定中「新增」按鈕改為英文「Add」。
 3. 設定檔新增 "file_shortcuts"（既有 "shortcuts" 資料夾清單維持不變）。
 

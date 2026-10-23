@@ -1078,10 +1078,9 @@ class DocumentSubMenu(PopupPanel):
 
     def open_path(self, path):
         try:
-            if Path(path).exists():
-                os.startfile(path)
-            else:
-                QMessageBox.warning(self, "Path does not exist", f"Not found:\n{path}")
+            open_local_path(path)
+        except FileNotFoundError:
+            QMessageBox.warning(self, "Path does not exist", f"Not found:\n{path}")
         except Exception as e:
             QMessageBox.warning(self, "Open failed", str(e))
 
@@ -1104,6 +1103,96 @@ class DocumentSubMenu(PopupPanel):
 
 
 # ---------------------------------------------------------------------------
+# File shortcuts submenu (opened via >> like Document record)
+# ---------------------------------------------------------------------------
+class FileShortcutsSubMenu(PopupPanel):
+    """Submenu listing file shortcuts; opened from the main pet menu >> control."""
+
+    open_shortcut = Signal(str)
+
+    def __init__(self, config_manager):
+        super().__init__()
+        self.cfg = config_manager
+        self.build_ui()
+
+    def build_ui(self):
+        top_layout = QVBoxLayout(self)
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.setSpacing(0)
+
+        self.container = QFrame(self)
+        self.container.setObjectName("subMenuContainer")
+        top_layout.addWidget(self.container)
+
+        self.main_layout = QVBoxLayout(self.container)
+        self.main_layout.setContentsMargins(8, 8, 8, 8)
+        self.main_layout.setSpacing(4)
+
+        self.title_label = QLabel("File shortcuts")
+        self.title_label.setStyleSheet("color: white; font-weight: bold;")
+        self.main_layout.addWidget(self.title_label)
+
+        sep = QLabel()
+        sep.setFixedHeight(1)
+        sep.setStyleSheet("background-color: rgba(255,255,255,120);")
+        self.main_layout.addWidget(sep)
+
+        self.items_container = QVBoxLayout()
+        self.items_container.setSpacing(2)
+        self.main_layout.addLayout(self.items_container)
+
+        self.setStyleSheet(MENU_STYLE + """
+            FileShortcutsSubMenu { background-color: transparent; }
+        """)
+
+    def button_style(self, base_color):
+        return menu_button_style(base_color)
+
+    def refresh_and_show(self, anchor_geometry):
+        while self.items_container.count():
+            item = self.items_container.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        shortcuts = self.cfg.get("file_shortcuts") or []
+        if not shortcuts:
+            lbl = QLabel("(No file shortcuts)")
+            lbl.setStyleSheet("color: #dddddd;")
+            self.items_container.addWidget(lbl)
+        else:
+            for sc in shortcuts:
+                name = sc.get("name", "Unnamed")
+                path = sc.get("path", "")
+                desc = sc.get("description", "")
+                text = name
+                if desc:
+                    text += f" ({desc})"
+                btn = QPushButton(text)
+                btn.setToolTip(path)
+                btn.setStyleSheet(self.button_style("#2a6f6f"))
+                btn.clicked.connect(lambda checked=False, p=path: self.open_shortcut.emit(p))
+                self.items_container.addWidget(btn)
+
+        self.adjustSize()
+        screen_geo = screen_available_geometry(self)
+        x = anchor_geometry.x() + anchor_geometry.width()
+        y = anchor_geometry.y()
+        if x + self.width() > screen_geo.right():
+            x = anchor_geometry.x() - self.width()
+        if y + self.height() > screen_geo.bottom():
+            y = screen_geo.bottom() - self.height()
+        self.move(max(screen_geo.left(), x), max(screen_geo.top(), y))
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _hide_if_inactive(self):
+        if self._suppress_hide or self.isActiveWindow():
+            return
+        self.hide()
+
+
+# ---------------------------------------------------------------------------
 # Main menu (semi-transparent popup)
 # ---------------------------------------------------------------------------
 class PetMenu(PopupPanel):
@@ -1117,6 +1206,7 @@ class PetMenu(PopupPanel):
         super().__init__()
         self.cfg = config_manager
         self.doc_submenu = None
+        self.file_shortcuts_submenu = None
         self.build_ui()
 
     def build_ui(self):
@@ -1145,13 +1235,21 @@ class PetMenu(PopupPanel):
         sep0.setStyleSheet("background-color: rgba(255,255,255,120);")
         self.main_layout.addWidget(sep0)
 
+        # File shortcuts: collapsed header + >> (same pattern as Document record)
+        file_sc_header = QHBoxLayout()
+        file_sc_header.setSpacing(4)
         self.file_shortcuts_title = QLabel("File shortcuts")
         self.file_shortcuts_title.setStyleSheet("color: white; font-weight: bold;")
-        self.main_layout.addWidget(self.file_shortcuts_title)
-
-        self.file_shortcuts_container = QVBoxLayout()
-        self.file_shortcuts_container.setSpacing(3)
-        self.main_layout.addLayout(self.file_shortcuts_container)
+        self.btn_file_sc_open = QPushButton(">>")
+        self.btn_file_sc_open.setFixedWidth(30)
+        self.btn_file_sc_open.setStyleSheet(
+            "text-align: center;" + menu_button_style("#4a4a4a")
+        )
+        self.btn_file_sc_open.clicked.connect(self.open_file_shortcuts_submenu)
+        file_sc_header.addWidget(self.file_shortcuts_title)
+        file_sc_header.addStretch()
+        file_sc_header.addWidget(self.btn_file_sc_open)
+        self.main_layout.addLayout(file_sc_header)
 
         sep1 = QLabel()
         sep1.setFixedHeight(1)
@@ -1223,21 +1321,28 @@ class PetMenu(PopupPanel):
             "-Please add a folder in Settings-",
             "#3d5a80",
         )
-        self._fill_shortcut_buttons(
-            self.file_shortcuts_container,
-            self.cfg.get("file_shortcuts") or [],
-            "-Please add a file in Settings-",
-            "#2a6f6f",
-        )
 
         title = self.cfg.get("document_area", "title") or "Document record"
         self.doc_title.setText(title)
         self.adjustSize()
 
+    def open_file_shortcuts_submenu(self):
+        if self.file_shortcuts_submenu is None:
+            self.file_shortcuts_submenu = FileShortcutsSubMenu(self.cfg)
+            self.file_shortcuts_submenu.open_shortcut.connect(self.open_shortcut.emit)
+        # Hide the other submenu so only one flyout is open at a time.
+        if self.doc_submenu is not None and self.doc_submenu.isVisible():
+            self.doc_submenu.hide()
+        self._suppress_hide = True
+        self.file_shortcuts_submenu.refresh_and_show(self.geometry())
+        QTimer.singleShot(300, self._release_suppress)
+
     def open_document_submenu(self):
         if self.doc_submenu is None:
             self.doc_submenu = DocumentSubMenu(self.cfg)
             self.doc_submenu.open_file_meta.connect(self.open_file_meta.emit)
+        if self.file_shortcuts_submenu is not None and self.file_shortcuts_submenu.isVisible():
+            self.file_shortcuts_submenu.hide()
         self._suppress_hide = True
         self.doc_submenu.refresh_and_show(self.geometry())
         QTimer.singleShot(300, self._release_suppress)
@@ -1248,6 +1353,8 @@ class PetMenu(PopupPanel):
     def hideEvent(self, event):
         if self.doc_submenu is not None:
             self.doc_submenu.hide()
+        if self.file_shortcuts_submenu is not None:
+            self.file_shortcuts_submenu.hide()
         super().hideEvent(event)
 
     def _hide_if_inactive(self):
@@ -1257,8 +1364,13 @@ class PetMenu(PopupPanel):
             self.doc_submenu.isVisible() or self.doc_submenu.isActiveWindow()
         ):
             return
+        if self.file_shortcuts_submenu is not None and (
+            self.file_shortcuts_submenu.isVisible()
+            or self.file_shortcuts_submenu.isActiveWindow()
+        ):
+            return
         active = QApplication.activeWindow()
-        if isinstance(active, (QMenu, DocumentSubMenu)):
+        if isinstance(active, (QMenu, DocumentSubMenu, FileShortcutsSubMenu)):
             return
         self.hide()
 
