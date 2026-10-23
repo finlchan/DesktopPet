@@ -1,8 +1,8 @@
 Desktop Pet
 ==================
 
-Version: 261022.01
-Published: 2026-10-22
+Version: 261023.01
+Published: 2026-10-23
 
 A floating shortcut menu and document record gadget on the Windows desktop.
 
@@ -11,9 +11,10 @@ Features
 1. Displays a small icon on the desktop (custom image or auto-rotating image set).
 2. Click the icon to open a semi-transparent menu.
 3. The top of the menu shows "Folder shortcuts" for opening local folders.
-4. The middle section shows "Document record"; click the ">>" button to open the submenu and browse files.
-5. The bottom has a "Settings" button to edit all configurations.
-6. Window level can be set to Normal, Always on top, or Always on bottom.
+4. Below that, "File shortcuts" opens specific files (each with a name and description).
+5. The middle section shows "Document record"; click the ">>" button to open the submenu and browse files.
+6. The bottom has a "Settings" button to edit all configurations.
+7. Window level can be set to Normal, Always on top, or Always on bottom.
 
 Quick Usage
 --------
@@ -26,15 +27,22 @@ Quick Usage
 Settings
 --------
 1. Pet Image: choose a single image or an image folder for automatic rotation.
-2. Folder shortcuts: set "Item name", "Item path", and "Description".
-3. Document record: set the "Title" and one or more "Data storage folders"
-   (click 「新增」 to add additional folders);
+2. Folder shortcuts: set "Item name", "Folder path", and "Description".
+3. File shortcuts: set "Item name", "File path", and "Description" (Browse picks a file).
+4. Document record: set the "Title" and one or more "Data storage folders"
+   (click Add to add additional folders);
    the app will automatically list all files in those folders.
-4. System: set window level (Normal / Always on top / Always on bottom).
+5. System: set window level (Normal / Always on top / Always on bottom).
+
+What's new in 261023.01 (2026-10-23)
+--------
+1. File shortcuts: Settings tab + pet menu section for named file links with descriptions.
+2. Document record Settings: 「新增」 button label changed to English "Add".
+3. Config adds "file_shortcuts" (existing "shortcuts" folder list unchanged).
 
 What's new in 261022.01 (2026-10-22)
 --------
-1. Document record: multiple storage folders, with 「新增」 in Settings to add more.
+1. Document record: multiple storage folders, with Add in Settings to add more.
 2. Document list shows filename and comment.
 3. Hover state on options (slightly darker).
 4. build.bat fixed for Windows cmd; shareable output goes to upload\.
@@ -71,16 +79,18 @@ Notes
 
 --------------------------------------------------------------------------------
 
-版本：261022.01
-發布日期：2026-10-22
+版本：261023.01
+發布日期：2026-10-23
 
 一款位於 Windows 桌面上的浮動快捷選單與文檔記錄小工具。
 
 功能特點
 
+
 桌面小圖示：在桌面上顯示一個小圖示（可自訂單張圖片或設定圖片資料夾自動輪播）。
 半透明選單：點擊圖示即可開啟半透明快捷選單。
 資料夾快捷方式：選單頂部顯示「資料夾快捷方式」，方便快速開啟本地資料夾。
+檔案快捷方式：其下顯示「檔案快捷方式」，可開啟指定檔案（含名稱與描述）。
 文檔記錄：選單中部顯示「文檔記錄」，點擊「>>」按鈕可開啟子選單並瀏覽檔案。
 設定選項：選單底部設有「設定」按鈕，可編輯所有配置參數。
 視窗層級：視窗層級可設定為「一般 (Normal)」、「置頂 (Always on top)」或「置底 (Always on bottom)」。
@@ -94,12 +104,18 @@ Notes
 
 設定說明
 圖片 (Pet Image)：可選擇單張圖片，或指定圖片資料夾進行自動輪播。
-資料夾快捷方式 (Folder shortcuts)：可設定「項目名稱 (Item name)」、「項目路徑 (Item path)」及「描述 (Description)」。
-文檔記錄 (Document record)：設定「標題 (Title)」與一個或多個「資料儲存資料夾 (Data storage folders)」（按「新增」可加入更多資料夾）；應用程式將自動列出這些資料夾內的所有檔案。
+資料夾快捷方式 (Folder shortcuts)：可設定「項目名稱 (Item name)」、「資料夾路徑 (Folder path)」及「描述 (Description)」。
+檔案快捷方式 (File shortcuts)：可設定「項目名稱」、「檔案路徑」及「描述」（Browse 選取檔案）。
+文檔記錄 (Document record)：設定「標題 (Title)」與一個或多個「資料儲存資料夾 (Data storage folders)」（按「Add」可加入更多資料夾）；應用程式將自動列出這些資料夾內的所有檔案。
 系統設定 (System)：設定視窗層級（一般 / 置頂 / 置底）。
 
+261023.01 更新內容（2026-10-23）
+1. 新增檔案快捷方式：設定分頁與選單區塊，可為檔案加上名稱與描述。
+2. 文檔記錄設定中「新增」按鈕改為英文「Add」。
+3. 設定檔新增 "file_shortcuts"（既有 "shortcuts" 資料夾清單維持不變）。
+
 261022.01 更新內容（2026-10-22）
-1. 文檔記錄：支援多個儲存資料夾，設定中可按「新增」加入更多資料夾。
+1. 文檔記錄：支援多個儲存資料夾，設定中可按 Add 加入更多資料夾。
 2. 列表同時顯示檔名與備註 (comment)。
 3. 選項加入滑鼠懸停狀態（略為變深）。
 4. 修正 build.bat 在 Windows cmd 下執行；輸出資料夾為 upload\。
