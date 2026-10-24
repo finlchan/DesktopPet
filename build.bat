@@ -15,8 +15,28 @@ if not exist "packaging\config.json" (
     exit /b 1
 )
 
+REM Prefer Windows Python launcher, then python / python3 on PATH.
+set "PY_CMD="
+py -3 -c "import sys" >nul 2>&1
+if not errorlevel 1 set "PY_CMD=py -3"
+if not defined PY_CMD (
+    python -c "import sys" >nul 2>&1
+    if not errorlevel 1 set "PY_CMD=python"
+)
+if not defined PY_CMD (
+    python3 -c "import sys" >nul 2>&1
+    if not errorlevel 1 set "PY_CMD=python3"
+)
+if not defined PY_CMD (
+    echo ERROR: Python not found. Install from https://www.python.org/downloads/
+    echo and enable "Add python.exe to PATH", then reopen this terminal.
+    pause
+    exit /b 1
+)
+echo Using: %PY_CMD%
+
 REM Bundle only the blank template config into the EXE - never root config.json.
-py -m PyInstaller --noconfirm --onefile --windowed --icon "logo.ico" --add-data "packaging\config.json;." --add-data "paypal_qr.jpg;." --add-data "logo.ico;." --add-data "logo.png;." --add-data "README.txt;." --name "DesktopPet" desktop_pet.py
+%PY_CMD% -m PyInstaller --noconfirm --onefile --windowed --icon "logo.ico" --add-data "packaging\config.json;." --add-data "paypal_qr.jpg;." --add-data "logo.ico;." --add-data "logo.png;." --add-data "README.txt;." --name "DesktopPet" desktop_pet.py
 if errorlevel 1 (
     echo Build failed.
     pause
