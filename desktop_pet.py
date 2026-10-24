@@ -11,9 +11,12 @@ import os
 import random
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
-from PySide6.QtCore import Qt, QTimer, QSize, Signal, QEvent, QLockFile
-from PySide6.QtGui import QPixmap, QPainter, QColor, QCursor, QIcon, QAction, QMovie
+from PySide6.QtCore import Qt, QTimer, QSize, Signal, QEvent, QLockFile, QUrl, QPoint
+from PySide6.QtGui import (
+    QPixmap, QPainter, QColor, QCursor, QIcon, QAction, QMovie, QDesktopServices,
+)
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout, QHBoxLayout,
     QPushButton, QLineEdit, QTextEdit, QListWidget, QListWidgetItem,
@@ -41,7 +44,10 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261023.01"
+APP_VERSION = "261024.01"
+
+# Windows Run-key name for "Start with Windows".
+AUTOSTART_REG_NAME = "DesktopPet"
 
 
 # ---------------------------------------------------------------------------
@@ -57,7 +63,11 @@ DEFAULT_CONFIG = {
         "size": 120,
         "opacity": 0.9,
         "pos_x": 100,
-        "pos_y": 100
+        "pos_y": 100,
+        # Multi-monitor memory (optional; older configs omit these).
+        "screen_name": "",
+        "rel_x": None,
+        "rel_y": None,
     },
     "window": {
         "mode": "normal",
@@ -65,9 +75,15 @@ DEFAULT_CONFIG = {
         "stay_on_bottom": False,
         "normal": True
     },
+    # System options (autostart is applied on Windows only).
+    "system": {
+        "start_with_windows": False,
+    },
     # Folder shortcuts (name / path / description). Kept for older configs.
     "shortcuts": [],
-    # File shortcuts — same shape as folder shortcuts, but targeting files.
+    # File / URL shortcuts. Shape: {name, path, description, type?}.
+    # type: "file" (default) or "url". Older entries without type stay files
+    # unless path looks like http(s).
     "file_shortcuts": [],
     "document_area": {
         "title": "Document record",
@@ -179,6 +195,127 @@ def screen_available_geometry(widget):
     return screen.availableGeometry()
 
 
+def nearest_screen_for_point(point):
+    """Return the screen containing point, or the nearest available screen."""
+    screen = QApplication.screenAt(point)
+    if screen is not None:
+        return screen
+    best = None
+    best_dist = None
+    for candidate in QApplication.screens():
+        geo = candidate.availableGeometry()
+        cx = max(geo.left(), min(point.x(), geo.right()))
+        cy = max(geo.top(), min(point.y(), geo.bottom()))
+        dist = (cx - point.x()) ** 2 + (cy - point.y()) ** 2
+        if best_dist is None or dist < best_dist:
+            best_dist = dist
+            best = candidate
+    return best or QApplication.primaryScreen()
+
+
+def clamp_widget_to_screens(widget):
+    """Clamp widget onto an available screen (handles monitor unplug / resize)."""
+    center = widget.frameGeometry().center()
+    screen = nearest_screen_for_point(center)
+    if screen is None:
+        return
+    geo = screen.availableGeometry()
+    x = max(geo.left(), min(widget.x(), geo.right() - widget.width() + 1))
+    y = max(geo.top(), min(widget.y(), geo.bottom() - widget.height() + 1))
+    widget.move(x, y)
+
+
+def find_screen_by_name(name):
+    if not name:
+        return None
+    for screen in QApplication.screens():
+        if screen.name() == name:
+            return screen
+    return None
+
+
+def save_pet_geometry(cfg, widget, persist=True):
+    """Remember absolute position plus relative placement on the current screen."""
+    screen = QApplication.screenAt(widget.frameGeometry().center())
+    if screen is None:
+        screen = QApplication.primaryScreen()
+    cfg.set(["pet", "pos_x"], widget.x(), save=False)
+    cfg.set(["pet", "pos_y"], widget.y(), save=False)
+    if screen is not None:
+        geo = screen.availableGeometry()
+        cfg.set(["pet", "screen_name"], screen.name(), save=False)
+        cfg.set(
+            ["pet", "rel_x"],
+            (widget.x() - geo.x()) / max(geo.width(), 1),
+            save=False,
+        )
+        cfg.set(
+            ["pet", "rel_y"],
+            (widget.y() - geo.y()) / max(geo.height(), 1),
+            save=False,
+        )
+    if persist:
+        cfg.save()
+
+
+def restore_pet_geometry(cfg, widget):
+    """Restore pet onto the remembered screen (or nearest), then clamp."""
+    screen_name = cfg.get("pet", "screen_name") or ""
+    rel_x = cfg.get("pet", "rel_x")
+    rel_y = cfg.get("pet", "rel_y")
+    pos_x = int(cfg.get("pet", "pos_x") or 100)
+    pos_y = int(cfg.get("pet", "pos_y") or 100)
+
+    target = find_screen_by_name(screen_name)
+    if target is None:
+        target = nearest_screen_for_point(QPoint(pos_x, pos_y))
+
+    if (
+        target is not None
+        and rel_x is not None
+        and rel_y is not None
+    ):
+        try:
+            geo = target.availableGeometry()
+            x = geo.x() + int(float(rel_x) * geo.width())
+            y = geo.y() + int(float(rel_y) * geo.height())
+            widget.move(x, y)
+        except (TypeError, ValueError):
+            widget.move(pos_x, pos_y)
+    else:
+        widget.move(pos_x, pos_y)
+    clamp_widget_to_screens(widget)
+
+
+def looks_like_url(value):
+    text = (value or "").strip()
+    if not text:
+        return False
+    lower = text.lower()
+    if lower.startswith(("http://", "https://", "file://")):
+        return True
+    parsed = urlparse(text)
+    return bool(parsed.scheme and parsed.netloc)
+
+
+def normalize_file_shortcut(sc):
+    """Normalize a file/URL shortcut dict; default type is file."""
+    if not isinstance(sc, dict):
+        return {"name": "Unnamed", "path": "", "description": "", "type": "file"}
+    path = sc.get("path", "")
+    if not isinstance(path, str):
+        path = str(path or "")
+    sc_type = sc.get("type")
+    if sc_type not in ("file", "url"):
+        sc_type = "url" if looks_like_url(path) else "file"
+    return {
+        "name": (sc.get("name") or "Unnamed"),
+        "path": path.strip(),
+        "description": (sc.get("description") or ""),
+        "type": sc_type,
+    }
+
+
 def open_local_path(path):
     """Open a folder or file with the platform default handler."""
     target = Path(path)
@@ -192,6 +329,91 @@ def open_local_path(path):
     else:
         import subprocess
         subprocess.Popen(["xdg-open", str(target)])
+
+
+def open_url(url):
+    """Open a web/internal URL in the default browser."""
+    text = (url or "").strip()
+    if not text:
+        raise ValueError("Empty URL")
+    qurl = QUrl.fromUserInput(text)
+    if not qurl.isValid():
+        raise ValueError(f"Invalid URL: {text}")
+    if not QDesktopServices.openUrl(qurl):
+        raise RuntimeError(f"Could not open URL: {text}")
+
+
+def open_shortcut_target(path, sc_type=None):
+    """Open a folder/file path or URL shortcut target."""
+    kind = sc_type if sc_type in ("file", "url") else None
+    if kind is None:
+        kind = "url" if looks_like_url(path) else "file"
+    if kind == "url":
+        open_url(path)
+    else:
+        open_local_path(path)
+
+
+def is_windows():
+    return sys.platform.startswith("win")
+
+
+def autostart_command():
+    """Command string written to the Windows Run key."""
+    if getattr(sys, "frozen", False):
+        return f'"{sys.executable}"'
+    script = Path(__file__).resolve()
+    return f'"{sys.executable}" "{script}"'
+
+
+def get_windows_autostart_enabled():
+    if not is_windows():
+        return False
+    try:
+        import winreg
+        key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_READ) as key:
+            try:
+                winreg.QueryValueEx(key, AUTOSTART_REG_NAME)
+                return True
+            except FileNotFoundError:
+                return False
+    except Exception:
+        return False
+
+
+def set_windows_autostart_enabled(enabled):
+    """Enable/disable HKCU Run key. No-op (returns False) on non-Windows."""
+    if not is_windows():
+        return False
+    import winreg
+    key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+    with winreg.OpenKey(
+        winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE
+    ) as key:
+        if enabled:
+            winreg.SetValueEx(
+                key, AUTOSTART_REG_NAME, 0, winreg.REG_SZ, autostart_command()
+            )
+        else:
+            try:
+                winreg.DeleteValue(key, AUTOSTART_REG_NAME)
+            except FileNotFoundError:
+                pass
+    return True
+
+
+def filter_list_widget(list_widget, query):
+    """Hide QListWidget rows that do not match the query (case-insensitive)."""
+    text = (query or "").strip().lower()
+    for i in range(list_widget.count()):
+        item = list_widget.item(i)
+        if item is None:
+            continue
+        if not text:
+            item.setHidden(False)
+        else:
+            item.setHidden(text not in (item.text() or "").lower())
 
 
 class ConfigManager:
@@ -219,6 +441,18 @@ class ConfigManager:
         doc = self.config.setdefault("document_area", {})
         doc["sort_by"] = normalize_sort(doc.get("sort_by"))
         normalize_document_folders(doc)
+        system = self.config.setdefault("system", {})
+        if not isinstance(system, dict):
+            self.config["system"] = {"start_with_windows": False}
+        else:
+            system.setdefault("start_with_windows", False)
+        raw_file_sc = self.config.get("file_shortcuts")
+        if isinstance(raw_file_sc, list):
+            self.config["file_shortcuts"] = [
+                normalize_file_shortcut(sc) for sc in raw_file_sc if isinstance(sc, dict)
+            ]
+        else:
+            self.config["file_shortcuts"] = []
 
     def save(self):
         try:
@@ -264,6 +498,42 @@ class ConfigManager:
 
 
 # ---------------------------------------------------------------------------
+# Prompt when adding a shortcut via drag-and-drop
+# ---------------------------------------------------------------------------
+class ShortcutPromptDialog(QDialog):
+    """Ask for name / description when dropping a path or URL onto the pet."""
+
+    def __init__(self, title, default_name, default_path, kind_label="Path", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumWidth(420)
+        layout = QFormLayout(self)
+        self.name_edit = QLineEdit(default_name or "")
+        self.path_edit = QLineEdit(default_path or "")
+        self.path_edit.setReadOnly(True)
+        self.desc_edit = QLineEdit()
+        layout.addRow("Item Name:", self.name_edit)
+        layout.addRow(f"{kind_label}:", self.path_edit)
+        layout.addRow("Description:", self.desc_edit)
+        buttons = QHBoxLayout()
+        buttons.addStretch()
+        ok_btn = QPushButton("Add")
+        cancel_btn = QPushButton("Cancel")
+        ok_btn.clicked.connect(self.accept)
+        cancel_btn.clicked.connect(self.reject)
+        buttons.addWidget(ok_btn)
+        buttons.addWidget(cancel_btn)
+        layout.addRow(buttons)
+
+    def result_data(self):
+        return {
+            "name": self.name_edit.text().strip() or "Unnamed",
+            "path": self.path_edit.text().strip(),
+            "description": self.desc_edit.text().strip(),
+        }
+
+
+# ---------------------------------------------------------------------------
 # Settings dialog
 # ---------------------------------------------------------------------------
 class SettingsDialog(QDialog):
@@ -275,7 +545,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.cfg = config_manager
         self.setWindowTitle("Desktop Pet Settings")
-        self.setMinimumSize(600, 500)
+        self.setMinimumSize(600, 520)
         self.build_ui()
         self.load_data()
 
@@ -334,6 +604,12 @@ class SettingsDialog(QDialog):
         self.shortcut_list = QListWidget()
         self.shortcut_list.setMaximumHeight(180)
         shortcut_layout.addWidget(QLabel("Item list (Name | Path | Description):"))
+        self.shortcut_filter = QLineEdit()
+        self.shortcut_filter.setPlaceholderText("Search / filter folder shortcuts…")
+        self.shortcut_filter.textChanged.connect(
+            lambda text: filter_list_widget(self.shortcut_list, text)
+        )
+        shortcut_layout.addWidget(self.shortcut_filter)
         shortcut_layout.addWidget(self.shortcut_list)
 
         sc_form = QFormLayout()
@@ -371,26 +647,44 @@ class SettingsDialog(QDialog):
         self.shortcut_list.currentRowChanged.connect(self.load_shortcut_to_form)
         self.tabs.addTab(shortcut_tab, "Folder Shortcuts")
 
-        # --- File shortcuts (config key: "file_shortcuts") ---
+        # --- File / URL shortcuts (config key: "file_shortcuts") ---
         file_sc_tab = QWidget()
         file_sc_layout = QVBoxLayout(file_sc_tab)
 
         self.file_shortcut_list = QListWidget()
         self.file_shortcut_list.setMaximumHeight(180)
-        file_sc_layout.addWidget(QLabel("Item list (Name | Path | Description):"))
+        file_sc_layout.addWidget(
+            QLabel("Item list (Type | Name | Path/URL | Description):")
+        )
+        self.file_shortcut_filter = QLineEdit()
+        self.file_shortcut_filter.setPlaceholderText(
+            "Search / filter file & URL shortcuts…"
+        )
+        self.file_shortcut_filter.textChanged.connect(
+            lambda text: filter_list_widget(self.file_shortcut_list, text)
+        )
+        file_sc_layout.addWidget(self.file_shortcut_filter)
         file_sc_layout.addWidget(self.file_shortcut_list)
 
         fsc_form = QFormLayout()
         self.fsc_name = QLineEdit()
+        self.fsc_type = QComboBox()
+        self.fsc_type.addItem("File", "file")
+        self.fsc_type.addItem("URL", "url")
+        self.fsc_type.currentIndexChanged.connect(self._on_fsc_type_changed)
         self.fsc_path = QLineEdit()
         self.btn_fsc_browse = QPushButton("Browse")
         self.btn_fsc_browse.clicked.connect(self.browse_file_shortcut)
         h_fsc = QHBoxLayout()
         h_fsc.addWidget(self.fsc_path)
         h_fsc.addWidget(self.btn_fsc_browse)
+        self.fsc_path_row = QWidget()
+        self.fsc_path_row.setLayout(h_fsc)
         self.fsc_desc = QLineEdit()
+        self.fsc_path_label = QLabel("File Path:")
         fsc_form.addRow("Item Name:", self.fsc_name)
-        fsc_form.addRow("File Path:", h_fsc)
+        fsc_form.addRow("Type:", self.fsc_type)
+        fsc_form.addRow(self.fsc_path_label, self.fsc_path_row)
         fsc_form.addRow("Description:", self.fsc_desc)
         file_sc_layout.addLayout(fsc_form)
 
@@ -475,6 +769,17 @@ class SettingsDialog(QDialog):
             self.window_mode.addItem(label, code)
         sys_layout.addRow("Window level:", self.window_mode)
 
+        self.start_with_windows_check = QCheckBox("Start with Windows")
+        self.start_with_windows_check.setToolTip(
+            "Adds/removes a HKCU Run key so Desktop Pet starts at login."
+        )
+        if not is_windows():
+            self.start_with_windows_check.setEnabled(False)
+            self.start_with_windows_check.setToolTip(
+                "Available on Windows only (login autostart via registry Run key)."
+            )
+        sys_layout.addRow("Startup:", self.start_with_windows_check)
+
         self.tabs.addTab(sys_tab, "System")
 
         about_tab = QWidget()
@@ -514,15 +819,20 @@ class SettingsDialog(QDialog):
             item = QListWidgetItem(f"{name} | {path} | {desc}")
             item.setData(Qt.ItemDataRole.UserRole, sc)
             self.shortcut_list.addItem(item)
+        if hasattr(self, "shortcut_filter"):
+            filter_list_widget(self.shortcut_list, self.shortcut_filter.text())
 
         self.file_shortcut_list.clear()
         for sc in self.cfg.get("file_shortcuts") or []:
-            name = sc.get("name", "")
-            path = sc.get("path", "")
-            desc = sc.get("description", "")
-            item = QListWidgetItem(f"{name} | {path} | {desc}")
+            sc = normalize_file_shortcut(sc)
+            item = QListWidgetItem(self._file_shortcut_list_text(sc))
             item.setData(Qt.ItemDataRole.UserRole, sc)
             self.file_shortcut_list.addItem(item)
+        if hasattr(self, "file_shortcut_filter"):
+            filter_list_widget(
+                self.file_shortcut_list, self.file_shortcut_filter.text()
+            )
+        self._on_fsc_type_changed()
 
         self.doc_title_edit.setText(self.cfg.get("document_area", "title") or "Document record")
         self.doc_folder_list.clear()
@@ -537,6 +847,13 @@ class SettingsDialog(QDialog):
         mode = normalize_window_mode(self.cfg.get("window") or {})
         mode_index = self.window_mode.findData(mode)
         self.window_mode.setCurrentIndex(mode_index if mode_index >= 0 else 0)
+
+        want_autostart = bool(self.cfg.get("system", "start_with_windows"))
+        if is_windows():
+            # Prefer live registry state so Settings matches Windows.
+            self.start_with_windows_check.setChecked(get_windows_autostart_enabled())
+        else:
+            self.start_with_windows_check.setChecked(want_autostart)
 
     def load_about_html(self):
         """Load README.txt and generate the About page HTML."""
@@ -590,9 +907,20 @@ class SettingsDialog(QDialog):
             self.sc_path.setText(folder)
 
     def browse_file_shortcut(self):
+        if self.fsc_type.currentData() == "url":
+            return
         path, _ = QFileDialog.getOpenFileName(self, "Select File")
         if path:
             self.fsc_path.setText(path)
+
+    def _on_fsc_type_changed(self, *_args):
+        is_url = self.fsc_type.currentData() == "url"
+        self.btn_fsc_browse.setVisible(not is_url)
+        self.fsc_path_label.setText("URL:" if is_url else "File Path:")
+        if is_url:
+            self.fsc_path.setPlaceholderText("https://example.com or internal URL")
+        else:
+            self.fsc_path.setPlaceholderText("")
 
     def browse_doc_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Data Storage Folder")
@@ -698,12 +1026,18 @@ class SettingsDialog(QDialog):
         self.shortcut_list.insertItem(row + 1, item)
         self.shortcut_list.setCurrentItem(item)
 
+    def _file_shortcut_list_text(self, sc):
+        sc = normalize_file_shortcut(sc)
+        kind = "URL" if sc["type"] == "url" else "File"
+        return f"{kind} | {sc['name']} | {sc['path']} | {sc['description']}"
+
     def _file_shortcut_from_form(self):
-        return {
+        return normalize_file_shortcut({
             "name": self.fsc_name.text().strip() or "Unnamed",
             "path": self.fsc_path.text().strip(),
             "description": self.fsc_desc.text().strip(),
-        }
+            "type": self.fsc_type.currentData() or "file",
+        })
 
     def load_file_shortcut_to_form(self, row):
         if row < 0:
@@ -711,17 +1045,24 @@ class SettingsDialog(QDialog):
         item = self.file_shortcut_list.item(row)
         if not item:
             return
-        data = item.data(Qt.ItemDataRole.UserRole) or {}
+        data = normalize_file_shortcut(item.data(Qt.ItemDataRole.UserRole) or {})
         self.fsc_name.setText(data.get("name", ""))
         self.fsc_path.setText(data.get("path", ""))
         self.fsc_desc.setText(data.get("description", ""))
+        type_index = self.fsc_type.findData(data.get("type") or "file")
+        self.fsc_type.setCurrentIndex(type_index if type_index >= 0 else 0)
+        self._on_fsc_type_changed()
 
     def add_file_shortcut(self):
         sc = self._file_shortcut_from_form()
-        item = QListWidgetItem(f"{sc['name']} | {sc['path']} | {sc['description']}")
+        if sc["type"] == "url" and not sc["path"]:
+            QMessageBox.information(self, "URL required", "Please enter a URL.")
+            return
+        item = QListWidgetItem(self._file_shortcut_list_text(sc))
         item.setData(Qt.ItemDataRole.UserRole, sc)
         self.file_shortcut_list.addItem(item)
         self.file_shortcut_list.setCurrentItem(item)
+        filter_list_widget(self.file_shortcut_list, self.file_shortcut_filter.text())
 
     def update_file_shortcut(self):
         row = self.file_shortcut_list.currentRow()
@@ -729,8 +1070,12 @@ class SettingsDialog(QDialog):
             return
         item = self.file_shortcut_list.item(row)
         sc = self._file_shortcut_from_form()
-        item.setText(f"{sc['name']} | {sc['path']} | {sc['description']}")
+        if sc["type"] == "url" and not sc["path"]:
+            QMessageBox.information(self, "URL required", "Please enter a URL.")
+            return
+        item.setText(self._file_shortcut_list_text(sc))
         item.setData(Qt.ItemDataRole.UserRole, sc)
+        filter_list_widget(self.file_shortcut_list, self.file_shortcut_filter.text())
 
     def delete_file_shortcut(self):
         row = self.file_shortcut_list.currentRow()
@@ -771,7 +1116,9 @@ class SettingsDialog(QDialog):
         file_shortcuts = []
         for i in range(self.file_shortcut_list.count()):
             item = self.file_shortcut_list.item(i)
-            file_shortcuts.append(item.data(Qt.ItemDataRole.UserRole))
+            file_shortcuts.append(
+                normalize_file_shortcut(item.data(Qt.ItemDataRole.UserRole) or {})
+            )
         self.cfg.set(["file_shortcuts"], file_shortcuts, save=False)
 
         self.cfg.set(
@@ -795,6 +1142,19 @@ class SettingsDialog(QDialog):
         window = self.cfg.get("window") or {}
         apply_window_mode(window, mode)
         self.cfg.set(["window"], window, save=False)
+
+        want_autostart = self.start_with_windows_check.isChecked()
+        self.cfg.set(["system", "start_with_windows"], want_autostart, save=False)
+        if is_windows():
+            try:
+                set_windows_autostart_enabled(want_autostart)
+            except Exception as e:
+                QMessageBox.warning(
+                    self,
+                    "Autostart failed",
+                    f"Could not update Windows startup entry:\n{e}",
+                )
+
         self.cfg.save()
 
         self.config_changed.emit()
@@ -922,6 +1282,16 @@ class DocumentSubMenu(PopupPanel):
         self.title_label.setStyleSheet("color: white; font-weight: bold;")
         self.main_layout.addWidget(self.title_label)
 
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("Search files…")
+        self.search_edit.setClearButtonEnabled(True)
+        self.search_edit.setStyleSheet(
+            "QLineEdit { background: rgba(255,255,255,230); color: #222; "
+            "border-radius: 4px; padding: 3px 6px; }"
+        )
+        self.search_edit.textChanged.connect(self._on_search_changed)
+        self.main_layout.addWidget(self.search_edit)
+
         sep = QLabel()
         sep.setFixedHeight(1)
         sep.setStyleSheet("background-color: rgba(255,255,255,120);")
@@ -942,10 +1312,37 @@ class DocumentSubMenu(PopupPanel):
     def button_style(self, base_color):
         return menu_button_style(base_color)
 
+    def _on_search_changed(self, _text):
+        self.show_page(0)
+
+    def _filtered_files(self):
+        query = (self.search_edit.text() or "").strip().lower()
+        if not query:
+            return list(self.files)
+        matched = []
+        for folder, fname in self.files:
+            meta = self.files_meta.get(fname, {}) or {}
+            haystack = " ".join(
+                [
+                    fname,
+                    folder,
+                    meta.get("comment", "") or "",
+                    meta.get("publisher", "") or "",
+                    meta.get("version", "") or "",
+                    meta.get("time", "") or "",
+                ]
+            ).lower()
+            if query in haystack:
+                matched.append((folder, fname))
+        return matched
+
     def refresh_and_show(self, anchor_geometry):
         self.files = []
         self.files_meta = dict(self.cfg.get("document_area", "files") or {})
         self.title_label.setText(self.cfg.get("document_area", "title") or "Document record")
+        self.search_edit.blockSignals(True)
+        self.search_edit.clear()
+        self.search_edit.blockSignals(False)
 
         folders = normalize_document_folders(self.cfg.get("document_area") or {})
         entries = []
@@ -1011,29 +1408,34 @@ class DocumentSubMenu(PopupPanel):
         self.raise_()
         self.activateWindow()
 
-    def show_page(self, page):
-        while self.files_container.count():
-            item = self.files_container.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-        while self.pagination_container.count():
-            item = self.pagination_container.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+    def _clear_layout(self, layout):
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.hide()
+                widget.setParent(None)
+                widget.deleteLater()
 
-        if not self.files:
-            lbl = QLabel("(No files)")
+    def show_page(self, page):
+        self._clear_layout(self.files_container)
+        self._clear_layout(self.pagination_container)
+
+        visible = self._filtered_files()
+        if not visible:
+            hint = "(No matching files)" if (self.search_edit.text() or "").strip() else "(No files)"
+            lbl = QLabel(hint)
             lbl.setStyleSheet("color: #dddddd;")
             self.files_container.addWidget(lbl)
             self.adjustSize()
             return
 
-        total_pages = max(1, (len(self.files) + self.items_per_page - 1) // self.items_per_page)
+        total_pages = max(1, (len(visible) + self.items_per_page - 1) // self.items_per_page)
         self.current_page = max(0, min(page, total_pages - 1))
         start = self.current_page * self.items_per_page
-        end = min(start + self.items_per_page, len(self.files))
+        end = min(start + self.items_per_page, len(visible))
 
-        for folder, fname in self.files[start:end]:
+        for folder, fname in visible[start:end]:
             fpath = os.path.join(folder, fname)
             meta = self.files_meta.get(fname, {})
             comment = " ".join((meta.get("comment") or "").split())
@@ -1106,13 +1508,14 @@ class DocumentSubMenu(PopupPanel):
 # File shortcuts submenu (opened via >> like Document record)
 # ---------------------------------------------------------------------------
 class FileShortcutsSubMenu(PopupPanel):
-    """Submenu listing file shortcuts; opened from the main pet menu >> control."""
+    """Submenu listing file/URL shortcuts; opened from the main pet menu >> control."""
 
-    open_shortcut = Signal(str)
+    open_shortcut = Signal(str, str)  # path, type
 
     def __init__(self, config_manager):
         super().__init__()
         self.cfg = config_manager
+        self._all_shortcuts = []
         self.build_ui()
 
     def build_ui(self):
@@ -1132,6 +1535,16 @@ class FileShortcutsSubMenu(PopupPanel):
         self.title_label.setStyleSheet("color: white; font-weight: bold;")
         self.main_layout.addWidget(self.title_label)
 
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("Search file / URL shortcuts…")
+        self.search_edit.setClearButtonEnabled(True)
+        self.search_edit.setStyleSheet(
+            "QLineEdit { background: rgba(255,255,255,230); color: #222; "
+            "border-radius: 4px; padding: 3px 6px; }"
+        )
+        self.search_edit.textChanged.connect(self._rebuild_items)
+        self.main_layout.addWidget(self.search_edit)
+
         sep = QLabel()
         sep.setFixedHeight(1)
         sep.setStyleSheet("background-color: rgba(255,255,255,120);")
@@ -1148,30 +1561,72 @@ class FileShortcutsSubMenu(PopupPanel):
     def button_style(self, base_color):
         return menu_button_style(base_color)
 
-    def refresh_and_show(self, anchor_geometry):
+    def _filtered_shortcuts(self):
+        query = (self.search_edit.text() or "").strip().lower()
+        if not query:
+            return list(self._all_shortcuts)
+        matched = []
+        for sc in self._all_shortcuts:
+            haystack = " ".join(
+                [
+                    sc.get("type", ""),
+                    sc.get("name", ""),
+                    sc.get("path", ""),
+                    sc.get("description", ""),
+                ]
+            ).lower()
+            if query in haystack:
+                matched.append(sc)
+        return matched
+
+    def _rebuild_items(self):
         while self.items_container.count():
             item = self.items_container.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
-        shortcuts = self.cfg.get("file_shortcuts") or []
-        if not shortcuts:
+        shortcuts = self._filtered_shortcuts()
+        if not self._all_shortcuts:
             lbl = QLabel("(No file shortcuts)")
+            lbl.setStyleSheet("color: #dddddd;")
+            self.items_container.addWidget(lbl)
+        elif not shortcuts:
+            lbl = QLabel("(No matching shortcuts)")
             lbl.setStyleSheet("color: #dddddd;")
             self.items_container.addWidget(lbl)
         else:
             for sc in shortcuts:
+                sc = normalize_file_shortcut(sc)
                 name = sc.get("name", "Unnamed")
                 path = sc.get("path", "")
                 desc = sc.get("description", "")
+                sc_type = sc.get("type", "file")
                 text = name
+                if sc_type == "url":
+                    text = f"[URL] {name}"
                 if desc:
                     text += f" ({desc})"
                 btn = QPushButton(text)
-                btn.setToolTip(path)
-                btn.setStyleSheet(self.button_style("#2a6f6f"))
-                btn.clicked.connect(lambda checked=False, p=path: self.open_shortcut.emit(p))
+                tip = path if sc_type == "file" else f"URL: {path}"
+                btn.setToolTip(tip)
+                color = "#1f6b8a" if sc_type == "url" else "#2a6f6f"
+                btn.setStyleSheet(self.button_style(color))
+                btn.clicked.connect(
+                    lambda checked=False, p=path, t=sc_type: self.open_shortcut.emit(p, t)
+                )
                 self.items_container.addWidget(btn)
+        self.adjustSize()
+
+    def refresh_and_show(self, anchor_geometry):
+        self._all_shortcuts = [
+            normalize_file_shortcut(sc)
+            for sc in (self.cfg.get("file_shortcuts") or [])
+            if isinstance(sc, dict)
+        ]
+        self.search_edit.blockSignals(True)
+        self.search_edit.clear()
+        self.search_edit.blockSignals(False)
+        self._rebuild_items()
 
         self.adjustSize()
         screen_geo = screen_available_geometry(self)
@@ -1198,7 +1653,7 @@ class FileShortcutsSubMenu(PopupPanel):
 class PetMenu(PopupPanel):
     """Semi-transparent menu that pops up when the pet is clicked."""
 
-    open_shortcut = Signal(str)
+    open_shortcut = Signal(str, str)  # path, type ("folder" / "file" / "url")
     open_settings = Signal()
     open_file_meta = Signal(str)
 
@@ -1207,6 +1662,7 @@ class PetMenu(PopupPanel):
         self.cfg = config_manager
         self.doc_submenu = None
         self.file_shortcuts_submenu = None
+        self._folder_shortcuts = []
         self.build_ui()
 
     def build_ui(self):
@@ -1226,6 +1682,16 @@ class PetMenu(PopupPanel):
         self.shortcuts_title.setStyleSheet("color: white; font-weight: bold;")
         self.main_layout.addWidget(self.shortcuts_title)
 
+        self.folder_search_edit = QLineEdit()
+        self.folder_search_edit.setPlaceholderText("Search folder shortcuts…")
+        self.folder_search_edit.setClearButtonEnabled(True)
+        self.folder_search_edit.setStyleSheet(
+            "QLineEdit { background: rgba(255,255,255,230); color: #222; "
+            "border-radius: 4px; padding: 3px 6px; }"
+        )
+        self.folder_search_edit.textChanged.connect(self._rebuild_folder_shortcuts)
+        self.main_layout.addWidget(self.folder_search_edit)
+
         self.shortcuts_container = QVBoxLayout()
         self.shortcuts_container.setSpacing(3)
         self.main_layout.addLayout(self.shortcuts_container)
@@ -1235,10 +1701,10 @@ class PetMenu(PopupPanel):
         sep0.setStyleSheet("background-color: rgba(255,255,255,120);")
         self.main_layout.addWidget(sep0)
 
-        # File shortcuts: collapsed header + >> (same pattern as Document record)
+        # File / URL shortcuts: collapsed header + >> (same pattern as Document record)
         file_sc_header = QHBoxLayout()
         file_sc_header.setSpacing(4)
-        self.file_shortcuts_title = QLabel("File shortcuts")
+        self.file_shortcuts_title = QLabel("File / URL shortcuts")
         self.file_shortcuts_title.setStyleSheet("color: white; font-weight: bold;")
         self.btn_file_sc_open = QPushButton(">>")
         self.btn_file_sc_open.setFixedWidth(30)
@@ -1288,39 +1754,64 @@ class PetMenu(PopupPanel):
     def button_style(self, base_color):
         return menu_button_style(base_color)
 
-    def _fill_shortcut_buttons(self, container, shortcuts, empty_hint, color):
-        while container.count():
-            item = container.takeAt(0)
+    def _rebuild_folder_shortcuts(self):
+        while self.shortcuts_container.count():
+            item = self.shortcuts_container.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
-        if not shortcuts:
-            btn = QPushButton(empty_hint)
+        query = (self.folder_search_edit.text() or "").strip().lower()
+        shortcuts = []
+        for sc in self._folder_shortcuts:
+            if not isinstance(sc, dict):
+                continue
+            if query:
+                haystack = " ".join(
+                    [
+                        sc.get("name", ""),
+                        sc.get("path", ""),
+                        sc.get("description", ""),
+                    ]
+                ).lower()
+                if query not in haystack:
+                    continue
+            shortcuts.append(sc)
+
+        if not self._folder_shortcuts:
+            btn = QPushButton("-Please add a folder in Settings-")
             btn.setEnabled(False)
             btn.setStyleSheet("color: #dddddd; background-color: transparent;")
-            container.addWidget(btn)
-            return
-
-        for sc in shortcuts:
-            name = sc.get("name", "Unnamed")
-            path = sc.get("path", "")
-            desc = sc.get("description", "")
-            text = name
-            if desc:
-                text += f" ({desc})"
-            btn = QPushButton(text)
-            btn.setToolTip(path)
-            btn.setStyleSheet(self.button_style(color))
-            btn.clicked.connect(lambda checked=False, p=path: self.open_shortcut.emit(p))
-            container.addWidget(btn)
+            self.shortcuts_container.addWidget(btn)
+        elif not shortcuts:
+            btn = QPushButton("(No matching folders)")
+            btn.setEnabled(False)
+            btn.setStyleSheet("color: #dddddd; background-color: transparent;")
+            self.shortcuts_container.addWidget(btn)
+        else:
+            for sc in shortcuts:
+                name = sc.get("name", "Unnamed")
+                path = sc.get("path", "")
+                desc = sc.get("description", "")
+                text = name
+                if desc:
+                    text += f" ({desc})"
+                btn = QPushButton(text)
+                btn.setToolTip(path)
+                btn.setStyleSheet(self.button_style("#3d5a80"))
+                btn.clicked.connect(
+                    lambda checked=False, p=path: self.open_shortcut.emit(p, "folder")
+                )
+                self.shortcuts_container.addWidget(btn)
+        self.adjustSize()
 
     def refresh(self):
-        self._fill_shortcut_buttons(
-            self.shortcuts_container,
-            self.cfg.get("shortcuts") or [],
-            "-Please add a folder in Settings-",
-            "#3d5a80",
-        )
+        self._folder_shortcuts = list(self.cfg.get("shortcuts") or [])
+        self.folder_search_edit.blockSignals(True)
+        self.folder_search_edit.clear()
+        self.folder_search_edit.blockSignals(False)
+        # Hide search box when there is nothing to filter.
+        self.folder_search_edit.setVisible(bool(self._folder_shortcuts))
+        self._rebuild_folder_shortcuts()
 
         title = self.cfg.get("document_area", "title") or "Document record"
         self.doc_title.setText(title)
@@ -1390,22 +1881,28 @@ class PetWindow(QWidget):
         self.image_list = []
         self.current_image_index = 0
         self._movie = None
+        self._screen_signal_bound = set()
         self.image_timer = QTimer(self)
         self.image_timer.timeout.connect(self.next_image)
         self.click_timer = QTimer(self)
         self.click_timer.setSingleShot(True)
         self.click_timer.timeout.connect(self.show_menu)
+        self._screen_change_timer = QTimer(self)
+        self._screen_change_timer.setSingleShot(True)
+        self._screen_change_timer.timeout.connect(self._on_screens_changed)
 
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint |
             Qt.WindowType.Tool
         )
+        self.setAcceptDrops(True)
 
         self.label = QLabel(self)
         self.label.setScaledContents(False)
         self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.label.setAcceptDrops(False)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1413,15 +1910,43 @@ class PetWindow(QWidget):
 
         self.apply_window_mode()
         self.load_pet_settings()
-        self.move(self.cfg.get("pet", "pos_x") or 100, self.cfg.get("pet", "pos_y") or 100)
-        self.clamp_to_screen()
+        restore_pet_geometry(self.cfg, self)
+        self._bind_screen_signals()
 
     def clamp_to_screen(self):
-        """Keep the pet within the available screen area."""
-        screen_geo = screen_available_geometry(self)
-        x = max(screen_geo.left(), min(self.x(), screen_geo.right() - self.width() + 1))
-        y = max(screen_geo.top(), min(self.y(), screen_geo.bottom() - self.height() + 1))
-        self.move(x, y)
+        """Keep the pet within an available screen area (multi-monitor safe)."""
+        clamp_widget_to_screens(self)
+
+    def _bind_screen_signals(self):
+        app = QApplication.instance()
+        if app is None:
+            return
+        app.screenAdded.connect(self._on_screen_added)
+        app.screenRemoved.connect(self._schedule_screen_reclamp)
+        for screen in app.screens():
+            self._bind_one_screen(screen)
+
+    def _bind_one_screen(self, screen):
+        if screen is None:
+            return
+        key = id(screen)
+        if key in self._screen_signal_bound:
+            return
+        screen.geometryChanged.connect(self._schedule_screen_reclamp)
+        screen.availableGeometryChanged.connect(self._schedule_screen_reclamp)
+        self._screen_signal_bound.add(key)
+
+    def _on_screen_added(self, screen):
+        self._bind_one_screen(screen)
+        self._schedule_screen_reclamp()
+
+    def _schedule_screen_reclamp(self, *_args):
+        self._screen_change_timer.start(150)
+
+    def _on_screens_changed(self):
+        """Re-apply remembered relative position, then clamp onto live screens."""
+        restore_pet_geometry(self.cfg, self)
+        save_pet_geometry(self.cfg, self, persist=True)
 
     def apply_window_mode(self):
         flags = self.windowFlags()
@@ -1582,9 +2107,7 @@ class PetWindow(QWidget):
         self.drag_pos = None
         self.moved_distance = 0
         if moved >= 8:
-            self.cfg.set(["pet", "pos_x"], self.x(), save=False)
-            self.cfg.set(["pet", "pos_y"], self.y(), save=False)
-            self.cfg.save()
+            save_pet_geometry(self.cfg, self, persist=True)
         else:
             self.click_timer.start(QApplication.doubleClickInterval())
 
@@ -1623,13 +2146,137 @@ class PetWindow(QWidget):
         self.menu.raise_()
         self.menu.activateWindow()
 
-    def open_shortcut(self, path):
+    def open_shortcut(self, path, sc_type="file"):
         try:
-            open_local_path(path)
+            if sc_type == "folder":
+                open_local_path(path)
+            else:
+                open_shortcut_target(path, sc_type if sc_type in ("file", "url") else None)
         except FileNotFoundError:
             QMessageBox.warning(self, "Path does not exist", f"Not found:\n{path}")
         except Exception as e:
             QMessageBox.warning(self, "Open failed", str(e))
+
+    def dragEnterEvent(self, event):
+        mime = event.mimeData()
+        if mime is not None and (mime.hasUrls() or mime.hasText()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        mime = event.mimeData()
+        if mime is not None and (mime.hasUrls() or mime.hasText()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        mime = event.mimeData()
+        if mime is None:
+            event.ignore()
+            return
+        handled = False
+        if mime.hasUrls():
+            for qurl in mime.urls():
+                local = qurl.toLocalFile()
+                if local:
+                    if self._prompt_add_local_path(local):
+                        handled = True
+                else:
+                    url_text = qurl.toString().strip()
+                    if url_text and self._prompt_add_url(url_text):
+                        handled = True
+        elif mime.hasText():
+            text = mime.text().strip()
+            if looks_like_url(text) and self._prompt_add_url(text):
+                handled = True
+        if handled:
+            event.acceptProposedAction()
+            if self.menu is not None and self.menu.isVisible():
+                self.menu.refresh()
+        else:
+            event.ignore()
+
+    def _prompt_add_local_path(self, local_path):
+        path = Path(local_path)
+        if not path.exists():
+            QMessageBox.warning(self, "Not found", f"Path does not exist:\n{local_path}")
+            return False
+        if path.is_dir():
+            dialog = ShortcutPromptDialog(
+                "Add folder shortcut",
+                path.name or str(path),
+                str(path),
+                kind_label="Folder Path",
+                parent=self,
+            )
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return False
+            data = dialog.result_data()
+            shortcuts = list(self.cfg.get("shortcuts") or [])
+            shortcuts.append({
+                "name": data["name"],
+                "path": data["path"],
+                "description": data["description"],
+            })
+            self.cfg.set(["shortcuts"], shortcuts)
+            return True
+
+        dialog = ShortcutPromptDialog(
+            "Add file shortcut",
+            path.name or str(path),
+            str(path),
+            kind_label="File Path",
+            parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return False
+        data = dialog.result_data()
+        file_shortcuts = [
+            normalize_file_shortcut(sc)
+            for sc in (self.cfg.get("file_shortcuts") or [])
+            if isinstance(sc, dict)
+        ]
+        file_shortcuts.append(normalize_file_shortcut({
+            "name": data["name"],
+            "path": data["path"],
+            "description": data["description"],
+            "type": "file",
+        }))
+        self.cfg.set(["file_shortcuts"], file_shortcuts)
+        return True
+
+    def _prompt_add_url(self, url_text):
+        default_name = url_text
+        try:
+            parsed = urlparse(url_text)
+            default_name = parsed.netloc or parsed.path or url_text
+        except Exception:
+            pass
+        dialog = ShortcutPromptDialog(
+            "Add URL shortcut",
+            default_name,
+            url_text,
+            kind_label="URL",
+            parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return False
+        data = dialog.result_data()
+        file_shortcuts = [
+            normalize_file_shortcut(sc)
+            for sc in (self.cfg.get("file_shortcuts") or [])
+            if isinstance(sc, dict)
+        ]
+        file_shortcuts.append(normalize_file_shortcut({
+            "name": data["name"],
+            "path": data["path"],
+            "description": data["description"],
+            "type": "url",
+        }))
+        self.cfg.set(["file_shortcuts"], file_shortcuts)
+        return True
 
     def edit_file_meta(self, filename):
         if self.menu is not None:

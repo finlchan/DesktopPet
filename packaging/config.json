@@ -8,13 +8,19 @@
     "size": 120,
     "opacity": 0.9,
     "pos_x": 100,
-    "pos_y": 100
+    "pos_y": 100,
+    "screen_name": "",
+    "rel_x": null,
+    "rel_y": null
   },
   "window": {
     "mode": "normal",
     "stay_on_top": false,
     "stay_on_bottom": false,
     "normal": true
+  },
+  "system": {
+    "start_with_windows": false
   },
   "shortcuts": [],
   "file_shortcuts": [],
