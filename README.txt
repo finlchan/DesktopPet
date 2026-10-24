@@ -1,7 +1,7 @@
 Desktop Pet
 ==================
 
-Version: 261024.02
+Version: 261024.03
 Published: 2026-10-24
 
 A floating shortcut menu and document record gadget on the Windows desktop.
@@ -14,7 +14,7 @@ Features
 4. Below that, "File / URL shortcuts"; click ">>" to open the submenu (search/filter; files and web links).
 5. The middle section shows "Document record"; click the ">>" button to open the submenu and browse/search files.
    The Document record submenu header has an "Open folder" button to open storage folder(s) in the file manager.
-6. Below Document record, "文字紀錄" (Text records); click ">>" to list article titles, then click a title to read the body.
+6. Below Document record, "小程式"; click ">>" for Text records and 運算 (平水計算 / 坡度運算).
 7. Drag files, folders, or URLs onto the pet to add shortcuts (prompt for name/description).
 8. The bottom has a "Settings" button to edit all configurations.
 9. Window level can be set to Normal, Always on top, or Always on bottom.
@@ -38,16 +38,25 @@ Settings
 4. Document record: set the "Title" and one or more "Data storage folders"
    (click Add to add additional folders);
    the app will automatically list all files in those folders.
-5. 文字紀錄: add/edit/delete text records (Title + Body); list has search/filter.
+5. Text records: add/edit/delete text records (Title + Body); list has search/filter.
 6. System: set window level (Normal / Always on top / Always on bottom);
    enable/disable "Start with Windows" (registry Run key; Windows only).
+
+What's new in 261024.03 (2026-10-24)
+--------
+1. Pet menu: new top-level "小程式" section with >> submenu.
+2. Text records moved under 小程式 (English label; config key still "text_records"); Settings tab renamed to "Text records".
+3. 小程式 → 運算 → 平水計算: linear interpolate level at target distance
+   (level = high − (high−low)×(target/full); extrapolation allowed with note).
+4. 小程式 → 運算 → 坡度運算: three tools — 兩點高差求坡度, 坡度推算高程, 坡度單位互相運算
+   (Fall %, 1 in X, angle DMS / DD.MMSS).
 
 What's new in 261024.02 (2026-10-24)
 --------
 1. Document record submenu: "Open folder" button in the header opens the storage folder(s) in the OS file manager
    (one folder opens directly; multiple folders show a picker menu).
-2. 文字紀錄 (Text records): new pet-menu section with >> submenu of article titles; click a title to read the body.
-3. Settings tab "文字紀錄" to add/edit/delete/reorder text records; config key "text_records": [{title, body}, …]
+2. Text records: pet-menu section with >> submenu of article titles; click a title to read the body.
+3. Settings tab "Text records" to add/edit/delete/reorder text records; config key "text_records": [{title, body}, …]
    (backward compatible — older configs omit the key).
 
 What's new in 261024.01 (2026-10-24)

@@ -7,6 +7,7 @@ A floating shortcut menu and document record gadget on the desktop.
 
 import html
 import json
+import math
 import os
 import random
 import sys
@@ -21,8 +22,9 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout, QHBoxLayout,
     QPushButton, QLineEdit, QTextEdit, QListWidget, QListWidgetItem,
     QFileDialog, QDialog, QFormLayout, QTabWidget, QComboBox,
-    QSpinBox, QCheckBox, QMessageBox, QMenu, QStyle,
-    QSystemTrayIcon, QPlainTextEdit, QFrame,
+    QSpinBox, QDoubleSpinBox, QCheckBox, QMessageBox, QMenu, QStyle,
+    QSystemTrayIcon, QPlainTextEdit, QFrame, QRadioButton, QButtonGroup,
+    QScrollArea, QSizePolicy,
 )
 
 
@@ -44,7 +46,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261024.02"
+APP_VERSION = "261024.03"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -786,7 +788,7 @@ class SettingsDialog(QDialog):
 
         self.tabs.addTab(doc_tab, "Document Record")
 
-        # --- Text records (文字紀錄) ---
+        # --- Text records ---
         text_tab = QWidget()
         text_layout = QVBoxLayout(text_tab)
 
@@ -828,7 +830,7 @@ class SettingsDialog(QDialog):
         text_layout.addLayout(tr_btn_layout)
 
         tr_info = QLabel(
-            "Text records appear under 文字紀錄 in the pet menu. "
+            "Text records appear under 小程式 → Text records in the pet menu. "
             "Click >> to browse titles; click a title to read the body."
         )
         tr_info.setWordWrap(True)
@@ -836,7 +838,7 @@ class SettingsDialog(QDialog):
         text_layout.addStretch()
 
         self.text_record_list.currentRowChanged.connect(self.load_text_record_to_form)
-        self.tabs.addTab(text_tab, "文字紀錄")
+        self.tabs.addTab(text_tab, "Text records")
 
         sys_tab = QWidget()
         sys_layout = QFormLayout(sys_tab)
@@ -1375,6 +1377,260 @@ MENU_STYLE = """
     }
 """
 
+# Dark theme for mini-program calculator dialogs (matches surveying tool refs).
+CALC_DIALOG_STYLE = """
+    QDialog, QScrollArea, QWidget#calcRoot {
+        background-color: #1e1e1e;
+        color: #e8e8e8;
+        font-family: "Microsoft JhengHei", "Segoe UI", sans-serif;
+        font-size: 10pt;
+    }
+    QLabel { color: #d0d0d0; }
+    QLabel#calcSectionTitle {
+        color: #ffffff;
+        font-weight: bold;
+        font-size: 11pt;
+    }
+    QLabel#calcHint { color: #a8a8a8; }
+    QLabel#calcResult {
+        background-color: #1a2e1a;
+        color: #7CFC7C;
+        border: 1px solid #2d5a2d;
+        border-radius: 6px;
+        padding: 10px;
+        font-family: "Consolas", "Courier New", monospace;
+    }
+    QDoubleSpinBox, QAbstractSpinBox, QLineEdit {
+        background-color: #2a2a2a;
+        color: #f0f0f0;
+        border: 1px solid #555;
+        border-radius: 4px;
+        padding: 4px 6px;
+        min-height: 26px;
+        selection-background-color: #3d5a80;
+        selection-color: #ffffff;
+    }
+    QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
+        width: 0;
+        border: none;
+    }
+    QPushButton {
+        background-color: #333333;
+        color: #f0f0f0;
+        border: 1px solid #555;
+        border-radius: 4px;
+        padding: 6px 10px;
+    }
+    QPushButton:hover { background-color: #444444; }
+    QPushButton#calcAction {
+        background-color: #2c2c2c;
+        min-height: 28px;
+    }
+    QPushButton#stepBtn {
+        min-width: 28px;
+        max-width: 28px;
+        padding: 4px;
+        text-align: center;
+    }
+    QRadioButton { color: #e0e0e0; spacing: 6px; }
+    QFrame#calcSection {
+        background-color: #252525;
+        border: 1px solid #3a3a3a;
+        border-radius: 8px;
+    }
+"""
+
+
+# ---------------------------------------------------------------------------
+# Surveying / slope math helpers
+# ---------------------------------------------------------------------------
+def format_dms(degrees):
+    """Format decimal degrees as D° M' S.ss\" (survey display)."""
+    sign = "-" if degrees < 0 else ""
+    deg = abs(degrees)
+    d = int(deg)
+    m_float = (deg - d) * 60.0
+    m = int(m_float)
+    s = (m_float - m) * 60.0
+    # Handle float carry (e.g. 59.999 → 60).
+    if s >= 59.995:
+        s = 0.0
+        m += 1
+    if m >= 60:
+        m = 0
+        d += 1
+    return f"{sign}{d}° {m}' {s:05.2f}\""
+
+
+def degrees_to_ddmmss(degrees):
+    """Encode decimal degrees as surveying DD.MMSS (e.g. 2°51'44.66\" → 2.514466)."""
+    sign = -1.0 if degrees < 0 else 1.0
+    deg = abs(degrees)
+    d = int(deg)
+    m_float = (deg - d) * 60.0
+    m = int(m_float)
+    s = (m_float - m) * 60.0
+    if s >= 59.995:
+        s = 0.0
+        m += 1
+    if m >= 60:
+        m = 0
+        d += 1
+    return sign * (d + m / 100.0 + s / 10000.0)
+
+
+def ddmmss_to_degrees(ddmmss):
+    """Decode surveying DD.MMSS to decimal degrees."""
+    sign = -1.0 if ddmmss < 0 else 1.0
+    v = abs(ddmmss)
+    d = int(v)
+    frac = round(v - d, 10)
+    mm_ss = frac * 100.0
+    m = int(mm_ss)
+    s = (mm_ss - m) * 100.0
+    return sign * (d + m / 60.0 + s / 3600.0)
+
+
+def slope_from_length_diff(length, high_lv, low_lv):
+    """
+    Type A: two-point height difference → slope.
+    rise = high_lv - low_lv; Fall% = rise/L*100; 1 in X = L/rise; angle = atan(rise/L).
+    """
+    if length == 0:
+        raise ValueError("長度 (L) 必須不為 0")
+    rise = high_lv - low_lv
+    if rise == 0:
+        return 0.0, float("inf"), 0.0
+    fall_pct = (rise / length) * 100.0
+    one_in_x = length / rise
+    angle_deg = math.degrees(math.atan(rise / length))
+    return fall_pct, one_in_x, angle_deg
+
+
+def ending_lv_from_fall(length, start_lv, fall_pct):
+    """
+    Type B: slope → ending elevation (survey “fall” convention).
+    drop = L * fall%/100; ending = start - drop (positive fall = downhill).
+    """
+    drop = length * (fall_pct / 100.0)
+    ending = start_lv - drop
+    if fall_pct == 0:
+        return ending, float("inf"), 0.0
+    one_in_x = 100.0 / fall_pct
+    angle_deg = math.degrees(math.atan(fall_pct / 100.0))
+    return ending, one_in_x, angle_deg
+
+
+def convert_slope_units(known_kind, value):
+    """
+    Live convert between Fall %, 1 in X, and angle (decimal degrees).
+    known_kind: 'fall' | 'xin' | 'angle'
+    Returns (fall_pct, one_in_x, angle_deg).
+    """
+    if known_kind == "fall":
+        fall_pct = value
+        if fall_pct == 0:
+            return 0.0, float("inf"), 0.0
+        one_in_x = 100.0 / fall_pct
+        angle_deg = math.degrees(math.atan(fall_pct / 100.0))
+        return fall_pct, one_in_x, angle_deg
+    if known_kind == "xin":
+        if value == 0:
+            raise ValueError("1 in X 的 X 不可為 0")
+        one_in_x = value
+        fall_pct = 100.0 / one_in_x
+        angle_deg = math.degrees(math.atan(1.0 / one_in_x))
+        return fall_pct, one_in_x, angle_deg
+    if known_kind == "angle":
+        angle_deg = value
+        if abs(angle_deg) % 180 == 90:
+            raise ValueError("角度不可為 ±90°")
+        fall_pct = 100.0 * math.tan(math.radians(angle_deg))
+        if fall_pct == 0:
+            return 0.0, float("inf"), angle_deg
+        one_in_x = 100.0 / fall_pct
+        return fall_pct, one_in_x, angle_deg
+    raise ValueError(f"Unknown slope unit kind: {known_kind}")
+
+
+def level_at_target(high_level, low_level, full_length, target_distance):
+    """
+    平水計算 (linear interpolate along a grade line).
+    Assumes high level at chainage 0 and low level at full_length:
+        level = high - (high - low) * (target / full)
+    Extrapolation is allowed when target is outside [0, full].
+    """
+    if full_length <= 0:
+        raise ValueError("全長必須大於 0")
+    return high_level - (high_level - low_level) * (target_distance / full_length)
+
+
+def format_one_in_x(xin):
+    if xin == float("inf") or xin == float("-inf"):
+        return "1 in ∞"
+    return f"1 in {xin:.3f}"
+
+
+class NumericStepper(QWidget):
+    """Labeled numeric field with − / + steppers (matches slope-calc refs)."""
+
+    valueChanged = Signal(float)
+
+    def __init__(
+        self,
+        label,
+        value=0.0,
+        minimum=-1_000_000.0,
+        maximum=1_000_000.0,
+        step=0.1,
+        decimals=3,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self._step = step
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        self.caption = QLabel(label)
+        layout.addWidget(self.caption)
+
+        row = QHBoxLayout()
+        row.setSpacing(4)
+        self.btn_minus = QPushButton("−")
+        self.btn_minus.setObjectName("stepBtn")
+        self.spin = QDoubleSpinBox()
+        self.spin.setRange(minimum, maximum)
+        self.spin.setDecimals(decimals)
+        self.spin.setSingleStep(step)
+        self.spin.setValue(value)
+        self.spin.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
+        self.spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.spin.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.btn_plus = QPushButton("+")
+        self.btn_plus.setObjectName("stepBtn")
+        self.btn_minus.clicked.connect(lambda: self._nudge(-1))
+        self.btn_plus.clicked.connect(lambda: self._nudge(1))
+        self.spin.valueChanged.connect(self.valueChanged.emit)
+        row.addWidget(self.btn_minus)
+        row.addWidget(self.spin, 1)
+        row.addWidget(self.btn_plus)
+        layout.addLayout(row)
+
+    def _nudge(self, direction):
+        self.spin.setValue(self.spin.value() + direction * self._step)
+
+    def value(self):
+        return self.spin.value()
+
+    def setValue(self, value):
+        self.spin.setValue(value)
+
+    def setEnabled(self, enabled):
+        super().setEnabled(enabled)
+        self.spin.setEnabled(enabled)
+        self.btn_minus.setEnabled(enabled)
+        self.btn_plus.setEnabled(enabled)
+
 
 class PopupPanel(QWidget):
     """Frameless tool window that closes when it loses focus."""
@@ -1854,6 +2110,288 @@ class FileShortcutsSubMenu(PopupPanel):
 
 
 # ---------------------------------------------------------------------------
+# Mini-program calculators: 平水計算 / 坡度運算
+# ---------------------------------------------------------------------------
+class LevelCalcDialog(QDialog):
+    """平水計算 — linear interpolate level at a target chainage."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("平水計算")
+        self.setMinimumSize(420, 360)
+        self.setStyleSheet(CALC_DIALOG_STYLE)
+        root = QVBoxLayout(self)
+        root.setSpacing(10)
+
+        title = QLabel("平水計算")
+        title.setObjectName("calcSectionTitle")
+        root.addWidget(title)
+        hint = QLabel(
+            "假設高位平水在距離 0、低位平水在全長處，線性內插目標距離的平水。"
+            "\n公式：平水 = 高位 − (高位 − 低位) × (目標距離 ÷ 全長)"
+            "\n目標距離可超出 [0, 全長]（外插），結果旁會標示。"
+        )
+        hint.setObjectName("calcHint")
+        hint.setWordWrap(True)
+        root.addWidget(hint)
+
+        self.high = NumericStepper("高位平水", 100.0, step=0.1)
+        self.low = NumericStepper("低位平水", 90.0, step=0.1)
+        self.full = NumericStepper("全長", 50.0, minimum=0.001, step=0.1)
+        self.target = NumericStepper("目標距離", 25.0, step=0.1)
+        for w in (self.high, self.low, self.full, self.target):
+            root.addWidget(w)
+
+        calc_btn = QPushButton("計算平水")
+        calc_btn.setObjectName("calcAction")
+        calc_btn.clicked.connect(self._calculate)
+        root.addWidget(calc_btn)
+
+        self.result = QLabel("結果將顯示於此")
+        self.result.setObjectName("calcResult")
+        self.result.setWordWrap(True)
+        root.addWidget(self.result)
+        root.addStretch()
+
+        close_row = QHBoxLayout()
+        close_row.addStretch()
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        close_row.addWidget(close_btn)
+        root.addLayout(close_row)
+
+    def _calculate(self):
+        try:
+            full = self.full.value()
+            target = self.target.value()
+            level = level_at_target(
+                self.high.value(), self.low.value(), full, target
+            )
+            note = ""
+            if target < 0 or target > full:
+                note = "\n（目標距離超出 [0, 全長]，已外插）"
+            elif abs(target) < 1e-12:
+                note = "\n（位於起點／高位）"
+            elif abs(target - full) < 1e-12:
+                note = "\n（位於終點／低位）"
+            self.result.setText(
+                f"◆ 目標距離的平水: {level:.3f}{note}"
+            )
+        except ValueError as exc:
+            self.result.setText(f"輸入錯誤: {exc}")
+
+
+class SlopeCalcDialog(QDialog):
+    """坡度運算 — three calculators matching the surveying reference UIs."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("坡度運算")
+        self.setMinimumSize(640, 720)
+        self.resize(700, 780)
+        self.setStyleSheet(CALC_DIALOG_STYLE)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        outer.addWidget(scroll)
+
+        root_w = QWidget()
+        root_w.setObjectName("calcRoot")
+        scroll.setWidget(root_w)
+        root = QVBoxLayout(root_w)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(14)
+
+        root.addWidget(self._build_section_a())
+        root.addWidget(self._build_section_b())
+        root.addWidget(self._build_section_c())
+
+        close_row = QHBoxLayout()
+        close_row.addStretch()
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        close_row.addWidget(close_btn)
+        root.addLayout(close_row)
+
+    def _section_frame(self, number, title, hint):
+        frame = QFrame()
+        frame.setObjectName("calcSection")
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(12, 10, 12, 12)
+        layout.setSpacing(8)
+        head = QLabel(f"{number}  {title}")
+        head.setObjectName("calcSectionTitle")
+        layout.addWidget(head)
+        hint_lbl = QLabel(hint)
+        hint_lbl.setObjectName("calcHint")
+        hint_lbl.setWordWrap(True)
+        layout.addWidget(hint_lbl)
+        return frame, layout
+
+    def _build_section_a(self):
+        frame, layout = self._section_frame(
+            "1",
+            "兩點高差求坡度",
+            "輸入長度與高低點 LV，計算各項坡度數值。",
+        )
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        self.a_length = NumericStepper("長度 (L)", 10.0, minimum=0.001, step=0.1)
+        self.a_high = NumericStepper("高位 LV", 10.0, step=0.1)
+        self.a_low = NumericStepper("低位 LV", 9.5, step=0.1)
+        row.addWidget(self.a_length)
+        row.addWidget(self.a_high)
+        row.addWidget(self.a_low)
+        layout.addLayout(row)
+
+        btn = QPushButton("計算坡度")
+        btn.setObjectName("calcAction")
+        btn.clicked.connect(self._calc_a)
+        layout.addWidget(btn)
+
+        self.a_result = QLabel("")
+        self.a_result.setObjectName("calcResult")
+        self.a_result.setWordWrap(True)
+        self.a_result.hide()
+        layout.addWidget(self.a_result)
+        return frame
+
+    def _build_section_b(self):
+        frame, layout = self._section_frame(
+            "2",
+            "坡度推算高程",
+            "輸入長度、起始 LV 與坡度(%)，計算結尾點 LV。",
+        )
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        self.b_length = NumericStepper("長度 (L)", 10.0, minimum=0.001, step=0.1)
+        self.b_start = NumericStepper("起始 LV", 10.0, step=0.1)
+        self.b_fall = NumericStepper("坡度 Fall (%)", 5.0, step=0.1)
+        row.addWidget(self.b_length)
+        row.addWidget(self.b_start)
+        row.addWidget(self.b_fall)
+        layout.addLayout(row)
+
+        btn = QPushButton("計算高程")
+        btn.setObjectName("calcAction")
+        btn.clicked.connect(self._calc_b)
+        layout.addWidget(btn)
+
+        self.b_result = QLabel("")
+        self.b_result.setObjectName("calcResult")
+        self.b_result.setWordWrap(True)
+        self.b_result.hide()
+        layout.addWidget(self.b_result)
+        return frame
+
+    def _build_section_c(self):
+        frame, layout = self._section_frame(
+            "3",
+            "坡度單位互相運算框",
+            "選擇你目前已知的單位，輸入後即時換算出其餘兩項結果。",
+        )
+        layout.addWidget(QLabel("選擇已知條件:"))
+        self.c_group = QButtonGroup(self)
+        self.radio_fall = QRadioButton("已知 坡度 (Fall %)")
+        self.radio_xin = QRadioButton("已知 1 in X")
+        self.radio_angle = QRadioButton("已知 角度 (DD.MMSS)")
+        self.radio_fall.setChecked(True)
+        for i, radio in enumerate(
+            (self.radio_fall, self.radio_xin, self.radio_angle)
+        ):
+            self.c_group.addButton(radio, i)
+            layout.addWidget(radio)
+        self.c_group.idClicked.connect(lambda _id: self._on_c_kind_changed())
+
+        self.c_input_label = QLabel("輸入 坡度 (Fall %)")
+        layout.addWidget(self.c_input_label)
+        self.c_value = NumericStepper("", 1.0, step=0.1, decimals=6)
+        self.c_value.caption.hide()
+        self.c_value.valueChanged.connect(self._calc_c_live)
+        layout.addWidget(self.c_value)
+
+        self.c_result = QLabel("")
+        self.c_result.setObjectName("calcResult")
+        self.c_result.setWordWrap(True)
+        layout.addWidget(self.c_result)
+        self._calc_c_live()
+        return frame
+
+    def _calc_a(self):
+        try:
+            fall, xin, ang = slope_from_length_diff(
+                self.a_length.value(), self.a_high.value(), self.a_low.value()
+            )
+            self.a_result.setText(
+                "◆ 坡度 Fall: "
+                f"{fall:.3f} %\n"
+                f"◆ 1 IN X: {format_one_in_x(xin)}\n"
+                f"◆ 角度: {format_dms(ang)}"
+            )
+            self.a_result.show()
+        except ValueError as exc:
+            self.a_result.setText(f"輸入錯誤: {exc}")
+            self.a_result.show()
+
+    def _calc_b(self):
+        ending, xin, ang = ending_lv_from_fall(
+            self.b_length.value(), self.b_start.value(), self.b_fall.value()
+        )
+        self.b_result.setText(
+            f"◆ 結尾 LV: {ending:.3f}\n"
+            f"◆ 1 IN X: {format_one_in_x(xin)}\n"
+            f"◆ 角度: {format_dms(ang)}"
+        )
+        self.b_result.show()
+
+    def _c_kind(self):
+        if self.radio_xin.isChecked():
+            return "xin"
+        if self.radio_angle.isChecked():
+            return "angle"
+        return "fall"
+
+    def _on_c_kind_changed(self):
+        kind = self._c_kind()
+        if kind == "fall":
+            self.c_input_label.setText("輸入 坡度 (Fall %)")
+        elif kind == "xin":
+            self.c_input_label.setText("輸入 1 in X")
+        else:
+            self.c_input_label.setText("輸入 角度 (DD.MMSS)")
+        self._calc_c_live()
+
+    def _calc_c_live(self, *_args):
+        kind = self._c_kind()
+        raw = self.c_value.value()
+        try:
+            if kind == "angle":
+                # Input is DD.MMSS surveying encoding; convert to decimal degrees.
+                angle_deg = ddmmss_to_degrees(raw)
+                fall, xin, ang = convert_slope_units("angle", angle_deg)
+            else:
+                fall, xin, ang = convert_slope_units(kind, raw)
+            lines = []
+            if kind != "fall":
+                lines.append(f"◆ 坡度 Fall: {fall:.3f} %")
+            if kind != "xin":
+                lines.append(f"◆ 1 IN X: {format_one_in_x(xin)}")
+            if kind != "angle":
+                lines.append(
+                    f"◆ 角度: {format_dms(ang)}  (DD.MMSS: {degrees_to_ddmmss(ang):.6f})"
+                )
+            else:
+                # Still show DMS for clarity when DD.MMSS was the input.
+                lines.append(f"◆ 角度 (DMS): {format_dms(ang)}")
+            self.c_result.setText("\n".join(lines) if lines else "—")
+        except ValueError as exc:
+            self.c_result.setText(f"輸入錯誤: {exc}")
+
+
+# ---------------------------------------------------------------------------
 # Text record readable view
 # ---------------------------------------------------------------------------
 class TextRecordViewDialog(QDialog):
@@ -1861,7 +2399,7 @@ class TextRecordViewDialog(QDialog):
 
     def __init__(self, title, body, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(title or "文字紀錄")
+        self.setWindowTitle(title or "Text records")
         self.setMinimumSize(420, 320)
         layout = QVBoxLayout(self)
         title_lbl = QLabel(title or "Untitled")
@@ -1905,7 +2443,7 @@ class TextRecordsSubMenu(PopupPanel):
         self.main_layout.setContentsMargins(8, 8, 8, 8)
         self.main_layout.setSpacing(4)
 
-        self.title_label = QLabel("文字紀錄")
+        self.title_label = QLabel("Text records")
         self.title_label.setStyleSheet("color: white; font-weight: bold;")
         self.main_layout.addWidget(self.title_label)
 
@@ -2021,6 +2559,243 @@ class TextRecordsSubMenu(PopupPanel):
 
 
 # ---------------------------------------------------------------------------
+# 運算 submenu (third level under 小程式)
+# ---------------------------------------------------------------------------
+class OperationsSubMenu(PopupPanel):
+    """Third-level menu: 平水計算 / 坡度運算."""
+
+    def __init__(self):
+        super().__init__()
+        self._level_dialog = None
+        self._slope_dialog = None
+        self.build_ui()
+
+    def build_ui(self):
+        top_layout = QVBoxLayout(self)
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.setSpacing(0)
+
+        self.container = QFrame(self)
+        self.container.setObjectName("subMenuContainer")
+        top_layout.addWidget(self.container)
+
+        layout = QVBoxLayout(self.container)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(4)
+
+        title = QLabel("運算")
+        title.setStyleSheet("color: white; font-weight: bold;")
+        layout.addWidget(title)
+
+        sep = QLabel()
+        sep.setFixedHeight(1)
+        sep.setStyleSheet("background-color: rgba(255,255,255,120);")
+        layout.addWidget(sep)
+
+        btn_level = QPushButton("平水計算")
+        btn_level.setStyleSheet(menu_button_style("#5a4a6e"))
+        btn_level.clicked.connect(self.open_level_calc)
+        layout.addWidget(btn_level)
+
+        btn_slope = QPushButton("坡度運算")
+        btn_slope.setStyleSheet(menu_button_style("#4a5a6e"))
+        btn_slope.clicked.connect(self.open_slope_calc)
+        layout.addWidget(btn_slope)
+
+        self.setStyleSheet(MENU_STYLE + """
+            OperationsSubMenu { background-color: transparent; }
+        """)
+
+    def refresh_and_show(self, anchor_geometry):
+        self.adjustSize()
+        screen_geo = screen_available_geometry(self)
+        x = anchor_geometry.x() + anchor_geometry.width()
+        y = anchor_geometry.y()
+        if x + self.width() > screen_geo.right():
+            x = anchor_geometry.x() - self.width()
+        if y + self.height() > screen_geo.bottom():
+            y = screen_geo.bottom() - self.height()
+        self.move(max(screen_geo.left(), x), max(screen_geo.top(), y))
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def open_level_calc(self):
+        self._suppress_hide = True
+        if self._level_dialog is None:
+            self._level_dialog = LevelCalcDialog(None)
+        self._level_dialog.show()
+        self._level_dialog.raise_()
+        self._level_dialog.activateWindow()
+        QTimer.singleShot(200, self._release_suppress)
+
+    def open_slope_calc(self):
+        self._suppress_hide = True
+        if self._slope_dialog is None:
+            self._slope_dialog = SlopeCalcDialog(None)
+        self._slope_dialog.show()
+        self._slope_dialog.raise_()
+        self._slope_dialog.activateWindow()
+        QTimer.singleShot(200, self._release_suppress)
+
+    def _release_suppress(self):
+        self._suppress_hide = False
+
+    def _hide_if_inactive(self):
+        if self._suppress_hide or self.isActiveWindow():
+            return
+        active = QApplication.activeWindow()
+        if isinstance(active, (LevelCalcDialog, SlopeCalcDialog)):
+            return
+        if self._level_dialog is not None and self._level_dialog.isVisible():
+            return
+        if self._slope_dialog is not None and self._slope_dialog.isVisible():
+            return
+        self.hide()
+
+
+# ---------------------------------------------------------------------------
+# 小程式 submenu (Text records + 運算)
+# ---------------------------------------------------------------------------
+class MiniProgramsSubMenu(PopupPanel):
+    """Second-level menu under 小程式: Text records + 運算."""
+
+    def __init__(self, config_manager):
+        super().__init__()
+        self.cfg = config_manager
+        self.text_records_submenu = None
+        self.operations_submenu = None
+        self.build_ui()
+
+    def build_ui(self):
+        top_layout = QVBoxLayout(self)
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.setSpacing(0)
+
+        self.container = QFrame(self)
+        self.container.setObjectName("subMenuContainer")
+        top_layout.addWidget(self.container)
+
+        layout = QVBoxLayout(self.container)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(4)
+
+        title = QLabel("小程式")
+        title.setStyleSheet("color: white; font-weight: bold;")
+        layout.addWidget(title)
+
+        sep = QLabel()
+        sep.setFixedHeight(1)
+        sep.setStyleSheet("background-color: rgba(255,255,255,120);")
+        layout.addWidget(sep)
+
+        # Text records >>
+        text_row = QHBoxLayout()
+        text_row.setSpacing(4)
+        text_lbl = QLabel("Text records")
+        text_lbl.setStyleSheet("color: white; font-weight: bold;")
+        btn_text = QPushButton(">>")
+        btn_text.setFixedWidth(30)
+        btn_text.setStyleSheet("text-align: center;" + menu_button_style("#4a4a4a"))
+        btn_text.clicked.connect(self.open_text_records)
+        text_row.addWidget(text_lbl)
+        text_row.addStretch()
+        text_row.addWidget(btn_text)
+        layout.addLayout(text_row)
+
+        # 運算 >>
+        ops_row = QHBoxLayout()
+        ops_row.setSpacing(4)
+        ops_lbl = QLabel("運算")
+        ops_lbl.setStyleSheet("color: white; font-weight: bold;")
+        btn_ops = QPushButton(">>")
+        btn_ops.setFixedWidth(30)
+        btn_ops.setStyleSheet("text-align: center;" + menu_button_style("#4a4a4a"))
+        btn_ops.clicked.connect(self.open_operations)
+        ops_row.addWidget(ops_lbl)
+        ops_row.addStretch()
+        ops_row.addWidget(btn_ops)
+        layout.addLayout(ops_row)
+
+        self.setStyleSheet(MENU_STYLE + """
+            MiniProgramsSubMenu { background-color: transparent; }
+        """)
+
+    def refresh_and_show(self, anchor_geometry):
+        self.adjustSize()
+        screen_geo = screen_available_geometry(self)
+        x = anchor_geometry.x() + anchor_geometry.width()
+        y = anchor_geometry.y()
+        if x + self.width() > screen_geo.right():
+            x = anchor_geometry.x() - self.width()
+        if y + self.height() > screen_geo.bottom():
+            y = screen_geo.bottom() - self.height()
+        self.move(max(screen_geo.left(), x), max(screen_geo.top(), y))
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _hide_nested(self, keep=None):
+        if keep != "text" and self.text_records_submenu is not None:
+            self.text_records_submenu.hide()
+        if keep != "ops" and self.operations_submenu is not None:
+            self.operations_submenu.hide()
+
+    def open_text_records(self):
+        if self.text_records_submenu is None:
+            self.text_records_submenu = TextRecordsSubMenu(self.cfg)
+        self._hide_nested(keep="text")
+        self._suppress_hide = True
+        self.text_records_submenu.refresh_and_show(self.geometry())
+        QTimer.singleShot(300, self._release_suppress)
+
+    def open_operations(self):
+        if self.operations_submenu is None:
+            self.operations_submenu = OperationsSubMenu()
+        self._hide_nested(keep="ops")
+        self._suppress_hide = True
+        self.operations_submenu.refresh_and_show(self.geometry())
+        QTimer.singleShot(300, self._release_suppress)
+
+    def _release_suppress(self):
+        self._suppress_hide = False
+
+    def hideEvent(self, event):
+        if self.text_records_submenu is not None:
+            self.text_records_submenu.hide()
+        if self.operations_submenu is not None:
+            self.operations_submenu.hide()
+        super().hideEvent(event)
+
+    def _hide_if_inactive(self):
+        if self._suppress_hide or self.isActiveWindow():
+            return
+        if self.text_records_submenu is not None and (
+            self.text_records_submenu.isVisible()
+            or self.text_records_submenu.isActiveWindow()
+        ):
+            return
+        if self.operations_submenu is not None and (
+            self.operations_submenu.isVisible()
+            or self.operations_submenu.isActiveWindow()
+        ):
+            return
+        active = QApplication.activeWindow()
+        if isinstance(
+            active,
+            (
+                TextRecordsSubMenu,
+                TextRecordViewDialog,
+                OperationsSubMenu,
+                LevelCalcDialog,
+                SlopeCalcDialog,
+            ),
+        ):
+            return
+        self.hide()
+
+
+# ---------------------------------------------------------------------------
 # Main menu (semi-transparent popup)
 # ---------------------------------------------------------------------------
 class PetMenu(PopupPanel):
@@ -2035,7 +2810,7 @@ class PetMenu(PopupPanel):
         self.cfg = config_manager
         self.doc_submenu = None
         self.file_shortcuts_submenu = None
-        self.text_records_submenu = None
+        self.mini_programs_submenu = None
         self._folder_shortcuts = []
         self.build_ui()
 
@@ -2116,21 +2891,21 @@ class PetMenu(PopupPanel):
         sep2.setStyleSheet("background-color: rgba(255,255,255,120);")
         self.main_layout.addWidget(sep2)
 
-        # Text records (文字紀錄): collapsed header + >>
-        text_header = QHBoxLayout()
-        text_header.setSpacing(4)
-        self.text_records_title = QLabel("文字紀錄")
-        self.text_records_title.setStyleSheet("color: white; font-weight: bold;")
-        self.btn_text_open = QPushButton(">>")
-        self.btn_text_open.setFixedWidth(30)
-        self.btn_text_open.setStyleSheet(
+        # 小程式: collapsed header + >> (Text records + 運算 live inside)
+        mini_header = QHBoxLayout()
+        mini_header.setSpacing(4)
+        self.mini_programs_title = QLabel("小程式")
+        self.mini_programs_title.setStyleSheet("color: white; font-weight: bold;")
+        self.btn_mini_open = QPushButton(">>")
+        self.btn_mini_open.setFixedWidth(30)
+        self.btn_mini_open.setStyleSheet(
             "text-align: center;" + menu_button_style("#4a4a4a")
         )
-        self.btn_text_open.clicked.connect(self.open_text_records_submenu)
-        text_header.addWidget(self.text_records_title)
-        text_header.addStretch()
-        text_header.addWidget(self.btn_text_open)
-        self.main_layout.addLayout(text_header)
+        self.btn_mini_open.clicked.connect(self.open_mini_programs_submenu)
+        mini_header.addWidget(self.mini_programs_title)
+        mini_header.addStretch()
+        mini_header.addWidget(self.btn_mini_open)
+        self.main_layout.addLayout(mini_header)
 
         sep3 = QLabel()
         sep3.setFixedHeight(1)
@@ -2216,7 +2991,7 @@ class PetMenu(PopupPanel):
         pairs = (
             ("doc", self.doc_submenu),
             ("file", self.file_shortcuts_submenu),
-            ("text", self.text_records_submenu),
+            ("mini", self.mini_programs_submenu),
         )
         for key, submenu in pairs:
             if keep == key:
@@ -2242,12 +3017,12 @@ class PetMenu(PopupPanel):
         self.doc_submenu.refresh_and_show(self.geometry())
         QTimer.singleShot(300, self._release_suppress)
 
-    def open_text_records_submenu(self):
-        if self.text_records_submenu is None:
-            self.text_records_submenu = TextRecordsSubMenu(self.cfg)
-        self._hide_other_submenus(keep="text")
+    def open_mini_programs_submenu(self):
+        if self.mini_programs_submenu is None:
+            self.mini_programs_submenu = MiniProgramsSubMenu(self.cfg)
+        self._hide_other_submenus(keep="mini")
         self._suppress_hide = True
-        self.text_records_submenu.refresh_and_show(self.geometry())
+        self.mini_programs_submenu.refresh_and_show(self.geometry())
         QTimer.singleShot(300, self._release_suppress)
 
     def _release_suppress(self):
@@ -2258,8 +3033,8 @@ class PetMenu(PopupPanel):
             self.doc_submenu.hide()
         if self.file_shortcuts_submenu is not None:
             self.file_shortcuts_submenu.hide()
-        if self.text_records_submenu is not None:
-            self.text_records_submenu.hide()
+        if self.mini_programs_submenu is not None:
+            self.mini_programs_submenu.hide()
         super().hideEvent(event)
 
     def _hide_if_inactive(self):
@@ -2274,15 +3049,25 @@ class PetMenu(PopupPanel):
             or self.file_shortcuts_submenu.isActiveWindow()
         ):
             return
-        if self.text_records_submenu is not None and (
-            self.text_records_submenu.isVisible()
-            or self.text_records_submenu.isActiveWindow()
+        if self.mini_programs_submenu is not None and (
+            self.mini_programs_submenu.isVisible()
+            or self.mini_programs_submenu.isActiveWindow()
         ):
             return
         active = QApplication.activeWindow()
         if isinstance(
             active,
-            (QMenu, DocumentSubMenu, FileShortcutsSubMenu, TextRecordsSubMenu, TextRecordViewDialog),
+            (
+                QMenu,
+                DocumentSubMenu,
+                FileShortcutsSubMenu,
+                MiniProgramsSubMenu,
+                TextRecordsSubMenu,
+                TextRecordViewDialog,
+                OperationsSubMenu,
+                LevelCalcDialog,
+                SlopeCalcDialog,
+            ),
         ):
             return
         self.hide()
