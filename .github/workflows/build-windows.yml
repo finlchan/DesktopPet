@@ -1,0 +1,88 @@
+name: Build Windows EXE
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing release tag to upload DesktopPet.exe to (leave empty to skip release upload)"
+        required: false
+        default: "v261024.03"
+        type: string
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Verify blank packaging template
+        shell: cmd
+        run: |
+          if not exist "packaging\config.json" (
+            echo ERROR: packaging\config.json missing. Refusing to build without blank template.
+            exit /b 1
+          )
+
+      - name: Build DesktopPet.exe with PyInstaller
+        shell: cmd
+        run: |
+          python -m PyInstaller --noconfirm --onefile --windowed --icon "logo.ico" --add-data "packaging\config.json;." --add-data "paypal_qr.jpg;." --add-data "logo.ico;." --add-data "logo.png;." --add-data "README.txt;." --name "DesktopPet" desktop_pet.py
+
+      - name: Upload DesktopPet.exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DesktopPet-windows
+          path: dist/DesktopPet.exe
+          if-no-files-found: error
+
+      - name: Resolve release tag
+        id: release
+        shell: bash
+        run: |
+          TAG=""
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref_type }}" == "tag" ]]; then
+            TAG="${{ github.ref_name }}"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG="${{ inputs.release_tag }}"
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          if [[ -n "${TAG}" ]]; then
+            echo "Uploading to release tag: ${TAG}"
+          else
+            echo "No release tag set; skipping release upload."
+          fi
+
+      - name: Upload EXE to GitHub Release
+        if: steps.release.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG does not exist. Create it first, then re-run."
+            exit 1
+          fi
+          # Replace existing DesktopPet.exe if present
+          gh release upload "$RELEASE_TAG" "dist/DesktopPet.exe" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+          echo "Uploaded DesktopPet.exe to release $RELEASE_TAG"
