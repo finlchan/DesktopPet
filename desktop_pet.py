@@ -21,8 +21,8 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout, QHBoxLayout,
     QPushButton, QLineEdit, QTextEdit, QListWidget, QListWidgetItem,
     QFileDialog, QDialog, QFormLayout, QTabWidget, QComboBox,
-    QSpinBox, QCheckBox, QMessageBox, QMenu,
-    QSystemTrayIcon, QPlainTextEdit, QFrame
+    QSpinBox, QCheckBox, QMessageBox, QMenu, QStyle,
+    QSystemTrayIcon, QPlainTextEdit, QFrame,
 )
 
 
@@ -44,7 +44,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261024.01"
+APP_VERSION = "261024.02"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -93,7 +93,9 @@ DEFAULT_CONFIG = {
         "folders": [],
         "sort_by": "mtime",
         "files": {}
-    }
+    },
+    # Text records (title + body). Older configs omit this key.
+    "text_records": [],
 }
 
 
@@ -316,6 +318,22 @@ def normalize_file_shortcut(sc):
     }
 
 
+def normalize_text_record(rec):
+    """Normalize a text record dict: {title, body}."""
+    if not isinstance(rec, dict):
+        return {"title": "Untitled", "body": ""}
+    title = rec.get("title", "")
+    body = rec.get("body", "")
+    if not isinstance(title, str):
+        title = str(title or "")
+    if not isinstance(body, str):
+        body = str(body or "")
+    return {
+        "title": title.strip() or "Untitled",
+        "body": body,
+    }
+
+
 def open_local_path(path):
     """Open a folder or file with the platform default handler."""
     target = Path(path)
@@ -453,6 +471,13 @@ class ConfigManager:
             ]
         else:
             self.config["file_shortcuts"] = []
+        raw_text = self.config.get("text_records")
+        if isinstance(raw_text, list):
+            self.config["text_records"] = [
+                normalize_text_record(rec) for rec in raw_text if isinstance(rec, dict)
+            ]
+        else:
+            self.config["text_records"] = []
 
     def save(self):
         try:
@@ -761,6 +786,58 @@ class SettingsDialog(QDialog):
 
         self.tabs.addTab(doc_tab, "Document Record")
 
+        # --- Text records (文字紀錄) ---
+        text_tab = QWidget()
+        text_layout = QVBoxLayout(text_tab)
+
+        text_layout.addWidget(QLabel("Item list (Title):"))
+        self.text_record_list = QListWidget()
+        self.text_record_list.setMaximumHeight(160)
+        self.text_record_filter = QLineEdit()
+        self.text_record_filter.setPlaceholderText("Search / filter text records…")
+        self.text_record_filter.textChanged.connect(
+            lambda text: filter_list_widget(self.text_record_list, text)
+        )
+        text_layout.addWidget(self.text_record_filter)
+        text_layout.addWidget(self.text_record_list)
+
+        text_form = QFormLayout()
+        self.tr_title = QLineEdit()
+        self.tr_body = QPlainTextEdit()
+        self.tr_body.setMinimumHeight(120)
+        text_form.addRow("Title:", self.tr_title)
+        text_form.addRow("Body:", self.tr_body)
+        text_layout.addLayout(text_form)
+
+        tr_btn_layout = QHBoxLayout()
+        self.btn_add_tr = QPushButton("Add")
+        self.btn_update_tr = QPushButton("Update")
+        self.btn_delete_tr = QPushButton("Delete")
+        self.btn_move_up_tr = QPushButton("Move Up")
+        self.btn_move_down_tr = QPushButton("Move Down")
+        self.btn_add_tr.clicked.connect(self.add_text_record)
+        self.btn_update_tr.clicked.connect(self.update_text_record)
+        self.btn_delete_tr.clicked.connect(self.delete_text_record)
+        self.btn_move_up_tr.clicked.connect(self.move_up_text_record)
+        self.btn_move_down_tr.clicked.connect(self.move_down_text_record)
+        tr_btn_layout.addWidget(self.btn_add_tr)
+        tr_btn_layout.addWidget(self.btn_update_tr)
+        tr_btn_layout.addWidget(self.btn_delete_tr)
+        tr_btn_layout.addWidget(self.btn_move_up_tr)
+        tr_btn_layout.addWidget(self.btn_move_down_tr)
+        text_layout.addLayout(tr_btn_layout)
+
+        tr_info = QLabel(
+            "Text records appear under 文字紀錄 in the pet menu. "
+            "Click >> to browse titles; click a title to read the body."
+        )
+        tr_info.setWordWrap(True)
+        text_layout.addWidget(tr_info)
+        text_layout.addStretch()
+
+        self.text_record_list.currentRowChanged.connect(self.load_text_record_to_form)
+        self.tabs.addTab(text_tab, "文字紀錄")
+
         sys_tab = QWidget()
         sys_layout = QFormLayout(sys_tab)
 
@@ -843,6 +920,17 @@ class SettingsDialog(QDialog):
         sort_code = normalize_sort(self.cfg.get("document_area", "sort_by"))
         sort_index = self.doc_sort_by.findData(sort_code)
         self.doc_sort_by.setCurrentIndex(sort_index if sort_index >= 0 else 0)
+
+        self.text_record_list.clear()
+        self.tr_title.clear()
+        self.tr_body.clear()
+        for rec in self.cfg.get("text_records") or []:
+            rec = normalize_text_record(rec)
+            item = QListWidgetItem(rec.get("title", "Untitled"))
+            item.setData(Qt.ItemDataRole.UserRole, rec)
+            self.text_record_list.addItem(item)
+        if hasattr(self, "text_record_filter"):
+            filter_list_widget(self.text_record_list, self.text_record_filter.text())
 
         mode = normalize_window_mode(self.cfg.get("window") or {})
         mode_index = self.window_mode.findData(mode)
@@ -969,6 +1057,61 @@ class SettingsDialog(QDialog):
         row = self.doc_folder_list.currentRow()
         if row >= 0:
             self.doc_folder_list.takeItem(row)
+
+    def _text_record_from_form(self):
+        return normalize_text_record({
+            "title": self.tr_title.text().strip(),
+            "body": self.tr_body.toPlainText(),
+        })
+
+    def load_text_record_to_form(self, row):
+        if row < 0:
+            return
+        item = self.text_record_list.item(row)
+        if not item:
+            return
+        data = normalize_text_record(item.data(Qt.ItemDataRole.UserRole) or {})
+        self.tr_title.setText(data.get("title", ""))
+        self.tr_body.setPlainText(data.get("body", ""))
+
+    def add_text_record(self):
+        rec = self._text_record_from_form()
+        item = QListWidgetItem(rec.get("title", "Untitled"))
+        item.setData(Qt.ItemDataRole.UserRole, rec)
+        self.text_record_list.addItem(item)
+        self.text_record_list.setCurrentItem(item)
+        filter_list_widget(self.text_record_list, self.text_record_filter.text())
+
+    def update_text_record(self):
+        row = self.text_record_list.currentRow()
+        if row < 0:
+            return
+        item = self.text_record_list.item(row)
+        rec = self._text_record_from_form()
+        item.setText(rec.get("title", "Untitled"))
+        item.setData(Qt.ItemDataRole.UserRole, rec)
+        filter_list_widget(self.text_record_list, self.text_record_filter.text())
+
+    def delete_text_record(self):
+        row = self.text_record_list.currentRow()
+        if row >= 0:
+            self.text_record_list.takeItem(row)
+
+    def move_up_text_record(self):
+        row = self.text_record_list.currentRow()
+        if row <= 0:
+            return
+        item = self.text_record_list.takeItem(row)
+        self.text_record_list.insertItem(row - 1, item)
+        self.text_record_list.setCurrentItem(item)
+
+    def move_down_text_record(self):
+        row = self.text_record_list.currentRow()
+        if row < 0 or row >= self.text_record_list.count() - 1:
+            return
+        item = self.text_record_list.takeItem(row)
+        self.text_record_list.insertItem(row + 1, item)
+        self.text_record_list.setCurrentItem(item)
 
     def load_shortcut_to_form(self, row):
         if row < 0:
@@ -1138,6 +1281,14 @@ class SettingsDialog(QDialog):
         self.cfg.set(["document_area", "folder"], folders[0] if folders else "", save=False)
         self.cfg.set(["document_area", "sort_by"], self.doc_sort_by.currentData() or "mtime", save=False)
 
+        text_records = []
+        for i in range(self.text_record_list.count()):
+            item = self.text_record_list.item(i)
+            text_records.append(
+                normalize_text_record(item.data(Qt.ItemDataRole.UserRole) or {})
+            )
+        self.cfg.set(["text_records"], text_records, save=False)
+
         mode = self.window_mode.currentData() or "normal"
         window = self.cfg.get("window") or {}
         apply_window_mode(window, mode)
@@ -1278,9 +1429,24 @@ class DocumentSubMenu(PopupPanel):
         self.main_layout.setContentsMargins(8, 8, 8, 8)
         self.main_layout.setSpacing(4)
 
+        header = QHBoxLayout()
+        header.setSpacing(4)
         self.title_label = QLabel("Document record")
         self.title_label.setStyleSheet("color: white; font-weight: bold;")
-        self.main_layout.addWidget(self.title_label)
+        self.btn_open_folder = QPushButton()
+        self.btn_open_folder.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon)
+        )
+        self.btn_open_folder.setToolTip("Open folder")
+        self.btn_open_folder.setFixedSize(28, 24)
+        self.btn_open_folder.setStyleSheet(
+            "text-align: center; padding: 2px;" + menu_button_style("#4a4a4a")
+        )
+        self.btn_open_folder.clicked.connect(self.open_storage_folder)
+        header.addWidget(self.title_label)
+        header.addStretch()
+        header.addWidget(self.btn_open_folder)
+        self.main_layout.addLayout(header)
 
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("Search files…")
@@ -1311,6 +1477,46 @@ class DocumentSubMenu(PopupPanel):
 
     def button_style(self, base_color):
         return menu_button_style(base_color)
+
+    def open_storage_folder(self):
+        """Open document storage folder(s) in the OS file manager."""
+        folders = normalize_document_folders(self.cfg.get("document_area") or {})
+        if not folders:
+            QMessageBox.information(
+                self,
+                "No storage folder",
+                "Add a data storage folder in Settings → Document Record.",
+            )
+            return
+        if len(folders) == 1:
+            self._open_folder_path(folders[0])
+            return
+        # Multiple folders: pick via menu (least surprising; user chooses).
+        self._suppress_hide = True
+        menu = QMenu(self)
+        for folder in folders:
+            label = folder
+            try:
+                name = Path(folder).name
+                if name:
+                    label = f"{name}  —  {folder}"
+            except Exception:
+                pass
+            action = QAction(label, self)
+            action.triggered.connect(
+                lambda checked=False, p=folder: self._open_folder_path(p)
+            )
+            menu.addAction(action)
+        menu.exec(self.btn_open_folder.mapToGlobal(self.btn_open_folder.rect().bottomLeft()))
+        self._suppress_hide = False
+
+    def _open_folder_path(self, folder):
+        try:
+            open_local_path(folder)
+        except FileNotFoundError:
+            QMessageBox.warning(self, "Path does not exist", f"Not found:\n{folder}")
+        except Exception as e:
+            QMessageBox.warning(self, "Open failed", str(e))
 
     def _on_search_changed(self, _text):
         self.show_page(0)
@@ -1648,6 +1854,173 @@ class FileShortcutsSubMenu(PopupPanel):
 
 
 # ---------------------------------------------------------------------------
+# Text record readable view
+# ---------------------------------------------------------------------------
+class TextRecordViewDialog(QDialog):
+    """Read-only dialog showing a text record title + body."""
+
+    def __init__(self, title, body, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title or "文字紀錄")
+        self.setMinimumSize(420, 320)
+        layout = QVBoxLayout(self)
+        title_lbl = QLabel(title or "Untitled")
+        title_lbl.setStyleSheet("font-weight: bold; font-size: 11pt;")
+        title_lbl.setWordWrap(True)
+        layout.addWidget(title_lbl)
+        body_edit = QPlainTextEdit()
+        body_edit.setReadOnly(True)
+        body_edit.setPlainText(body or "")
+        layout.addWidget(body_edit)
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        row = QHBoxLayout()
+        row.addStretch()
+        row.addWidget(close_btn)
+        layout.addLayout(row)
+
+
+# ---------------------------------------------------------------------------
+# Text records submenu (opened via >> like Document record)
+# ---------------------------------------------------------------------------
+class TextRecordsSubMenu(PopupPanel):
+    """Submenu listing text-record titles; click opens the article body."""
+
+    def __init__(self, config_manager):
+        super().__init__()
+        self.cfg = config_manager
+        self._all_records = []
+        self.build_ui()
+
+    def build_ui(self):
+        top_layout = QVBoxLayout(self)
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.setSpacing(0)
+
+        self.container = QFrame(self)
+        self.container.setObjectName("subMenuContainer")
+        top_layout.addWidget(self.container)
+
+        self.main_layout = QVBoxLayout(self.container)
+        self.main_layout.setContentsMargins(8, 8, 8, 8)
+        self.main_layout.setSpacing(4)
+
+        self.title_label = QLabel("文字紀錄")
+        self.title_label.setStyleSheet("color: white; font-weight: bold;")
+        self.main_layout.addWidget(self.title_label)
+
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("Search text records…")
+        self.search_edit.setClearButtonEnabled(True)
+        self.search_edit.setStyleSheet(
+            "QLineEdit { background: rgba(255,255,255,230); color: #222; "
+            "border-radius: 4px; padding: 3px 6px; }"
+        )
+        self.search_edit.textChanged.connect(self._rebuild_items)
+        self.main_layout.addWidget(self.search_edit)
+
+        sep = QLabel()
+        sep.setFixedHeight(1)
+        sep.setStyleSheet("background-color: rgba(255,255,255,120);")
+        self.main_layout.addWidget(sep)
+
+        self.items_container = QVBoxLayout()
+        self.items_container.setSpacing(2)
+        self.main_layout.addLayout(self.items_container)
+
+        self.setStyleSheet(MENU_STYLE + """
+            TextRecordsSubMenu { background-color: transparent; }
+        """)
+
+    def button_style(self, base_color):
+        return menu_button_style(base_color)
+
+    def _filtered_records(self):
+        query = (self.search_edit.text() or "").strip().lower()
+        if not query:
+            return list(self._all_records)
+        matched = []
+        for rec in self._all_records:
+            haystack = " ".join(
+                [rec.get("title", ""), rec.get("body", "")]
+            ).lower()
+            if query in haystack:
+                matched.append(rec)
+        return matched
+
+    def _rebuild_items(self):
+        while self.items_container.count():
+            item = self.items_container.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        records = self._filtered_records()
+        if not self._all_records:
+            lbl = QLabel("(No text records)")
+            lbl.setStyleSheet("color: #dddddd;")
+            self.items_container.addWidget(lbl)
+        elif not records:
+            lbl = QLabel("(No matching records)")
+            lbl.setStyleSheet("color: #dddddd;")
+            self.items_container.addWidget(lbl)
+        else:
+            for rec in records:
+                title = rec.get("title", "Untitled")
+                btn = QPushButton(title)
+                preview = " ".join((rec.get("body") or "").split())[:80]
+                btn.setToolTip(preview or title)
+                btn.setStyleSheet(self.button_style("#5a6e3a"))
+                btn.clicked.connect(
+                    lambda checked=False, r=rec: self._open_record(r)
+                )
+                self.items_container.addWidget(btn)
+        self.adjustSize()
+
+    def _open_record(self, rec):
+        self._suppress_hide = True
+        dlg = TextRecordViewDialog(
+            rec.get("title", "Untitled"),
+            rec.get("body", ""),
+            parent=self,
+        )
+        dlg.exec()
+        self._suppress_hide = False
+
+    def refresh_and_show(self, anchor_geometry):
+        self._all_records = [
+            normalize_text_record(rec)
+            for rec in (self.cfg.get("text_records") or [])
+            if isinstance(rec, dict)
+        ]
+        self.search_edit.blockSignals(True)
+        self.search_edit.clear()
+        self.search_edit.blockSignals(False)
+        self.search_edit.setVisible(bool(self._all_records))
+        self._rebuild_items()
+
+        self.adjustSize()
+        screen_geo = screen_available_geometry(self)
+        x = anchor_geometry.x() + anchor_geometry.width()
+        y = anchor_geometry.y()
+        if x + self.width() > screen_geo.right():
+            x = anchor_geometry.x() - self.width()
+        if y + self.height() > screen_geo.bottom():
+            y = screen_geo.bottom() - self.height()
+        self.move(max(screen_geo.left(), x), max(screen_geo.top(), y))
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _hide_if_inactive(self):
+        if self._suppress_hide or self.isActiveWindow():
+            return
+        active = QApplication.activeWindow()
+        if isinstance(active, (QMenu, TextRecordViewDialog)):
+            return
+        self.hide()
+
+
+# ---------------------------------------------------------------------------
 # Main menu (semi-transparent popup)
 # ---------------------------------------------------------------------------
 class PetMenu(PopupPanel):
@@ -1662,6 +2035,7 @@ class PetMenu(PopupPanel):
         self.cfg = config_manager
         self.doc_submenu = None
         self.file_shortcuts_submenu = None
+        self.text_records_submenu = None
         self._folder_shortcuts = []
         self.build_ui()
 
@@ -1742,6 +2116,27 @@ class PetMenu(PopupPanel):
         sep2.setStyleSheet("background-color: rgba(255,255,255,120);")
         self.main_layout.addWidget(sep2)
 
+        # Text records (文字紀錄): collapsed header + >>
+        text_header = QHBoxLayout()
+        text_header.setSpacing(4)
+        self.text_records_title = QLabel("文字紀錄")
+        self.text_records_title.setStyleSheet("color: white; font-weight: bold;")
+        self.btn_text_open = QPushButton(">>")
+        self.btn_text_open.setFixedWidth(30)
+        self.btn_text_open.setStyleSheet(
+            "text-align: center;" + menu_button_style("#4a4a4a")
+        )
+        self.btn_text_open.clicked.connect(self.open_text_records_submenu)
+        text_header.addWidget(self.text_records_title)
+        text_header.addStretch()
+        text_header.addWidget(self.btn_text_open)
+        self.main_layout.addLayout(text_header)
+
+        sep3 = QLabel()
+        sep3.setFixedHeight(1)
+        sep3.setStyleSheet("background-color: rgba(255,255,255,120);")
+        self.main_layout.addWidget(sep3)
+
         self.btn_settings = QPushButton("Settings")
         self.btn_settings.setStyleSheet(self.button_style("#4a4a4a"))
         self.btn_settings.clicked.connect(self.open_settings.emit)
@@ -1817,13 +2212,23 @@ class PetMenu(PopupPanel):
         self.doc_title.setText(title)
         self.adjustSize()
 
+    def _hide_other_submenus(self, keep=None):
+        pairs = (
+            ("doc", self.doc_submenu),
+            ("file", self.file_shortcuts_submenu),
+            ("text", self.text_records_submenu),
+        )
+        for key, submenu in pairs:
+            if keep == key:
+                continue
+            if submenu is not None and submenu.isVisible():
+                submenu.hide()
+
     def open_file_shortcuts_submenu(self):
         if self.file_shortcuts_submenu is None:
             self.file_shortcuts_submenu = FileShortcutsSubMenu(self.cfg)
             self.file_shortcuts_submenu.open_shortcut.connect(self.open_shortcut.emit)
-        # Hide the other submenu so only one flyout is open at a time.
-        if self.doc_submenu is not None and self.doc_submenu.isVisible():
-            self.doc_submenu.hide()
+        self._hide_other_submenus(keep="file")
         self._suppress_hide = True
         self.file_shortcuts_submenu.refresh_and_show(self.geometry())
         QTimer.singleShot(300, self._release_suppress)
@@ -1832,10 +2237,17 @@ class PetMenu(PopupPanel):
         if self.doc_submenu is None:
             self.doc_submenu = DocumentSubMenu(self.cfg)
             self.doc_submenu.open_file_meta.connect(self.open_file_meta.emit)
-        if self.file_shortcuts_submenu is not None and self.file_shortcuts_submenu.isVisible():
-            self.file_shortcuts_submenu.hide()
+        self._hide_other_submenus(keep="doc")
         self._suppress_hide = True
         self.doc_submenu.refresh_and_show(self.geometry())
+        QTimer.singleShot(300, self._release_suppress)
+
+    def open_text_records_submenu(self):
+        if self.text_records_submenu is None:
+            self.text_records_submenu = TextRecordsSubMenu(self.cfg)
+        self._hide_other_submenus(keep="text")
+        self._suppress_hide = True
+        self.text_records_submenu.refresh_and_show(self.geometry())
         QTimer.singleShot(300, self._release_suppress)
 
     def _release_suppress(self):
@@ -1846,6 +2258,8 @@ class PetMenu(PopupPanel):
             self.doc_submenu.hide()
         if self.file_shortcuts_submenu is not None:
             self.file_shortcuts_submenu.hide()
+        if self.text_records_submenu is not None:
+            self.text_records_submenu.hide()
         super().hideEvent(event)
 
     def _hide_if_inactive(self):
@@ -1860,8 +2274,16 @@ class PetMenu(PopupPanel):
             or self.file_shortcuts_submenu.isActiveWindow()
         ):
             return
+        if self.text_records_submenu is not None and (
+            self.text_records_submenu.isVisible()
+            or self.text_records_submenu.isActiveWindow()
+        ):
+            return
         active = QApplication.activeWindow()
-        if isinstance(active, (QMenu, DocumentSubMenu, FileShortcutsSubMenu)):
+        if isinstance(
+            active,
+            (QMenu, DocumentSubMenu, FileShortcutsSubMenu, TextRecordsSubMenu, TextRecordViewDialog),
+        ):
             return
         self.hide()
 
