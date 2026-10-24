@@ -1,7 +1,7 @@
 Desktop Pet
 ==================
 
-Version: 261024.01
+Version: 261024.02
 Published: 2026-10-24
 
 A floating shortcut menu and document record gadget on the Windows desktop.
@@ -13,11 +13,13 @@ Features
 3. The top of the menu shows "Folder shortcuts" for opening local folders (with search/filter).
 4. Below that, "File / URL shortcuts"; click ">>" to open the submenu (search/filter; files and web links).
 5. The middle section shows "Document record"; click the ">>" button to open the submenu and browse/search files.
-6. Drag files, folders, or URLs onto the pet to add shortcuts (prompt for name/description).
-7. The bottom has a "Settings" button to edit all configurations.
-8. Window level can be set to Normal, Always on top, or Always on bottom.
-9. Optional "Start with Windows" login autostart (Windows only).
-10. Remembers pet position across monitors and resolution changes.
+   The Document record submenu header has an "Open folder" button to open storage folder(s) in the file manager.
+6. Below Document record, "文字紀錄" (Text records); click ">>" to list article titles, then click a title to read the body.
+7. Drag files, folders, or URLs onto the pet to add shortcuts (prompt for name/description).
+8. The bottom has a "Settings" button to edit all configurations.
+9. Window level can be set to Normal, Always on top, or Always on bottom.
+10. Optional "Start with Windows" login autostart (Windows only).
+11. Remembers pet position across monitors and resolution changes.
 
 Quick Usage
 --------
@@ -36,8 +38,17 @@ Settings
 4. Document record: set the "Title" and one or more "Data storage folders"
    (click Add to add additional folders);
    the app will automatically list all files in those folders.
-5. System: set window level (Normal / Always on top / Always on bottom);
+5. 文字紀錄: add/edit/delete text records (Title + Body); list has search/filter.
+6. System: set window level (Normal / Always on top / Always on bottom);
    enable/disable "Start with Windows" (registry Run key; Windows only).
+
+What's new in 261024.02 (2026-10-24)
+--------
+1. Document record submenu: "Open folder" button in the header opens the storage folder(s) in the OS file manager
+   (one folder opens directly; multiple folders show a picker menu).
+2. 文字紀錄 (Text records): new pet-menu section with >> submenu of article titles; click a title to read the body.
+3. Settings tab "文字紀錄" to add/edit/delete/reorder text records; config key "text_records": [{title, body}, …]
+   (backward compatible — older configs omit the key).
 
 What's new in 261024.01 (2026-10-24)
 --------
