@@ -1,8 +1,8 @@
 Desktop Pet
 ==================
 
-Version: 261024.03
-Published: 2026-10-24
+Version: 261026.01
+Published: 2026-10-26
 
 A floating shortcut menu and document record gadget on the Windows desktop.
 
@@ -41,6 +41,13 @@ Settings
 5. Text records: add/edit/delete text records (Title + Body); list has search/filter.
 6. System: set window level (Normal / Always on top / Always on bottom);
    enable/disable "Start with Windows" (registry Run key; Windows only).
+
+What's new in 261026.01 (2026-10-26)
+--------
+1. 平水計算 / 坡度運算 dialogs: ornate gilt/wood picture-frame border.
+2. Removed +/− stepper buttons; compact keyboard-editable decimal inputs (validate on calculate).
+3. Removed explanatory help paragraphs under titles; kept section titles, field labels, and radio labels.
+4. Shrunk input boxes and primary action buttons (計算平水 / 計算坡度 / 計算高程).
 
 What's new in 261024.03 (2026-10-24)
 --------
@@ -113,8 +120,8 @@ Notes
 
 --------------------------------------------------------------------------------
 
-版本：261024.03
-發布日期：2026-10-24
+版本：261026.01
+發布日期：2026-10-26
 
 一款位於 Windows 桌面上的浮動快捷選單與文檔記錄小工具。
 
@@ -146,6 +153,12 @@ Notes
 檔案快捷方式 (File shortcuts)：可設定類型 (File / URL)、「項目名稱」、路徑或網址及「描述」（列表可搜尋／篩選）。
 文檔記錄 (Document record)：設定「標題 (Title)」與一個或多個「資料儲存資料夾 (Data storage folders)」（按「Add」可加入更多資料夾）；應用程式將自動列出這些資料夾內的所有檔案。
 系統設定 (System)：設定視窗層級（一般 / 置頂 / 置底）；可啟用／停用「隨 Windows 啟動」（登錄檔 Run 機碼；僅 Windows）。
+
+261026.01 更新內容（2026-10-26）
+1. 平水計算／坡度運算視窗：鎏金／木紋畫框邊框。
+2. 移除 +/− 按鈕；改為可鍵盤輸入小數的精簡欄位（按計算時驗證）。
+3. 移除標題下說明段落；保留區塊標題、欄位標籤與選項標籤。
+4. 縮小輸入框與主要計算按鈕。
 
 261024.01 更新內容（2026-10-24）
 1. 搜尋／篩選：文檔記錄列表、檔案／網址子選單、資料夾快捷方式選單，以及設定列表。
