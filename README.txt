@@ -90,8 +90,9 @@ https://github.com/finlchan/DesktopPet/releases
 Download these files and keep them in the same folder:
 
 - DesktopPet.exe
-- config.json
-- How to use.jpg
+- config.json   (blank template from the release — do NOT use a personal config)
+- How-to-use.pdf   (user guide; How-to-use.png is a one-page summary)
+  (supersedes the old "How to use.jpg")
 
 Then start DesktopPet.exe.
 
@@ -99,7 +100,7 @@ Build EXE
 --------
 Only needed if you want to build from source.
 Double-click build.bat to generate the shareable folder upload\
-(DesktopPet.exe, blank packaging config.json, How to use.jpg).
+(DesktopPet.exe, blank packaging config.json, How-to-use.pdf, How-to-use.png).
 Do not copy your personal config.json, save data, or pet pictures into uploads.
 
 Notes
@@ -112,7 +113,7 @@ Notes
 
 --------------------------------------------------------------------------------
 
-版本：261024.01
+版本：261024.03
 發布日期：2026-10-24
 
 一款位於 Windows 桌面上的浮動快捷選單與文檔記錄小工具。
@@ -170,14 +171,15 @@ GitHub Releases 已提供免安裝、可直接執行的版本，您無需自行�
 https://github.com/finlchan/DesktopPet/releases
 請下載以下檔案並保持放在同一資料夾中：
 DesktopPet.exe
-config.json
-How to use.jpg
+config.json（發行版空白模板 — 請勿使用個人設定檔）
+How-to-use.pdf（使用說明；How-to-use.png 為單頁摘要）
+（已取代舊版 How to use.jpg）
 完成後即可啟動 DesktopPet.exe 使用。
 
 編譯 EXE 檔案
 僅在您希望從原始碼自行建置時才需要操作。
 雙擊執行 build.bat，即可在 upload\ 資料夾產生可分享內容
-（DesktopPet.exe、空白包裝用 config.json、How to use.jpg）。
+（DesktopPet.exe、空白包裝用 config.json、How-to-use.pdf、How-to-use.png）。
 請勿把個人 config.json、存檔或寵物圖片放入上載內容。
 注意事項
 若初次執行時缺少 config.json，系統將自動建立該檔案。

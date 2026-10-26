@@ -4,7 +4,7 @@ REM Release / upload packaging rules - do not relax:
 REM - NEVER copy the working-tree config.json (may contain personal paths/data).
 REM - NEVER copy Data/, save folders, or personal pet/picture files.
 REM - Only ship: built EXE + packaging\config.json blank template + app assets
-REM   How to use.jpg, plus assets already bundled into the EXE via --add-data.
+REM   How-to-use.pdf / How-to-use.png, plus assets already bundled into the EXE via --add-data.
 REM Output folder is ASCII "upload" so cmd.exe parses this script reliably.
 REM ---------------------------------------------------------------------------
 echo Building DesktopPet...
@@ -56,7 +56,8 @@ if errorlevel 1 (
 
 REM Blank template only - do NOT use .\config.json from the working tree.
 copy /Y "packaging\config.json" "upload\config.json" >nul
-if exist "How to use.jpg" copy /Y "How to use.jpg" "upload\How to use.jpg" >nul
+if exist "How-to-use.pdf" copy /Y "How-to-use.pdf" "upload\How-to-use.pdf" >nul
+if exist "How-to-use.png" copy /Y "How-to-use.png" "upload\How-to-use.png" >nul
 
 rmdir /s /q build
 rmdir /s /q dist
