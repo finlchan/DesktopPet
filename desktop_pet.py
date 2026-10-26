@@ -46,7 +46,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261024.03"
+APP_VERSION = "261026.01"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -1377,68 +1377,138 @@ MENU_STYLE = """
     }
 """
 
-# Dark theme for mini-program calculator dialogs (matches surveying tool refs).
+# Dark theme + gilt/wood picture-frame chrome for calculator dialogs.
 CALC_DIALOG_STYLE = """
-    QDialog, QScrollArea, QWidget#calcRoot {
-        background-color: #1e1e1e;
+    QDialog {
+        background-color: #1a1410;
         color: #e8e8e8;
         font-family: "Microsoft JhengHei", "Segoe UI", sans-serif;
-        font-size: 10pt;
+        font-size: 9pt;
+    }
+    QScrollArea, QWidget#calcRoot {
+        background-color: #1e1e1e;
+        color: #e8e8e8;
+        border: none;
     }
     QLabel { color: #d0d0d0; }
     QLabel#calcSectionTitle {
-        color: #ffffff;
+        color: #f5e6c8;
         font-weight: bold;
-        font-size: 11pt;
+        font-size: 10pt;
     }
-    QLabel#calcHint { color: #a8a8a8; }
     QLabel#calcResult {
         background-color: #1a2e1a;
         color: #7CFC7C;
         border: 1px solid #2d5a2d;
-        border-radius: 6px;
-        padding: 10px;
+        border-radius: 4px;
+        padding: 6px 8px;
         font-family: "Consolas", "Courier New", monospace;
+        font-size: 9pt;
     }
-    QDoubleSpinBox, QAbstractSpinBox, QLineEdit {
+    QLineEdit#calcNumeric {
         background-color: #2a2a2a;
         color: #f0f0f0;
-        border: 1px solid #555;
-        border-radius: 4px;
-        padding: 4px 6px;
-        min-height: 26px;
+        border: 1px solid #666;
+        border-radius: 3px;
+        padding: 2px 6px;
+        min-height: 18px;
+        max-height: 22px;
         selection-background-color: #3d5a80;
         selection-color: #ffffff;
     }
-    QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
-        width: 0;
-        border: none;
+    QLineEdit#calcNumeric:focus {
+        border: 1px solid #c9a84c;
     }
     QPushButton {
         background-color: #333333;
         color: #f0f0f0;
         border: 1px solid #555;
-        border-radius: 4px;
-        padding: 6px 10px;
+        border-radius: 3px;
+        padding: 3px 8px;
     }
     QPushButton:hover { background-color: #444444; }
     QPushButton#calcAction {
         background-color: #2c2c2c;
-        min-height: 28px;
-    }
-    QPushButton#stepBtn {
-        min-width: 28px;
-        max-width: 28px;
-        padding: 4px;
-        text-align: center;
+        min-height: 22px;
+        max-height: 26px;
+        max-width: 130px;
+        padding: 3px 12px;
+        font-size: 9pt;
     }
     QRadioButton { color: #e0e0e0; spacing: 6px; }
     QFrame#calcSection {
         background-color: #252525;
         border: 1px solid #3a3a3a;
-        border-radius: 8px;
+        border-radius: 4px;
+    }
+    QFrame#calcOrnateOuter {
+        background: qlineargradient(
+            x1:0, y1:0, x2:1, y2:1,
+            stop:0 #2a1c0e, stop:0.22 #6b4e1e, stop:0.45 #d4af37,
+            stop:0.55 #f0d78c, stop:0.68 #d4af37, stop:0.85 #6b4e1e, stop:1 #2a1c0e
+        );
+        border: 1px solid #1a1008;
+    }
+    QFrame#calcOrnateMid {
+        background: qlineargradient(
+            x1:0, y1:0, x2:0, y2:1,
+            stop:0 #5a3d24, stop:0.5 #3a2414, stop:1 #5a3d24
+        );
+        border: 1px solid #1a1208;
+    }
+    QFrame#calcOrnateInner {
+        background-color: #1e1e1e;
+        border: 1px solid #c9a84c;
+        border-top-color: #e8d48b;
+        border-left-color: #e8d48b;
+        border-right-color: #7a5e18;
+        border-bottom-color: #7a5e18;
     }
 """
+
+
+def install_ornate_calc_frame(dialog):
+    """
+    Nested gilt/wood picture-frame chrome inside a calc dialog.
+    Returns the innermost QVBoxLayout for dialog content.
+    """
+    shell = QVBoxLayout(dialog)
+    shell.setContentsMargins(7, 7, 7, 7)
+    shell.setSpacing(0)
+
+    outer = QFrame()
+    outer.setObjectName("calcOrnateOuter")
+    outer_l = QVBoxLayout(outer)
+    outer_l.setContentsMargins(4, 4, 4, 4)
+    outer_l.setSpacing(0)
+
+    mid = QFrame()
+    mid.setObjectName("calcOrnateMid")
+    mid_l = QVBoxLayout(mid)
+    mid_l.setContentsMargins(5, 5, 5, 5)
+    mid_l.setSpacing(0)
+
+    inner = QFrame()
+    inner.setObjectName("calcOrnateInner")
+    inner_l = QVBoxLayout(inner)
+    inner_l.setContentsMargins(10, 10, 10, 10)
+    inner_l.setSpacing(8)
+
+    mid_l.addWidget(inner)
+    outer_l.addWidget(mid)
+    shell.addWidget(outer)
+    return inner_l
+
+
+def parse_calc_number(text):
+    """Parse a typed calculator field; raises ValueError on empty/invalid input."""
+    raw = (text or "").strip().replace(",", "")
+    if not raw or raw in ("-", "+", ".", "-.", "+."):
+        raise ValueError("請輸入有效數值")
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise ValueError("請輸入有效數值") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -1571,65 +1641,43 @@ def format_one_in_x(xin):
     return f"1 in {xin:.3f}"
 
 
-class NumericStepper(QWidget):
-    """Labeled numeric field with − / + steppers (matches slope-calc refs)."""
+class NumericField(QWidget):
+    """Compact labeled QLineEdit for calculator inputs (keyboard-editable decimals)."""
 
-    valueChanged = Signal(float)
+    textChanged = Signal(str)
 
-    def __init__(
-        self,
-        label,
-        value=0.0,
-        minimum=-1_000_000.0,
-        maximum=1_000_000.0,
-        step=0.1,
-        decimals=3,
-        parent=None,
-    ):
+    def __init__(self, label, value=0.0, decimals=3, max_edit_width=140, parent=None):
         super().__init__(parent)
-        self._step = step
+        self._decimals = decimals
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
         self.caption = QLabel(label)
         layout.addWidget(self.caption)
 
-        row = QHBoxLayout()
-        row.setSpacing(4)
-        self.btn_minus = QPushButton("−")
-        self.btn_minus.setObjectName("stepBtn")
-        self.spin = QDoubleSpinBox()
-        self.spin.setRange(minimum, maximum)
-        self.spin.setDecimals(decimals)
-        self.spin.setSingleStep(step)
-        self.spin.setValue(value)
-        self.spin.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
-        self.spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.spin.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.btn_plus = QPushButton("+")
-        self.btn_plus.setObjectName("stepBtn")
-        self.btn_minus.clicked.connect(lambda: self._nudge(-1))
-        self.btn_plus.clicked.connect(lambda: self._nudge(1))
-        self.spin.valueChanged.connect(self.valueChanged.emit)
-        row.addWidget(self.btn_minus)
-        row.addWidget(self.spin, 1)
-        row.addWidget(self.btn_plus)
-        layout.addLayout(row)
+        self.edit = QLineEdit()
+        self.edit.setObjectName("calcNumeric")
+        self.edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.edit.setText(self._format(value))
+        self.edit.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        if max_edit_width:
+            self.edit.setMaximumWidth(max_edit_width)
+        self.edit.textChanged.connect(self.textChanged.emit)
+        layout.addWidget(self.edit)
 
-    def _nudge(self, direction):
-        self.spin.setValue(self.spin.value() + direction * self._step)
+    def _format(self, value):
+        text = f"{float(value):.{self._decimals}f}".rstrip("0").rstrip(".")
+        return text if text else "0"
 
     def value(self):
-        return self.spin.value()
+        return parse_calc_number(self.edit.text())
 
     def setValue(self, value):
-        self.spin.setValue(value)
+        self.edit.setText(self._format(value))
 
     def setEnabled(self, enabled):
         super().setEnabled(enabled)
-        self.spin.setEnabled(enabled)
-        self.btn_minus.setEnabled(enabled)
-        self.btn_plus.setEnabled(enabled)
+        self.edit.setEnabled(enabled)
 
 
 class PopupPanel(QWidget):
@@ -2118,34 +2166,31 @@ class LevelCalcDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("平水計算")
-        self.setMinimumSize(420, 360)
+        self.setMinimumSize(320, 340)
+        self.resize(340, 380)
         self.setStyleSheet(CALC_DIALOG_STYLE)
-        root = QVBoxLayout(self)
-        root.setSpacing(10)
+        root = install_ornate_calc_frame(self)
+        root.setSpacing(6)
 
         title = QLabel("平水計算")
         title.setObjectName("calcSectionTitle")
         root.addWidget(title)
-        hint = QLabel(
-            "假設高位平水在距離 0、低位平水在全長處，線性內插目標距離的平水。"
-            "\n公式：平水 = 高位 − (高位 − 低位) × (目標距離 ÷ 全長)"
-            "\n目標距離可超出 [0, 全長]（外插），結果旁會標示。"
-        )
-        hint.setObjectName("calcHint")
-        hint.setWordWrap(True)
-        root.addWidget(hint)
 
-        self.high = NumericStepper("高位平水", 100.0, step=0.1)
-        self.low = NumericStepper("低位平水", 90.0, step=0.1)
-        self.full = NumericStepper("全長", 50.0, minimum=0.001, step=0.1)
-        self.target = NumericStepper("目標距離", 25.0, step=0.1)
+        self.high = NumericField("高位平水", 100.0, max_edit_width=120)
+        self.low = NumericField("低位平水", 90.0, max_edit_width=120)
+        self.full = NumericField("全長", 50.0, max_edit_width=120)
+        self.target = NumericField("目標距離", 25.0, max_edit_width=120)
         for w in (self.high, self.low, self.full, self.target):
             root.addWidget(w)
 
         calc_btn = QPushButton("計算平水")
         calc_btn.setObjectName("calcAction")
         calc_btn.clicked.connect(self._calculate)
-        root.addWidget(calc_btn)
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_row.addWidget(calc_btn)
+        btn_row.addStretch()
+        root.addLayout(btn_row)
 
         self.result = QLabel("結果將顯示於此")
         self.result.setObjectName("calcResult")
@@ -2187,23 +2232,25 @@ class SlopeCalcDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("坡度運算")
-        self.setMinimumSize(640, 720)
-        self.resize(700, 780)
+        self.setMinimumSize(520, 560)
+        self.resize(560, 620)
         self.setStyleSheet(CALC_DIALOG_STYLE)
 
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
+        frame_root = install_ornate_calc_frame(self)
+        frame_root.setContentsMargins(6, 6, 6, 6)
+        frame_root.setSpacing(0)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
-        outer.addWidget(scroll)
+        frame_root.addWidget(scroll)
 
         root_w = QWidget()
         root_w.setObjectName("calcRoot")
         scroll.setWidget(root_w)
         root = QVBoxLayout(root_w)
-        root.setContentsMargins(12, 12, 12, 12)
-        root.setSpacing(14)
+        root.setContentsMargins(4, 4, 4, 4)
+        root.setSpacing(10)
 
         root.addWidget(self._build_section_a())
         root.addWidget(self._build_section_b())
@@ -2216,41 +2263,40 @@ class SlopeCalcDialog(QDialog):
         close_row.addWidget(close_btn)
         root.addLayout(close_row)
 
-    def _section_frame(self, number, title, hint):
+    def _section_frame(self, number, title):
         frame = QFrame()
         frame.setObjectName("calcSection")
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(12, 10, 12, 12)
-        layout.setSpacing(8)
+        layout.setContentsMargins(10, 8, 10, 10)
+        layout.setSpacing(6)
         head = QLabel(f"{number}  {title}")
         head.setObjectName("calcSectionTitle")
         layout.addWidget(head)
-        hint_lbl = QLabel(hint)
-        hint_lbl.setObjectName("calcHint")
-        hint_lbl.setWordWrap(True)
-        layout.addWidget(hint_lbl)
         return frame, layout
 
-    def _build_section_a(self):
-        frame, layout = self._section_frame(
-            "1",
-            "兩點高差求坡度",
-            "輸入長度與高低點 LV，計算各項坡度數值。",
-        )
+    def _action_button_row(self, label, slot):
+        btn = QPushButton(label)
+        btn.setObjectName("calcAction")
+        btn.clicked.connect(slot)
         row = QHBoxLayout()
-        row.setSpacing(10)
-        self.a_length = NumericStepper("長度 (L)", 10.0, minimum=0.001, step=0.1)
-        self.a_high = NumericStepper("高位 LV", 10.0, step=0.1)
-        self.a_low = NumericStepper("低位 LV", 9.5, step=0.1)
+        row.addStretch()
+        row.addWidget(btn)
+        row.addStretch()
+        return row
+
+    def _build_section_a(self):
+        frame, layout = self._section_frame("1", "兩點高差求坡度")
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        self.a_length = NumericField("長度 (L)", 10.0, max_edit_width=100)
+        self.a_high = NumericField("高位 LV", 10.0, max_edit_width=100)
+        self.a_low = NumericField("低位 LV", 9.5, max_edit_width=100)
         row.addWidget(self.a_length)
         row.addWidget(self.a_high)
         row.addWidget(self.a_low)
+        row.addStretch()
         layout.addLayout(row)
-
-        btn = QPushButton("計算坡度")
-        btn.setObjectName("calcAction")
-        btn.clicked.connect(self._calc_a)
-        layout.addWidget(btn)
+        layout.addLayout(self._action_button_row("計算坡度", self._calc_a))
 
         self.a_result = QLabel("")
         self.a_result.setObjectName("calcResult")
@@ -2260,25 +2306,18 @@ class SlopeCalcDialog(QDialog):
         return frame
 
     def _build_section_b(self):
-        frame, layout = self._section_frame(
-            "2",
-            "坡度推算高程",
-            "輸入長度、起始 LV 與坡度(%)，計算結尾點 LV。",
-        )
+        frame, layout = self._section_frame("2", "坡度推算高程")
         row = QHBoxLayout()
-        row.setSpacing(10)
-        self.b_length = NumericStepper("長度 (L)", 10.0, minimum=0.001, step=0.1)
-        self.b_start = NumericStepper("起始 LV", 10.0, step=0.1)
-        self.b_fall = NumericStepper("坡度 Fall (%)", 5.0, step=0.1)
+        row.setSpacing(8)
+        self.b_length = NumericField("長度 (L)", 10.0, max_edit_width=100)
+        self.b_start = NumericField("起始 LV", 10.0, max_edit_width=100)
+        self.b_fall = NumericField("坡度 Fall (%)", 5.0, max_edit_width=100)
         row.addWidget(self.b_length)
         row.addWidget(self.b_start)
         row.addWidget(self.b_fall)
+        row.addStretch()
         layout.addLayout(row)
-
-        btn = QPushButton("計算高程")
-        btn.setObjectName("calcAction")
-        btn.clicked.connect(self._calc_b)
-        layout.addWidget(btn)
+        layout.addLayout(self._action_button_row("計算高程", self._calc_b))
 
         self.b_result = QLabel("")
         self.b_result.setObjectName("calcResult")
@@ -2288,11 +2327,7 @@ class SlopeCalcDialog(QDialog):
         return frame
 
     def _build_section_c(self):
-        frame, layout = self._section_frame(
-            "3",
-            "坡度單位互相運算框",
-            "選擇你目前已知的單位，輸入後即時換算出其餘兩項結果。",
-        )
+        frame, layout = self._section_frame("3", "坡度單位互相運算框")
         layout.addWidget(QLabel("選擇已知條件:"))
         self.c_group = QButtonGroup(self)
         self.radio_fall = QRadioButton("已知 坡度 (Fall %)")
@@ -2308,9 +2343,9 @@ class SlopeCalcDialog(QDialog):
 
         self.c_input_label = QLabel("輸入 坡度 (Fall %)")
         layout.addWidget(self.c_input_label)
-        self.c_value = NumericStepper("", 1.0, step=0.1, decimals=6)
+        self.c_value = NumericField("", 1.0, decimals=6, max_edit_width=140)
         self.c_value.caption.hide()
-        self.c_value.valueChanged.connect(self._calc_c_live)
+        self.c_value.textChanged.connect(self._calc_c_live)
         layout.addWidget(self.c_value)
 
         self.c_result = QLabel("")
@@ -2337,15 +2372,19 @@ class SlopeCalcDialog(QDialog):
             self.a_result.show()
 
     def _calc_b(self):
-        ending, xin, ang = ending_lv_from_fall(
-            self.b_length.value(), self.b_start.value(), self.b_fall.value()
-        )
-        self.b_result.setText(
-            f"◆ 結尾 LV: {ending:.3f}\n"
-            f"◆ 1 IN X: {format_one_in_x(xin)}\n"
-            f"◆ 角度: {format_dms(ang)}"
-        )
-        self.b_result.show()
+        try:
+            ending, xin, ang = ending_lv_from_fall(
+                self.b_length.value(), self.b_start.value(), self.b_fall.value()
+            )
+            self.b_result.setText(
+                f"◆ 結尾 LV: {ending:.3f}\n"
+                f"◆ 1 IN X: {format_one_in_x(xin)}\n"
+                f"◆ 角度: {format_dms(ang)}"
+            )
+            self.b_result.show()
+        except ValueError as exc:
+            self.b_result.setText(f"輸入錯誤: {exc}")
+            self.b_result.show()
 
     def _c_kind(self):
         if self.radio_xin.isChecked():
@@ -2366,8 +2405,8 @@ class SlopeCalcDialog(QDialog):
 
     def _calc_c_live(self, *_args):
         kind = self._c_kind()
-        raw = self.c_value.value()
         try:
+            raw = self.c_value.value()
             if kind == "angle":
                 # Input is DD.MMSS surveying encoding; convert to decimal degrees.
                 angle_deg = ddmmss_to_degrees(raw)
