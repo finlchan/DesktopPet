@@ -52,7 +52,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261026.02"
+APP_VERSION = "261026.03"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -1387,27 +1387,38 @@ MENU_STYLE = """
     }
 """
 
+# Content-panel fill alpha (~70% opaque / 半透明感). Chrome stays more solid.
+CALC_PANEL_ALPHA = 178  # round(255 * 0.70)
+
 # Dark theme + gilt/wood picture-frame chrome for calculator dialogs.
-CALC_DIALOG_STYLE = """
-    QDialog {
-        background-color: #1a1410;
+CALC_DIALOG_STYLE = f"""
+    QDialog {{
+        background-color: transparent;
         color: #e8e8e8;
         font-family: "Microsoft JhengHei", "Segoe UI", sans-serif;
         font-size: 9pt;
-    }
-    QScrollArea, QWidget#calcRoot {
-        background-color: #1e1e1e;
+    }}
+    QScrollArea {{
+        background-color: transparent;
+        border: none;
+    }}
+    QScrollArea > QWidget > QWidget {{
+        background-color: transparent;
+    }}
+    QWidget#calcRoot {{
+        background-color: rgba(30, 30, 30, {CALC_PANEL_ALPHA});
         color: #e8e8e8;
         border: none;
-    }
-    QLabel { color: #d0d0d0; }
-    QLabel#calcSectionTitle {
+    }}
+    QLabel {{ color: #d0d0d0; background-color: transparent; }}
+    QLabel#calcSectionTitle {{
         color: #f5e6c8;
         font-weight: bold;
         font-size: 10pt;
-    }
-    QLabel#calcResult {
-        background-color: #1a2e1a;
+        background-color: transparent;
+    }}
+    QLabel#calcResult {{
+        background-color: rgba(26, 46, 26, 210);
         color: #7CFC7C;
         border: 1px solid #2d5a2d;
         border-radius: 4px;
@@ -1415,9 +1426,9 @@ CALC_DIALOG_STYLE = """
         font-family: "Consolas", "Courier New", monospace;
         font-size: 9pt;
         margin-top: 2px;
-    }
-    QLineEdit#calcNumeric {
-        background-color: #2a2a2a;
+    }}
+    QLineEdit#calcNumeric {{
+        background-color: rgba(42, 42, 42, 230);
         color: #f0f0f0;
         border: 1px solid #666;
         border-radius: 3px;
@@ -1426,61 +1437,69 @@ CALC_DIALOG_STYLE = """
         max-height: 22px;
         selection-background-color: #3d5a80;
         selection-color: #ffffff;
-    }
-    QLineEdit#calcNumeric:focus {
+    }}
+    QLineEdit#calcNumeric:focus {{
         border: 1px solid #c9a84c;
-    }
-    QPushButton {
-        background-color: #333333;
+    }}
+    QPushButton {{
+        background-color: rgba(51, 51, 51, 230);
         color: #f0f0f0;
         border: 1px solid #555;
         border-radius: 3px;
         padding: 3px 8px;
-    }
-    QPushButton:hover { background-color: #444444; }
-    QPushButton#calcAction {
-        background-color: #2c2c2c;
+    }}
+    QPushButton:hover {{ background-color: rgba(68, 68, 68, 240); }}
+    QPushButton#calcAction {{
+        background-color: rgba(44, 44, 44, 230);
         min-height: 22px;
         max-height: 24px;
         max-width: 120px;
         padding: 2px 10px;
         font-size: 9pt;
-    }
-    QLabel#calcFieldCaption {
+    }}
+    QLabel#calcFieldCaption {{
         color: #d0d0d0;
         font-size: 9pt;
         padding: 0;
         margin: 0;
-    }
-    QRadioButton { color: #e0e0e0; spacing: 6px; }
-    QFrame#calcSection {
-        background-color: #252525;
-        border: 1px solid #3a3a3a;
+        background-color: transparent;
+    }}
+    QRadioButton {{
+        color: #e0e0e0;
+        spacing: 6px;
+        background-color: transparent;
+    }}
+    QFrame#calcSection {{
+        background-color: rgba(37, 37, 37, {CALC_PANEL_ALPHA});
+        border: 1px solid rgba(58, 58, 58, 200);
         border-radius: 4px;
-    }
-    QFrame#calcOrnateOuter {
+    }}
+    QFrame#calcOrnateOuter {{
         background: qlineargradient(
             x1:0, y1:0, x2:1, y2:1,
-            stop:0 #2a1c0e, stop:0.22 #6b4e1e, stop:0.45 #d4af37,
-            stop:0.55 #f0d78c, stop:0.68 #d4af37, stop:0.85 #6b4e1e, stop:1 #2a1c0e
+            stop:0 rgba(42, 28, 14, 230), stop:0.22 rgba(107, 78, 30, 235),
+            stop:0.45 rgba(212, 175, 55, 245), stop:0.55 rgba(240, 215, 140, 250),
+            stop:0.68 rgba(212, 175, 55, 245), stop:0.85 rgba(107, 78, 30, 235),
+            stop:1 rgba(42, 28, 14, 230)
         );
         border: 1px solid #1a1008;
-    }
-    QFrame#calcOrnateMid {
+    }}
+    QFrame#calcOrnateMid {{
         background: qlineargradient(
             x1:0, y1:0, x2:0, y2:1,
-            stop:0 #5a3d24, stop:0.5 #3a2414, stop:1 #5a3d24
+            stop:0 rgba(90, 61, 36, 235), stop:0.5 rgba(58, 36, 20, 235),
+            stop:1 rgba(90, 61, 36, 235)
         );
         border: 1px solid #1a1208;
-    }
-    QFrame#calcOrnateInner {
-        background-color: #1e1e1e;
+    }}
+    QFrame#calcOrnateInner {{
+        background-color: rgba(30, 30, 30, {CALC_PANEL_ALPHA});
         border: 1px solid #c9a84c;
         border-top-color: #e8d48b;
         border-left-color: #e8d48b;
         border-right-color: #7a5e18;
         border-bottom-color: #7a5e18;
-    }
+    }}
 """
 
 
@@ -1514,7 +1533,71 @@ def install_ornate_calc_frame(dialog):
     mid_l.addWidget(inner)
     outer_l.addWidget(mid)
     shell.addWidget(outer)
+    dialog._calc_ornate_outer = outer
     return inner_l
+
+
+class FramelessCalcDialog(QDialog):
+    """
+    Frameless calculator shell: ornate frame only (no OS title bar),
+    ~70% opaque content fill, drag by frame/empty/title areas.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.Dialog
+            | Qt.WindowType.WindowStaysOnTopHint
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setStyleSheet(CALC_DIALOG_STYLE)
+        self._drag_offset = None
+
+    def _widget_blocks_drag(self, widget):
+        """True when the press target is an interactive control (not a drag handle)."""
+        w = widget
+        while w is not None and w is not self:
+            if isinstance(
+                w,
+                (
+                    QLineEdit,
+                    QPushButton,
+                    QRadioButton,
+                    QAbstractSpinBox,
+                    QPlainTextEdit,
+                    QTextEdit,
+                ),
+            ):
+                return True
+            # Scrollbars / sliders — still allow drag on labels and empty panel.
+            if w.inherits("QAbstractSlider"):
+                return True
+            w = w.parentWidget()
+        return False
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            child = self.childAt(event.position().toPoint())
+            if child is None or not self._widget_blocks_drag(child):
+                self._drag_offset = (
+                    event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+                )
+                event.accept()
+                return
+        self._drag_offset = None
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            self.move(event.globalPosition().toPoint() - self._drag_offset)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._drag_offset = None
+        super().mouseReleaseEvent(event)
 
 
 def parse_calc_number(text):
@@ -2212,7 +2295,7 @@ class FileShortcutsSubMenu(PopupPanel):
 # ---------------------------------------------------------------------------
 # Mini-program calculators: 平水計算 / 坡度運算
 # ---------------------------------------------------------------------------
-class LevelCalcDialog(QDialog):
+class LevelCalcDialog(FramelessCalcDialog):
     """平水計算 — linear interpolate level at a target chainage."""
 
     def __init__(self, parent=None):
@@ -2220,7 +2303,6 @@ class LevelCalcDialog(QDialog):
         self.setWindowTitle("平水計算")
         self.setMinimumSize(540, 200)
         self.resize(560, 220)
-        self.setStyleSheet(CALC_DIALOG_STYLE)
         root = install_ornate_calc_frame(self)
         root.setSpacing(6)
 
@@ -2276,7 +2358,7 @@ class LevelCalcDialog(QDialog):
             self.result.setText(f"輸入錯誤: {exc}")
 
 
-class SlopeCalcDialog(QDialog):
+class SlopeCalcDialog(FramelessCalcDialog):
     """坡度運算 — three calculators matching the surveying reference UIs."""
 
     def __init__(self, parent=None):
@@ -2284,7 +2366,6 @@ class SlopeCalcDialog(QDialog):
         self.setWindowTitle("坡度運算")
         self.setMinimumSize(520, 560)
         self.resize(560, 620)
-        self.setStyleSheet(CALC_DIALOG_STYLE)
 
         frame_root = install_ornate_calc_frame(self)
         frame_root.setContentsMargins(6, 6, 6, 6)
@@ -2293,10 +2374,13 @@ class SlopeCalcDialog(QDialog):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        scroll.viewport().setAutoFillBackground(False)
         frame_root.addWidget(scroll)
 
         root_w = QWidget()
         root_w.setObjectName("calcRoot")
+        root_w.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         scroll.setWidget(root_w)
         root = QVBoxLayout(root_w)
         root.setContentsMargins(4, 4, 4, 4)
