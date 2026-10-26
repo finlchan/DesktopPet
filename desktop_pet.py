@@ -11,10 +11,16 @@ import math
 import os
 import random
 import sys
+from collections import OrderedDict
 from pathlib import Path
-from urllib.parse import urlparse
+import urllib.error
+import urllib.request
+from urllib.parse import quote, urlparse
 
-from PySide6.QtCore import Qt, QTimer, QSize, Signal, QEvent, QLockFile, QUrl, QPoint
+from PySide6.QtCore import (
+    Qt, QTimer, QSize, Signal, QEvent, QLockFile, QUrl, QPoint,
+    QObject, QRunnable, QThreadPool,
+)
 from PySide6.QtGui import (
     QPixmap, QPainter, QColor, QCursor, QIcon, QAction, QMovie, QDesktopServices,
 )
@@ -24,7 +30,7 @@ from PySide6.QtWidgets import (
     QFileDialog, QDialog, QFormLayout, QTabWidget, QComboBox,
     QSpinBox, QDoubleSpinBox, QCheckBox, QMessageBox, QMenu, QStyle,
     QSystemTrayIcon, QPlainTextEdit, QFrame, QRadioButton, QButtonGroup,
-    QScrollArea, QSizePolicy,
+    QScrollArea, QSizePolicy, QProgressBar,
 )
 
 
@@ -46,7 +52,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261026.01"
+APP_VERSION = "261026.02"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -98,6 +104,10 @@ DEFAULT_CONFIG = {
     },
     # Text records (title + body). Older configs omit this key.
     "text_records": [],
+    # Pomodoro mini-program: last used duration in minutes (running state is not saved).
+    "pomodoro": {
+        "minutes": 25,
+    },
 }
 
 
@@ -2462,6 +2472,465 @@ class SlopeCalcDialog(QDialog):
 
 
 # ---------------------------------------------------------------------------
+# Mini-program: Pomodoro (番茄鐘) / Translate (翻譯)
+# ---------------------------------------------------------------------------
+MINI_PROGRAM_STYLE = """
+    QLabel#pomodoroDisplay {
+        background-color: #101a10;
+        color: #7CFC7C;
+        border: 1px solid #2d5a2d;
+        border-radius: 4px;
+        padding: 6px 10px;
+        font-family: "Consolas", "Courier New", monospace;
+        font-size: 24pt;
+    }
+    QProgressBar#pomodoroProgress {
+        background-color: #2a2a2a;
+        color: #f0f0f0;
+        border: 1px solid #555;
+        border-radius: 3px;
+        min-height: 14px;
+        max-height: 16px;
+        text-align: center;
+    }
+    QProgressBar#pomodoroProgress::chunk {
+        background-color: #3f8f3f;
+        border-radius: 2px;
+    }
+    QSpinBox {
+        background-color: #2a2a2a;
+        color: #f0f0f0;
+        border: 1px solid #666;
+        border-radius: 3px;
+        padding: 2px 4px;
+        min-height: 18px;
+        max-height: 22px;
+        selection-background-color: #3d5a80;
+        selection-color: #ffffff;
+    }
+    QSpinBox:focus { border: 1px solid #c9a84c; }
+    QPlainTextEdit#translateSource {
+        background-color: #2a2a2a;
+        color: #f0f0f0;
+        border: 1px solid #666;
+        border-radius: 3px;
+        padding: 3px 5px;
+        selection-background-color: #3d5a80;
+        selection-color: #ffffff;
+    }
+    QPlainTextEdit#translateSource:focus { border: 1px solid #c9a84c; }
+    QComboBox#translateLang {
+        background-color: #2a2a2a;
+        color: #f0f0f0;
+        border: 1px solid #666;
+        border-radius: 3px;
+        padding: 2px 6px;
+        min-height: 18px;
+        max-height: 22px;
+    }
+    QComboBox#translateLang:focus { border: 1px solid #c9a84c; }
+    QComboBox#translateLang QAbstractItemView {
+        background-color: #2a2a2a;
+        color: #f0f0f0;
+        selection-background-color: #3d5a80;
+        selection-color: #ffffff;
+    }
+"""
+
+# Preset durations offered on the Pomodoro dialog (minutes).
+POMODORO_PRESETS = (25, 5, 15)
+
+
+class PomodoroDialog(QDialog):
+    """番茄鐘 — compact countdown with 25/5/15 presets, custom minutes and progress bar."""
+
+    def __init__(self, config_manager, parent=None):
+        super().__init__(parent)
+        self.cfg = config_manager
+        self.setWindowTitle("番茄鐘 Pomodoro")
+        self.setMinimumSize(380, 250)
+        self.resize(400, 270)
+        self.setStyleSheet(CALC_DIALOG_STYLE + MINI_PROGRAM_STYLE)
+        root = install_ornate_calc_frame(self)
+        root.setSpacing(6)
+
+        title = QLabel("番茄鐘 Pomodoro")
+        title.setObjectName("calcSectionTitle")
+        root.addWidget(title)
+
+        try:
+            saved = int(self.cfg.get("pomodoro", "minutes") or 0)
+        except (TypeError, ValueError):
+            saved = 0
+        self.total_seconds = min(max(saved or 25, 1), 600) * 60
+        self.remaining_seconds = self.total_seconds
+        self.running = False
+
+        self.display = QLabel(self._format_clock(self.remaining_seconds))
+        self.display.setObjectName("pomodoroDisplay")
+        self.display.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        root.addWidget(self.display)
+
+        self.progress = QProgressBar()
+        self.progress.setObjectName("pomodoroProgress")
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        root.addWidget(self.progress)
+
+        # Presets + custom minutes: 25 / 5 / 15, or any value 1–600.
+        preset_row = QHBoxLayout()
+        preset_row.setSpacing(4)
+        for minutes in POMODORO_PRESETS:
+            btn = QPushButton(f"{minutes} 分")
+            btn.setObjectName("calcAction")
+            btn.clicked.connect(lambda checked=False, m=minutes: self._set_minutes(m))
+            preset_row.addWidget(btn)
+        custom_caption = QLabel("自訂 (分鐘)")
+        custom_caption.setObjectName("calcFieldCaption")
+        preset_row.addWidget(custom_caption)
+        self.minutes_spin = QSpinBox()
+        self.minutes_spin.setRange(1, 600)
+        self.minutes_spin.setValue(self.total_seconds // 60)
+        self.minutes_spin.setFixedWidth(64)
+        self.minutes_spin.valueChanged.connect(self._set_minutes)
+        preset_row.addWidget(self.minutes_spin)
+        preset_row.addStretch()
+        root.addLayout(preset_row)
+
+        control_row = QHBoxLayout()
+        control_row.setSpacing(4)
+        self.start_btn = QPushButton("Start 開始")
+        self.pause_btn = QPushButton("Pause 暫停")
+        reset_btn = QPushButton("Reset 重設")
+        for btn in (self.start_btn, self.pause_btn, reset_btn):
+            btn.setObjectName("calcAction")
+            control_row.addWidget(btn)
+        control_row.addStretch()
+        self.start_btn.clicked.connect(self._start)
+        self.pause_btn.clicked.connect(self._pause)
+        reset_btn.clicked.connect(self._reset)
+        root.addLayout(control_row)
+
+        self.status = QLabel("準備就緒")
+        self.status.setObjectName("calcResult")
+        self.status.setWordWrap(True)
+        root.addWidget(self.status)
+
+        self.timer = QTimer(self)
+        self.timer.setInterval(1000)
+        self.timer.timeout.connect(self._tick)
+
+        close_row = QHBoxLayout()
+        close_row.addStretch()
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        close_row.addWidget(close_btn)
+        root.addLayout(close_row)
+
+    def _format_clock(self, total_seconds):
+        minutes, seconds = divmod(max(total_seconds, 0), 60)
+        return f"{minutes:02d}:{seconds:02d}"
+
+    def _set_minutes(self, minutes):
+        self.total_seconds = int(minutes) * 60
+        self.remaining_seconds = self.total_seconds
+        self._stop_ticking()
+        self.minutes_spin.blockSignals(True)
+        self.minutes_spin.setValue(int(minutes))
+        self.minutes_spin.blockSignals(False)
+        self._persist_minutes(int(minutes))
+        self._refresh(reset_status=True)
+
+    def _persist_minutes(self, minutes):
+        if self.cfg is not None:
+            self.cfg.set(["pomodoro", "minutes"], int(minutes))
+
+    def _start(self):
+        if self.running or self.remaining_seconds <= 0:
+            return
+        self.running = True
+        self.timer.start()
+        self.status.setText("進行中…")
+        self._persist_minutes(self.total_seconds // 60)
+
+    def _pause(self):
+        if not self.running:
+            return
+        self._stop_ticking()
+        self.status.setText("已暫停")
+
+    def _reset(self):
+        self._stop_ticking()
+        self.remaining_seconds = self.total_seconds
+        self._refresh(reset_status=True)
+
+    def _stop_ticking(self):
+        self.running = False
+        self.timer.stop()
+
+    def _tick(self):
+        self.remaining_seconds -= 1
+        if self.remaining_seconds <= 0:
+            self.remaining_seconds = 0
+            self._stop_ticking()
+            self._on_finished()
+        self._refresh()
+
+    def _refresh(self, reset_status=False):
+        self.display.setText(self._format_clock(self.remaining_seconds))
+        elapsed = self.total_seconds - self.remaining_seconds
+        self.progress.setValue(
+            round(elapsed * 100.0 / self.total_seconds) if self.total_seconds else 0
+        )
+        if reset_status and not self.running:
+            self.status.setText("準備就緒")
+
+    def _on_finished(self):
+        self.status.setText("時間到！時間到！")
+        QApplication.beep()
+        tray = getattr(QApplication.instance(), "_tray_icon", None)
+        if tray is not None:
+            tray.showMessage(
+                "番茄鐘 Pomodoro",
+                "時間到！Time is up.",
+                QSystemTrayIcon.MessageIcon.Information,
+                4000,
+            )
+
+
+class TranslateError(Exception):
+    """Raised with a user-facing (Chinese) message when translation fails."""
+
+
+def translate_text(text, target_lang, timeout=10):
+    """
+    Translate via Google Translate's public web endpoint (no API key).
+
+    Uses translate.googleapis.com/translate_a/single?client=gtx with sl=auto
+    (source auto-detect). Returns (translated_text, detected_lang).
+    Raises TranslateError with a friendly message on network/HTTP problems.
+    Request text is never printed or logged.
+    """
+    url = (
+        "https://translate.googleapis.com/translate_a/single"
+        f"?client=gtx&sl=auto&tl={quote(target_lang)}&dt=t&q={quote(text)}"
+    )
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+            ),
+            "Accept": "*/*",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            data = json.loads(response.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 429:
+            raise TranslateError("翻譯次數過多，請稍後再試。") from exc
+        raise TranslateError(f"翻譯服務回應錯誤 (HTTP {exc.code})。") from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise TranslateError("無法連線翻譯服務，請檢查網絡後再試。") from exc
+    except ValueError as exc:
+        raise TranslateError("翻譯服務回應格式錯誤。") from exc
+
+    segments = data[0] if isinstance(data, list) and data else None
+    if not segments:
+        raise TranslateError("翻譯服務沒有回傳結果。")
+    translated = "".join(
+        seg[0] for seg in segments if isinstance(seg, (list, tuple)) and seg and seg[0]
+    )
+    detected = ""
+    if len(data) > 2 and isinstance(data[2], str):
+        detected = data[2]
+    return translated, detected
+
+
+class _TranslateWorkerSignals(QObject):
+    finished = Signal(int, str, str)   # request_id, translated text, detected lang
+    failed = Signal(int, str)          # request_id, friendly error message
+
+
+class _TranslateWorker(QRunnable):
+    """Runs one web-translation request off the UI thread."""
+
+    def __init__(self, request_id, text, target_lang):
+        super().__init__()
+        self.request_id = request_id
+        self.text = text
+        self.target_lang = target_lang
+        self.signals = _TranslateWorkerSignals()
+
+    def run(self):
+        try:
+            translated, detected = translate_text(self.text, self.target_lang)
+            self.signals.finished.emit(self.request_id, translated, detected)
+        except TranslateError as exc:
+            self.signals.failed.emit(self.request_id, str(exc))
+        except Exception:
+            # Never surface or log the request text.
+            self.signals.failed.emit(self.request_id, "翻譯失敗，請稍後再試。")
+
+
+class TranslateDialog(QDialog):
+    """翻譯 — text translation via the public web endpoint (no API key, no persistence)."""
+
+    AUTO_DEBOUNCE_MS = 800
+    CACHE_LIMIT = 8
+
+    LANGUAGES = (
+        ("zh-TW", "繁體中文"),
+        ("en", "English"),
+        ("zh-CN", "简体中文"),
+        ("ja", "日本語"),
+        ("ko", "한국어"),
+        ("fr", "Français"),
+        ("de", "Deutsch"),
+        ("es", "Español"),
+    )
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("翻譯 Translate")
+        self.setMinimumSize(520, 340)
+        self.resize(560, 380)
+        self.setStyleSheet(CALC_DIALOG_STYLE + MINI_PROGRAM_STYLE)
+        root = install_ornate_calc_frame(self)
+        root.setSpacing(6)
+
+        title = QLabel("翻譯 Translate")
+        title.setObjectName("calcSectionTitle")
+        root.addWidget(title)
+
+        lang_row = QHBoxLayout()
+        lang_row.setSpacing(4)
+        lang_caption = QLabel("目標語言")
+        lang_caption.setObjectName("calcFieldCaption")
+        lang_row.addWidget(lang_caption)
+        self.lang_combo = QComboBox()
+        self.lang_combo.setObjectName("translateLang")
+        for _code, label in self.LANGUAGES:
+            self.lang_combo.addItem(label)
+        self.lang_combo.setCurrentIndex(0)
+        self.lang_combo.currentIndexChanged.connect(self._on_language_changed)
+        lang_row.addWidget(self.lang_combo)
+        self.translate_btn = QPushButton("Translate 翻譯")
+        self.translate_btn.setObjectName("calcAction")
+        self.translate_btn.clicked.connect(self._translate_now)
+        lang_row.addWidget(self.translate_btn)
+        self.copy_btn = QPushButton("Copy 複製")
+        self.copy_btn.setObjectName("calcAction")
+        self.copy_btn.setEnabled(False)
+        self.copy_btn.clicked.connect(self._copy_result)
+        lang_row.addWidget(self.copy_btn)
+        lang_row.addStretch()
+        root.addLayout(lang_row)
+
+        self.source_edit = QPlainTextEdit()
+        self.source_edit.setObjectName("translateSource")
+        self.source_edit.setPlaceholderText("輸入要翻譯的文字… (auto-detect source)")
+        self.source_edit.setFixedHeight(76)
+        self.source_edit.textChanged.connect(self._on_source_changed)
+        root.addWidget(self.source_edit)
+
+        self.result = QLabel("結果將顯示於此")
+        self.result.setObjectName("calcResult")
+        self.result.setWordWrap(True)
+        self.result.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        root.addWidget(self.result)
+
+        root.addStretch()
+
+        close_row = QHBoxLayout()
+        close_row.addStretch()
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        close_row.addWidget(close_btn)
+        root.addLayout(close_row)
+
+        self._debounce = QTimer(self)
+        self._debounce.setSingleShot(True)
+        self._debounce.setInterval(self.AUTO_DEBOUNCE_MS)
+        self._debounce.timeout.connect(self._translate_now)
+        self._request_counter = 0
+        self._pending_request = None
+        # In-memory only; user text is never written to disk.
+        self._cache = OrderedDict()
+
+    def _lang_code(self):
+        index = self.lang_combo.currentIndex()
+        if 0 <= index < len(self.LANGUAGES):
+            return self.LANGUAGES[index][0]
+        return self.LANGUAGES[0][0]
+
+    def _on_source_changed(self):
+        if not self.source_edit.toPlainText().strip():
+            self._debounce.stop()
+            self.result.setText("結果將顯示於此")
+            self.copy_btn.setEnabled(False)
+            self._pending_request = None
+            return
+        self._debounce.start()
+
+    def _on_language_changed(self, _index):
+        if self.source_edit.toPlainText().strip():
+            self._debounce.start()
+
+    def _translate_now(self):
+        text = self.source_edit.toPlainText().strip()
+        if not text:
+            return
+        target = self._lang_code()
+        cache_key = (text, target)
+        if cache_key in self._cache:
+            self._cache.move_to_end(cache_key)
+            self._show_result(*self._cache[cache_key])
+            return
+        self._request_counter += 1
+        request_id = self._request_counter
+        self._pending_request = request_id
+        self.result.setText("翻譯中…")
+        worker = _TranslateWorker(request_id, text, target)
+        worker.signals.finished.connect(self._on_translated)
+        worker.signals.failed.connect(self._on_translate_failed)
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_translated(self, request_id, translated, detected):
+        if self._pending_request != request_id:
+            return
+        self._pending_request = None
+        payload = (translated, detected)
+        self._cache[(self.source_edit.toPlainText().strip(), self._lang_code())] = payload
+        while len(self._cache) > self.CACHE_LIMIT:
+            self._cache.popitem(last=False)
+        self._show_result(translated, detected)
+
+    def _on_translate_failed(self, request_id, message):
+        if self._pending_request != request_id:
+            return
+        self._pending_request = None
+        self.result.setText(message)
+        self.copy_btn.setEnabled(False)
+
+    def _show_result(self, translated, detected):
+        lines = [f"◆ {translated}"]
+        if detected:
+            lines.append(f"（偵測語言: {detected}）")
+        self.result.setText("\n".join(lines))
+        self.copy_btn.setEnabled(bool(translated))
+
+    def _copy_result(self):
+        text = self.result.text().splitlines()
+        if text and text[0].startswith("◆ "):
+            QApplication.clipboard().setText(text[0][2:])
+
+
+# ---------------------------------------------------------------------------
 # Text record readable view
 # ---------------------------------------------------------------------------
 class TextRecordViewDialog(QDialog):
@@ -2735,6 +3204,8 @@ class MiniProgramsSubMenu(PopupPanel):
         self.cfg = config_manager
         self.text_records_submenu = None
         self.operations_submenu = None
+        self.pomodoro_dialog = None
+        self.translate_dialog = None
         self.build_ui()
 
     def build_ui(self):
@@ -2787,6 +3258,21 @@ class MiniProgramsSubMenu(PopupPanel):
         ops_row.addWidget(btn_ops)
         layout.addLayout(ops_row)
 
+        sep2 = QLabel()
+        sep2.setFixedHeight(1)
+        sep2.setStyleSheet("background-color: rgba(255,255,255,120);")
+        layout.addWidget(sep2)
+
+        btn_pomodoro = QPushButton("番茄鐘 Pomodoro")
+        btn_pomodoro.setStyleSheet(menu_button_style("#6e4a2a"))
+        btn_pomodoro.clicked.connect(self.open_pomodoro)
+        layout.addWidget(btn_pomodoro)
+
+        btn_translate = QPushButton("翻譯 Translate")
+        btn_translate.setStyleSheet(menu_button_style("#2a5a4a"))
+        btn_translate.clicked.connect(self.open_translate)
+        layout.addWidget(btn_translate)
+
         self.setStyleSheet(MENU_STYLE + """
             MiniProgramsSubMenu { background-color: transparent; }
         """)
@@ -2827,6 +3313,24 @@ class MiniProgramsSubMenu(PopupPanel):
         self.operations_submenu.refresh_and_show(self.geometry())
         QTimer.singleShot(300, self._release_suppress)
 
+    def open_pomodoro(self):
+        self._suppress_hide = True
+        if self.pomodoro_dialog is None:
+            self.pomodoro_dialog = PomodoroDialog(self.cfg, None)
+        self.pomodoro_dialog.show()
+        self.pomodoro_dialog.raise_()
+        self.pomodoro_dialog.activateWindow()
+        QTimer.singleShot(300, self._release_suppress)
+
+    def open_translate(self):
+        self._suppress_hide = True
+        if self.translate_dialog is None:
+            self.translate_dialog = TranslateDialog(None)
+        self.translate_dialog.show()
+        self.translate_dialog.raise_()
+        self.translate_dialog.activateWindow()
+        QTimer.singleShot(300, self._release_suppress)
+
     def _release_suppress(self):
         self._suppress_hide = False
 
@@ -2859,6 +3363,8 @@ class MiniProgramsSubMenu(PopupPanel):
                 OperationsSubMenu,
                 LevelCalcDialog,
                 SlopeCalcDialog,
+                PomodoroDialog,
+                TranslateDialog,
             ),
         ):
             return
@@ -3137,6 +3643,8 @@ class PetMenu(PopupPanel):
                 OperationsSubMenu,
                 LevelCalcDialog,
                 SlopeCalcDialog,
+                PomodoroDialog,
+                TranslateDialog,
             ),
         ):
             return

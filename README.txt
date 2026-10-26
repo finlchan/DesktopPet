@@ -1,7 +1,7 @@
 Desktop Pet
 ==================
 
-Version: 261026.01
+Version: 261026.02
 Published: 2026-10-26
 
 A floating shortcut menu and document record gadget on the Windows desktop.
@@ -14,7 +14,8 @@ Features
 4. Below that, "File / URL shortcuts"; click ">>" to open the submenu (search/filter; files and web links).
 5. The middle section shows "Document record"; click the ">>" button to open the submenu and browse/search files.
    The Document record submenu header has an "Open folder" button to open storage folder(s) in the file manager.
-6. Below Document record, "小程式"; click ">>" for Text records and 運算 (平水計算 / 坡度運算).
+6. Below Document record, "小程式"; click ">>" for Text records and 運算 (平水計算 / 坡度運算),
+   plus 番茄鐘 (Pomodoro timer) and 翻譯 (Translate).
 7. Drag files, folders, or URLs onto the pet to add shortcuts (prompt for name/description).
 8. The bottom has a "Settings" button to edit all configurations.
 9. Window level can be set to Normal, Always on top, or Always on bottom.
@@ -41,6 +42,18 @@ Settings
 5. Text records: add/edit/delete text records (Title + Body); list has search/filter.
 6. System: set window level (Normal / Always on top / Always on bottom);
    enable/disable "Start with Windows" (registry Run key; Windows only).
+
+What's new in 261026.02 (2026-10-26)
+--------
+1. 小程式 → 番茄鐘 (Pomodoro): countdown timer with 25/5/15 minute presets and custom minutes
+   (1–600), Start / Pause / Reset, progress bar, gentle tray notification + beep when done.
+   Last used duration is remembered in config (running state is not saved).
+2. 小程式 → 翻譯 (Translate): text translation with source auto-detect, target languages
+   EN / 繁體中文 / 简体中文 / 日本語 / 한국어 / Français / Deutsch / Español, Translate button
+   plus auto-translate after typing pauses, copy button. Uses Google Translate's public web
+   endpoint (no API key); failures show a friendly inline message; recent translations are
+   cached in memory only (user text is never written to disk or logs).
+3. Version bump to 261026.02.
 
 What's new in 261026.01 (2026-10-26)
 --------
@@ -120,7 +133,7 @@ Notes
 
 --------------------------------------------------------------------------------
 
-版本：261026.01
+版本：261026.02
 發布日期：2026-10-26
 
 一款位於 Windows 桌面上的浮動快捷選單與文檔記錄小工具。
@@ -153,6 +166,16 @@ Notes
 檔案快捷方式 (File shortcuts)：可設定類型 (File / URL)、「項目名稱」、路徑或網址及「描述」（列表可搜尋／篩選）。
 文檔記錄 (Document record)：設定「標題 (Title)」與一個或多個「資料儲存資料夾 (Data storage folders)」（按「Add」可加入更多資料夾）；應用程式將自動列出這些資料夾內的所有檔案。
 系統設定 (System)：設定視窗層級（一般 / 置頂 / 置底）；可啟用／停用「隨 Windows 啟動」（登錄檔 Run 機碼；僅 Windows）。
+
+261026.02 更新內容（2026-10-26）
+1. 小程式 → 番茄鐘：倒數計時器，提供 25／5／15 分鐘預設及自訂分鐘（1–600），
+   開始／暫停／重設、進度條，完成時以系統通知及提示聲溫和提醒。
+   記住上次使用的分鐘數（不保存進行中狀態）。
+2. 小程式 → 翻譯：文字翻譯，自動偵測來源語言，目標語言
+   英語／繁體中文／简体中文／日本語／한국어／Français／Deutsch／Español，
+   設 Translate 按鈕及停頓後自動翻譯、複製按鈕。使用 Google 翻譯公共網頁端點（無需 API 金鑰）；
+   失敗時顯示友善提示；最近翻譯僅存於記憶體（用戶文字不會寫入磁碟或日誌）。
+3. 版本更新至 261026.02。
 
 261026.01 更新內容（2026-10-26）
 1. 平水計算／坡度運算視窗：鎏金／木紋畫框邊框。
