@@ -19,7 +19,7 @@ from PySide6.QtGui import (
     QPixmap, QPainter, QColor, QCursor, QIcon, QAction, QMovie, QDesktopServices,
 )
 from PySide6.QtWidgets import (
-    QApplication, QWidget, QLabel, QVBoxLayout, QHBoxLayout,
+    QApplication, QWidget, QLabel, QVBoxLayout, QHBoxLayout, QGridLayout,
     QPushButton, QLineEdit, QTextEdit, QListWidget, QListWidgetItem,
     QFileDialog, QDialog, QFormLayout, QTabWidget, QComboBox,
     QSpinBox, QDoubleSpinBox, QCheckBox, QMessageBox, QMenu, QStyle,
@@ -1401,9 +1401,10 @@ CALC_DIALOG_STYLE = """
         color: #7CFC7C;
         border: 1px solid #2d5a2d;
         border-radius: 4px;
-        padding: 6px 8px;
+        padding: 4px 8px;
         font-family: "Consolas", "Courier New", monospace;
         font-size: 9pt;
+        margin-top: 2px;
     }
     QLineEdit#calcNumeric {
         background-color: #2a2a2a;
@@ -1430,10 +1431,16 @@ CALC_DIALOG_STYLE = """
     QPushButton#calcAction {
         background-color: #2c2c2c;
         min-height: 22px;
-        max-height: 26px;
-        max-width: 130px;
-        padding: 3px 12px;
+        max-height: 24px;
+        max-width: 120px;
+        padding: 2px 10px;
         font-size: 9pt;
+    }
+    QLabel#calcFieldCaption {
+        color: #d0d0d0;
+        font-size: 9pt;
+        padding: 0;
+        margin: 0;
     }
     QRadioButton { color: #e0e0e0; spacing: 6px; }
     QFrame#calcSection {
@@ -1641,43 +1648,78 @@ def format_one_in_x(xin):
     return f"1 in {xin:.3f}"
 
 
-class NumericField(QWidget):
-    """Compact labeled QLineEdit for calculator inputs (keyboard-editable decimals)."""
+def _format_calc_value(value, decimals=3):
+    text = f"{float(value):.{decimals}f}".rstrip("0").rstrip(".")
+    return text if text else "0"
 
-    textChanged = Signal(str)
 
-    def __init__(self, label, value=0.0, decimals=3, max_edit_width=140, parent=None):
-        super().__init__(parent)
+def make_calc_line_edit(value=0.0, decimals=3, max_edit_width=90):
+    """Compact keyboard-editable decimal QLineEdit for calculator rows."""
+    edit = QLineEdit()
+    edit.setObjectName("calcNumeric")
+    edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    edit.setText(_format_calc_value(value, decimals))
+    edit.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+    edit.setFixedHeight(24)
+    if max_edit_width:
+        edit.setFixedWidth(max_edit_width)
+    return edit
+
+
+class NumericField:
+    """Accessor for a calculator QLineEdit (parse on read; decimals on write)."""
+
+    def __init__(self, edit, decimals=3):
+        self.edit = edit
         self._decimals = decimals
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
-        self.caption = QLabel(label)
-        layout.addWidget(self.caption)
-
-        self.edit = QLineEdit()
-        self.edit.setObjectName("calcNumeric")
-        self.edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.edit.setText(self._format(value))
-        self.edit.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        if max_edit_width:
-            self.edit.setMaximumWidth(max_edit_width)
-        self.edit.textChanged.connect(self.textChanged.emit)
-        layout.addWidget(self.edit)
-
-    def _format(self, value):
-        text = f"{float(value):.{self._decimals}f}".rstrip("0").rstrip(".")
-        return text if text else "0"
+        self.textChanged = edit.textChanged
 
     def value(self):
         return parse_calc_number(self.edit.text())
 
     def setValue(self, value):
-        self.edit.setText(self._format(value))
+        self.edit.setText(_format_calc_value(value, self._decimals))
 
-    def setEnabled(self, enabled):
-        super().setEnabled(enabled)
-        self.edit.setEnabled(enabled)
+
+def build_calc_action_cluster(field_specs, button_text, button_slot):
+    """
+    Two-row cluster: captions on row 0; edits + action button on row 1.
+
+    field_specs: list of (label, value, decimals=3, max_edit_width=90)
+    Returns (widget, list[NumericField]).
+    """
+    wrap = QWidget()
+    grid = QGridLayout(wrap)
+    grid.setContentsMargins(0, 0, 0, 0)
+    grid.setHorizontalSpacing(8)
+    grid.setVerticalSpacing(2)
+    grid.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+
+    fields = []
+    for col, spec in enumerate(field_specs):
+        label = spec[0]
+        value = spec[1] if len(spec) > 1 else 0.0
+        decimals = spec[2] if len(spec) > 2 else 3
+        max_w = spec[3] if len(spec) > 3 else 90
+        caption = QLabel(label)
+        caption.setObjectName("calcFieldCaption")
+        edit = make_calc_line_edit(value, decimals=decimals, max_edit_width=max_w)
+        grid.addWidget(caption, 0, col, Qt.AlignmentFlag.AlignLeft)
+        grid.addWidget(edit, 1, col, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        fields.append(NumericField(edit, decimals=decimals))
+
+    btn = QPushButton(button_text)
+    btn.setObjectName("calcAction")
+    btn.setFixedHeight(24)
+    btn.clicked.connect(button_slot)
+    # Same baseline as the edit row (not the caption row).
+    grid.addWidget(
+        btn,
+        1,
+        len(field_specs),
+        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+    )
+    return wrap, fields
 
 
 class PopupPanel(QWidget):
@@ -2166,8 +2208,8 @@ class LevelCalcDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("平水計算")
-        self.setMinimumSize(520, 220)
-        self.resize(560, 240)
+        self.setMinimumSize(540, 200)
+        self.resize(560, 220)
         self.setStyleSheet(CALC_DIALOG_STYLE)
         root = install_ornate_calc_frame(self)
         root.setSpacing(6)
@@ -2176,21 +2218,19 @@ class LevelCalcDialog(QDialog):
         title.setObjectName("calcSectionTitle")
         root.addWidget(title)
 
-        # Compact inputs + calculate button on one row (button on the right).
-        row = QHBoxLayout()
-        row.setSpacing(8)
-        self.high = NumericField("高位平水", 100.0, max_edit_width=90)
-        self.low = NumericField("低位平水", 90.0, max_edit_width=90)
-        self.full = NumericField("全長", 50.0, max_edit_width=90)
-        self.target = NumericField("目標距離", 25.0, max_edit_width=90)
-        for w in (self.high, self.low, self.full, self.target):
-            row.addWidget(w)
-        calc_btn = QPushButton("計算平水")
-        calc_btn.setObjectName("calcAction")
-        calc_btn.clicked.connect(self._calculate)
-        row.addWidget(calc_btn, 0, Qt.AlignmentFlag.AlignBottom)
-        row.addStretch()
-        root.addLayout(row)
+        # Captions above; edits + 計算平水 share one baseline row (button right).
+        cluster, fields = build_calc_action_cluster(
+            [
+                ("高位平水", 100.0, 3, 88),
+                ("低位平水", 90.0, 3, 88),
+                ("全長", 50.0, 3, 88),
+                ("目標距離", 25.0, 3, 88),
+            ],
+            "計算平水",
+            self._calculate,
+        )
+        self.high, self.low, self.full, self.target = fields
+        root.addWidget(cluster, 0, Qt.AlignmentFlag.AlignLeft)
 
         self.result = QLabel("結果將顯示於此")
         self.result.setObjectName("calcResult")
@@ -2250,7 +2290,7 @@ class SlopeCalcDialog(QDialog):
         scroll.setWidget(root_w)
         root = QVBoxLayout(root_w)
         root.setContentsMargins(4, 4, 4, 4)
-        root.setSpacing(10)
+        root.setSpacing(8)
 
         root.addWidget(self._build_section_a())
         root.addWidget(self._build_section_b())
@@ -2267,8 +2307,8 @@ class SlopeCalcDialog(QDialog):
         frame = QFrame()
         frame.setObjectName("calcSection")
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(10, 8, 10, 10)
-        layout.setSpacing(6)
+        layout.setContentsMargins(8, 6, 8, 8)
+        layout.setSpacing(4)
         head = QLabel(f"{number}  {title}")
         head.setObjectName("calcSectionTitle")
         layout.addWidget(head)
@@ -2276,20 +2316,17 @@ class SlopeCalcDialog(QDialog):
 
     def _build_section_a(self):
         frame, layout = self._section_frame("1", "兩點高差求坡度")
-        row = QHBoxLayout()
-        row.setSpacing(8)
-        self.a_length = NumericField("長度 (L)", 10.0, max_edit_width=90)
-        self.a_high = NumericField("高位 LV", 10.0, max_edit_width=90)
-        self.a_low = NumericField("低位 LV", 9.5, max_edit_width=90)
-        row.addWidget(self.a_length)
-        row.addWidget(self.a_high)
-        row.addWidget(self.a_low)
-        btn = QPushButton("計算坡度")
-        btn.setObjectName("calcAction")
-        btn.clicked.connect(self._calc_a)
-        row.addWidget(btn, 0, Qt.AlignmentFlag.AlignBottom)
-        row.addStretch()
-        layout.addLayout(row)
+        cluster, fields = build_calc_action_cluster(
+            [
+                ("長度 (L)", 10.0, 3, 88),
+                ("高位 LV", 10.0, 3, 88),
+                ("低位 LV", 9.5, 3, 88),
+            ],
+            "計算坡度",
+            self._calc_a,
+        )
+        self.a_length, self.a_high, self.a_low = fields
+        layout.addWidget(cluster, 0, Qt.AlignmentFlag.AlignLeft)
 
         self.a_result = QLabel("")
         self.a_result.setObjectName("calcResult")
@@ -2300,20 +2337,17 @@ class SlopeCalcDialog(QDialog):
 
     def _build_section_b(self):
         frame, layout = self._section_frame("2", "坡度推算高程")
-        row = QHBoxLayout()
-        row.setSpacing(8)
-        self.b_length = NumericField("長度 (L)", 10.0, max_edit_width=90)
-        self.b_start = NumericField("起始 LV", 10.0, max_edit_width=90)
-        self.b_fall = NumericField("坡度 Fall (%)", 5.0, max_edit_width=90)
-        row.addWidget(self.b_length)
-        row.addWidget(self.b_start)
-        row.addWidget(self.b_fall)
-        btn = QPushButton("計算高程")
-        btn.setObjectName("calcAction")
-        btn.clicked.connect(self._calc_b)
-        row.addWidget(btn, 0, Qt.AlignmentFlag.AlignBottom)
-        row.addStretch()
-        layout.addLayout(row)
+        cluster, fields = build_calc_action_cluster(
+            [
+                ("長度 (L)", 10.0, 3, 88),
+                ("起始 LV", 10.0, 3, 88),
+                ("坡度 Fall (%)", 5.0, 3, 88),
+            ],
+            "計算高程",
+            self._calc_b,
+        )
+        self.b_length, self.b_start, self.b_fall = fields
+        layout.addWidget(cluster, 0, Qt.AlignmentFlag.AlignLeft)
 
         self.b_result = QLabel("")
         self.b_result.setObjectName("calcResult")
@@ -2338,11 +2372,12 @@ class SlopeCalcDialog(QDialog):
         self.c_group.idClicked.connect(lambda _id: self._on_c_kind_changed())
 
         self.c_input_label = QLabel("輸入 坡度 (Fall %)")
+        self.c_input_label.setObjectName("calcFieldCaption")
         layout.addWidget(self.c_input_label)
-        self.c_value = NumericField("", 1.0, decimals=6, max_edit_width=140)
-        self.c_value.caption.hide()
+        c_edit = make_calc_line_edit(1.0, decimals=6, max_edit_width=140)
+        self.c_value = NumericField(c_edit, decimals=6)
         self.c_value.textChanged.connect(self._calc_c_live)
-        layout.addWidget(self.c_value)
+        layout.addWidget(c_edit, 0, Qt.AlignmentFlag.AlignLeft)
 
         self.c_result = QLabel("")
         self.c_result.setObjectName("calcResult")
