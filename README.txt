@@ -1,10 +1,14 @@
 Desktop Pet
 ==================
 
-Version: 261026.08
+Version: 261027.02
 Published: 2026-10-27
 
 A floating shortcut menu and document record gadget on the Windows desktop.
+
+Note: from version 261027.01 this README is English-only. Earlier releases
+shipped a bilingual (English + Traditional Chinese) README; the Chinese half
+was dropped when the app UI was fully translated to English.
 
 Features
 --------
@@ -14,8 +18,8 @@ Features
 4. Below that, "File / URL shortcuts"; click ">>" to open the submenu (search/filter; files and web links).
 5. The middle section shows "Document record"; click the ">>" button to open the submenu and browse/search files.
    The Document record submenu header has an "Open folder" button to open storage folder(s) in the file manager.
-6. Below Document record, "小程式"; click ">>" for Text records and 運算 (平水計算 / 坡度運算),
-   plus 番茄鐘 (Pomodoro timer) and 翻譯 (Translate).
+6. Below Document record, "Mini programs"; click ">>" for Text records and Calculations
+   (Level calc / Slope calc / Free station), plus the Pomodoro timer and Translate.
 7. Drag files, folders, or URLs onto the pet to add shortcuts (prompt for name/description).
 8. The bottom has a "Settings" button to edit all configurations.
 9. Window level can be set to Normal, Always on top, or Always on bottom.
@@ -42,6 +46,46 @@ Settings
 5. Text records: add/edit/delete text records (Title + Body); list has search/filter.
 6. System: set window level (Normal / Always on top / Always on bottom);
    enable/disable "Start with Windows" (registry Run key; Windows only).
+
+Free Station calculator
+--------
+Mini programs → Calculations → Free station resects the standing station from
+2–3 known backsight stations, mirroring the "Free Station" sheet of the
+Free_Station_FAI.xls survey spreadsheet:
+
+- Per backsight: name, Easting, Northing, reduced level (optional), observed
+  mean bearing (DD.MMSS, e.g. 330.140182 = 330°14'01.8"), vertical (zenith)
+  angle, slope distance and prism/spot height.
+- Every ordered From→To pair is solved by the sine rule exactly as the sheet's
+  FreeStation / FreeStation_Mirror VBA functions; the sheet's branch rule is
+  kept (preliminary branch unless its distance check exceeds 0.05 m, then the
+  mirror branch when valid).
+- Output: station Easting/Northing, reduced level, and the distance-check
+  residual ΔHD per pair. Copy button copies the result block.
+
+What's new in 261027.02 (2026-10-27)
+--------
+1. Free Station dialog: 4 backsight rows (was 3), each with face-left (F1) and
+   face-right (F2) observations averaged exactly like the sheet's "Mean B/S"
+   formulas (bearing: mean of F1 and F2+180°; vertical angle:
+   (360−F1−F2)/2+F1; slope distance / spot height: plain average).
+2. Per-pair review table like the Excel: From / To, Preliminary E/N,
+   Mirror E/N, chosen Easting/Northing, Reduced Lv., Distance Check, with
+   per-pair "Reject both" and "Use mirror angle" checkboxes; the summary
+   respects the choices.
+3. "<< 1 / 2 >>" pager: page 2 stores backsight records (Name, Easting,
+   Northing, RL) in config as "free_station_stations" (backward compatible);
+   typing a stored name on page 1 auto-fills that row's E/N/RL (still editable).
+
+What's new in 261027.01 (2026-10-27)
+--------
+1. Mini programs → Calculations → Free Station: resection calculator porting the
+   Free_Station_FAI.xls sheet math (sine rule with mirror branch and distance
+   check; DD.MMSS angles; zenith-angle verticals). Ornate frame style matching
+   the other calculation dialogs.
+2. Whole user interface translated to English (menus, dialogs, buttons,
+   tooltips, tray notifications, message boxes). Config keys are unchanged.
+3. README is now English-only.
 
 What's new in 261026.08 (2026-10-27)
 --------
@@ -70,6 +114,7 @@ What's new in 261026.04 (2026-10-26)
 --------
 1. All mini-program dialogs (平水計算, 坡度運算, 番茄鐘, 翻譯): frameless + ornate frame +
    ~70% opaque panels; reliable drag on the picture-frame border and the title row.
+   (These tools are now named Level calc, Slope calc, Pomodoro, Translate.)
 2. 番茄鐘 / 翻譯 now match the calc dialogs (no OS title bar, translucent content fill).
 
 What's new in 261026.03 (2026-10-26)
@@ -160,117 +205,3 @@ Notes
 - Contact: chanpofaihk@gmail.com
 - Support me via PayPal: scan the QR code below. 
 
-
---------------------------------------------------------------------------------
-
-版本：261026.08
-發布日期：2026-10-27
-
-一款位於 Windows 桌面上的浮動快捷選單與文檔記錄小工具。
-
-功能特點
-
-
-桌面小圖示：在桌面上顯示一個小圖示（可自訂單張圖片或設定圖片資料夾自動輪播）。
-半透明選單：點擊圖示即可開啟半透明快捷選單。
-資料夾快捷方式：選單頂部顯示「資料夾快捷方式」，並可搜尋／篩選。
-檔案／網址快捷方式：其下顯示「檔案／網址快捷方式」，點擊「>>」開啟子選單（可搜尋；支援檔案與網址）。
-文檔記錄：選單中部顯示「文檔記錄」，點擊「>>」按鈕可開啟子選單並瀏覽／搜尋檔案。
-拖放新增：可將檔案、資料夾或網址拖放到寵物上以新增快捷方式（會提示輸入名稱與描述）。
-設定選項：選單底部設有「設定」按鈕，可編輯所有配置參數。
-視窗層級：視窗層級可設定為「一般 (Normal)」、「置頂 (Always on top)」或「置底 (Always on bottom)」。
-開機啟動：可於系統設定啟用「隨 Windows 啟動」（僅 Windows）。
-多螢幕位置記憶：記住寵物在各螢幕上的位置，並在啟動或螢幕變更時還原／限制在可見範圍內。
-
-快速上手
-左鍵點擊：開啟選單
-拖曳：移動位置
-雙擊：開啟設定
-右鍵點擊：開啟選單
-拖放檔案／資料夾／網址到寵物：新增快捷方式
-右鍵點擊檔案項目：編輯時間 / 備註 / 發布者 / 版本 (Time / Comment / Publisher / Version)
-
-設定說明
-圖片 (Pet Image)：可選擇單張圖片，或指定圖片資料夾進行自動輪播。
-資料夾快捷方式 (Folder shortcuts)：可設定「項目名稱 (Item name)」、「資料夾路徑 (Folder path)」及「描述 (Description)」（列表可搜尋／篩選）。
-檔案快捷方式 (File shortcuts)：可設定類型 (File / URL)、「項目名稱」、路徑或網址及「描述」（列表可搜尋／篩選）。
-文檔記錄 (Document record)：設定「標題 (Title)」與一個或多個「資料儲存資料夾 (Data storage folders)」（按「Add」可加入更多資料夾）；應用程式將自動列出這些資料夾內的所有檔案。
-系統設定 (System)：設定視窗層級（一般 / 置頂 / 置底）；可啟用／停用「隨 Windows 啟動」（登錄檔 Run 機碼；僅 Windows）。
-
-261026.08 更新內容（2026-10-27）
-1. 小程式半透明改以 QPainter 繪製 ARGB（不再用 QSS rgba）。先前 QSS 在
-   WA_TranslucentBackground 下會丢掉 alpha，導致 60% 與 80% 看起來一樣。
-   視窗中央約 70% 不透明、灰色內容區約 80% 不透明。
-
-261026.07 更新內容（2026-10-27）
-1. 小程式不透明度調整：視窗中央約 70% 不透明、灰色內容區約 80% 不透明（畫框邊框保持實色）。
-
-261026.06 更新內容（2026-10-27）
-1. 修正小程式半透明：畫框外／中層改為只繪製邊框環（中央透明）；先前整面填色蓋住灰色內容區，
-   導致無法透視桌面。內容區維持約 60% 不透明。
-
-261026.05 更新內容（2026-10-27）
-1. 小程式視窗：僅畫框邊框（鎏金／木紋外圈）可拖曳移動；標題列與內容區點擊不再移動視窗。
-2. 灰色內容區不透明度約 60%（畫框保持實色）。
-
-261026.04 更新內容（2026-10-26）
-1. 所有小程式視窗（平水計算、坡度運算、番茄鐘、翻譯）：無系統標題列、畫框外觀、
-   約 70% 不透明；可在畫框邊框與標題列拖曳移動。
-2. 番茄鐘／翻譯與運算視窗一致（半透明內容區、無 OS 標題列）。
-
-261026.03 更新內容（2026-10-26）
-1. 小程式 → 番茄鐘：倒數計時器，提供 25／5／15 分鐘預設及自訂分鐘（1–600），
-   開始／暫停／重設、進度條，完成時以系統通知及提示聲溫和提醒。
-   記住上次使用的分鐘數（不保存進行中狀態）。
-2. 小程式 → 翻譯：文字翻譯，自動偵測來源語言，目標語言
-   英語／繁體中文／简体中文／日本語／한국어／Français／Deutsch／Español，
-   設 Translate 按鈕及停頓後自動翻譯、複製按鈕。使用 Google 翻譯公共網頁端點（無需 API 金鑰）；
-   失敗時顯示友善提示；最近翻譯僅存於記憶體（用戶文字不會寫入磁碟或日誌）。
-3. 平水計算／坡度運算：無系統標題列（無框視窗）；以畫框為外觀。
-4. 約 70% 不透明（半透明）；可拖曳畫框／標題／空白處移動；保留 Close。
-
-261026.01 更新內容（2026-10-26）
-1. 平水計算／坡度運算視窗：鎏金／木紋畫框邊框。
-2. 移除 +/− 按鈕；改為可鍵盤輸入小數的精簡欄位（按計算時驗證）。
-3. 移除標題下說明段落；保留區塊標題、欄位標籤與選項標籤。
-4. 縮小輸入框與主要計算按鈕。
-
-261024.01 更新內容（2026-10-24）
-1. 搜尋／篩選：文檔記錄列表、檔案／網址子選單、資料夾快捷方式選單，以及設定列表。
-2. 隨 Windows 啟動：系統分頁選項（HKCU Run 機碼）；非 Windows 上停用／隱藏。
-3. 拖放新增：將檔案／資料夾／網址拖到寵物即可新增快捷方式（名稱／描述提示）。
-4. 網址快捷方式：file_shortcuts 支援可選 "type": "file"|"url"；設定中可選類型；以預設瀏覽器開啟。
-5. 多螢幕位置記憶：儲存螢幕名稱與相對位置；啟動及螢幕變更時還原並限制在可見範圍。
-
-261023.01 更新內容（2026-10-23）
-1. 新增檔案快捷方式：設定分頁與選單標題列＋「>>」子選單（與文檔記錄相同交互）。
-2. 文檔記錄設定中「新增」按鈕改為英文「Add」。
-3. 設定檔新增 "file_shortcuts"（既有 "shortcuts" 資料夾清單維持不變）。
-
-261022.01 更新內容（2026-10-22）
-1. 文檔記錄：支援多個儲存資料夾，設定中可按 Add 加入更多資料夾。
-2. 列表同時顯示檔名與備註 (comment)。
-3. 選項加入滑鼠懸停狀態（略為變深）。
-4. 修正 build.bat 在 Windows cmd 下執行；輸出資料夾為 upload\。
-5. 包裝流程忽略個人 config / 存檔 / 圖片（僅附空白模板）。
-
-下載說明
-GitHub Releases 已提供免安裝、可直接執行的版本，您無需自行編譯 EXE 檔案：
-https://github.com/finlchan/DesktopPet/releases
-請下載以下檔案並保持放在同一資料夾中：
-DesktopPet.exe
-config.json（發行版空白模板 — 請勿使用個人設定檔）
-How-to-use.pdf（使用說明；How-to-use.png 為單頁摘要）
-（已取代舊版 How to use.jpg）
-完成後即可啟動 DesktopPet.exe 使用。
-
-編譯 EXE 檔案
-僅在您希望從原始碼自行建置時才需要操作。
-雙擊執行 build.bat，即可在 upload\ 資料夾產生可分享內容
-（DesktopPet.exe、空白包裝用 config.json、How-to-use.pdf、How-to-use.png）。
-請勿把個人 config.json、存檔或寵物圖片放入上載內容。
-注意事項
-若初次執行時缺少 config.json，系統將自動建立該檔案。
-請務必將 DesktopPet.exe 與 config.json 保持在同一資料夾下。
-
-聯絡方式：chanpofaihk@gmail.com

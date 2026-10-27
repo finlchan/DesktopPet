@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QSpinBox, QDoubleSpinBox, QCheckBox, QMessageBox, QMenu, QStyle,
     QSystemTrayIcon, QPlainTextEdit, QFrame, QRadioButton, QButtonGroup,
     QScrollArea, QSizePolicy, QProgressBar,
+    QStackedWidget, QTableWidget, QTableWidgetItem, QAbstractItemView,
 )
 
 
@@ -53,7 +54,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261026.08"
+APP_VERSION = "261027.02"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -109,6 +110,9 @@ DEFAULT_CONFIG = {
     "pomodoro": {
         "minutes": 25,
     },
+    # Free Station dialog: stored backsight records for auto-fill.
+    # Shape: {name, easting, northing, rl}. Optional; older configs omit it.
+    "free_station_stations": [],
 }
 
 
@@ -841,7 +845,7 @@ class SettingsDialog(QDialog):
         text_layout.addLayout(tr_btn_layout)
 
         tr_info = QLabel(
-            "Text records appear under 小程式 → Text records in the pet menu. "
+            "Text records appear under Mini programs → Text records in the pet menu. "
             "Click >> to browse titles; click a title to read the body."
         )
         tr_info.setWordWrap(True)
@@ -1791,11 +1795,11 @@ def parse_calc_number(text):
     """Parse a typed calculator field; raises ValueError on empty/invalid input."""
     raw = (text or "").strip().replace(",", "")
     if not raw or raw in ("-", "+", ".", "-.", "+."):
-        raise ValueError("請輸入有效數值")
+        raise ValueError("Enter a valid number")
     try:
         return float(raw)
     except ValueError as exc:
-        raise ValueError("請輸入有效數值") from exc
+        raise ValueError("Enter a valid number") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -1854,7 +1858,7 @@ def slope_from_length_diff(length, high_lv, low_lv):
     rise = high_lv - low_lv; Fall% = rise/L*100; 1 in X = L/rise; angle = atan(rise/L).
     """
     if length == 0:
-        raise ValueError("長度 (L) 必須不為 0")
+        raise ValueError("Length (L) must not be 0")
     rise = high_lv - low_lv
     if rise == 0:
         return 0.0, float("inf"), 0.0
@@ -1893,7 +1897,7 @@ def convert_slope_units(known_kind, value):
         return fall_pct, one_in_x, angle_deg
     if known_kind == "xin":
         if value == 0:
-            raise ValueError("1 in X 的 X 不可為 0")
+            raise ValueError("1 in X: X must not be 0")
         one_in_x = value
         fall_pct = 100.0 / one_in_x
         angle_deg = math.degrees(math.atan(1.0 / one_in_x))
@@ -1901,7 +1905,7 @@ def convert_slope_units(known_kind, value):
     if known_kind == "angle":
         angle_deg = value
         if abs(angle_deg) % 180 == 90:
-            raise ValueError("角度不可為 ±90°")
+            raise ValueError("Angle must not be ±90°")
         fall_pct = 100.0 * math.tan(math.radians(angle_deg))
         if fall_pct == 0:
             return 0.0, float("inf"), angle_deg
@@ -1912,14 +1916,198 @@ def convert_slope_units(known_kind, value):
 
 def level_at_target(high_level, low_level, full_length, target_distance):
     """
-    平水計算 (linear interpolate along a grade line).
+    Level calc (linear interpolate along a grade line).
     Assumes high level at chainage 0 and low level at full_length:
         level = high - (high - low) * (target / full)
     Extrapolation is allowed when target is outside [0, full].
     """
     if full_length <= 0:
-        raise ValueError("全長必須大於 0")
+        raise ValueError("Full length must be greater than 0")
     return high_level - (high_level - low_level) * (target_distance / full_length)
+
+
+# ---------------------------------------------------------------------------
+# Free Station (resection) math — ported 1:1 from Free_Station_FAI.xls
+#
+# The workbook's "Free Station" sheet drives the VBA functions below
+# (Simple_Utilities_Suite_2010.bas, formulas on sheet rows 20/24/28/33-38).
+# Angles are typed as surveying DD.MMSS text (e.g. 330.1402 = 330°14'01.8").
+# Vertical angles follow the total-station ZENITH convention (90° = horizon):
+# horizontal distance = slope × sin(zenith), vertical delta = slope × cos(zenith).
+#
+# Triangle (station S, backsights BS1/BS2), sheet pair "From BS1 → To BS2":
+#   BRG1 = bearing BS2→BS1, HD1 = |BS2→BS1|            (from control coords)
+#   HD2  = SD_to_HD(VA_to, SD_to)                      (observed to "To" BS)
+#   RAA  = observed angle at S between BS1 and BS2 bearings
+#   RAB  = asin(sin(RAA) × HD2 / HD1)                  (sine rule, angle at BS1)
+#   BRG2 = BRG1 − (180 − RAA − RAB)                    (bearing BS2→S)
+#   E/N  = HD2·sin(BRG2)+E2, HD2·cos(BRG2)+N2          (polar from BS2)
+#   RL   = RL(To) − SD·cos(zenith) + prism_ht − inst_ht
+# The mirror branch flips RAB = 180 − RAB (other sine-rule solution) when
+# |RAB| > |RAA|; the sheet keeps whichever branch passes the distance check.
+# ---------------------------------------------------------------------------
+def _survey_round(value, decimals):
+    # VBA Format(x, "0.0000")-style rounding used inside DEG/DMS.
+    return round(value, decimals)
+
+
+def survey_deg(ddmmss):
+    """VBA DEG(): DD.MMSS number → decimal degrees."""
+    if ddmmss == 0:
+        return 0.0
+    b0 = abs(ddmmss)
+    dd = math.floor(b0)
+    mm = _survey_round((b0 - math.floor(b0)) * 100, 4)
+    ss = _survey_round(mm - math.floor(mm), 4)
+    return survey_test_deg(dd + math.floor(mm) / 60 + ss / 36) * abs(ddmmss) / ddmmss
+
+
+def survey_dms(degrees):
+    """VBA DMS(): decimal degrees → DD.MMSS number."""
+    if degrees == 0:
+        return 0.0
+    b0 = abs(degrees)
+    dd = math.floor(b0)
+    mm = math.floor((b0 - dd) * 60)
+    ss = _survey_round(((b0 - dd) * 60 - mm) * 60, 2)
+    if ss >= 60:
+        ss -= 60
+        mm += 1
+    if mm >= 60:
+        mm -= 60
+        dd += 1
+    return survey_test_dms(dd + mm / 100 + ss / 10000) * abs(degrees) / degrees
+
+
+def survey_test_dms(value):
+    if abs(value) > 360:
+        value = (abs(value) - math.floor(abs(value) / 360) * 360) * abs(value) / value
+    if value < 0:
+        value = survey_dms(survey_deg(value) + 360)
+    return value
+
+
+def survey_test_deg(value):
+    if abs(value) > 360:
+        value = (abs(value) - math.floor(abs(value) / 360) * 360) * abs(value) / value
+    if value < 0:
+        value += 360
+    return value
+
+
+def _survey_sin(deg):
+    return math.sin(deg * math.pi / 180)
+
+
+def _survey_cos(deg):
+    return math.cos(deg * math.pi / 180)
+
+
+def _survey_asn(x):
+    d = math.sqrt(-x * x + 1)
+    if d == 0:
+        return x * 90
+    return math.atan(x / d) * 180 / math.pi
+
+
+def _survey_acs(x):
+    d = math.sqrt(-x * x + 1)
+    if d == 0:
+        return (1 - x) * 180 / 2
+    return (math.atan(-x / d) + 2 * math.atan(1)) * 180 / math.pi
+
+
+def survey_polar(se, sn, e, n, kind):
+    """VBA Polar(): kind 'D' → horizontal distance, 'B' → bearing (DD.MMSS)."""
+    de = e - se
+    dn = n - sn
+    if kind == "D":
+        return math.sqrt(de * de + dn * dn)
+    if kind == "B":
+        if de >= 0:
+            return survey_dms(_survey_acs(dn / math.sqrt(de * de + dn * dn)))
+        return survey_dms(360 - _survey_acs(dn / math.sqrt(de * de + dn * dn)))
+    raise ValueError(f"Unknown polar kind: {kind}")
+
+
+def survey_sd_to_hd(sd, zenith_ddmmss):
+    """VBA SDtoHD(): slope distance → horizontal distance (zenith angle)."""
+    return _survey_sin(survey_deg(zenith_ddmmss)) * sd
+
+
+def free_station_branch(e1, n1, e2, n2, rl2, brg1, brg2, va2, sd2, sh2, hi, mirror):
+    """
+    One sine-rule branch of the workbook's FreeStation / FreeStation_Mirror.
+
+    (e1, n1) = "From" backsight control coords (direction only);
+    (e2, n2, rl2) = "To" backsight control coords + reduced level;
+    (brg1, brg2) = observed mean bearings to From / To (DD.MMSS);
+    (va2, sd2, sh2) = observed zenith angle, slope distance, prism height to To;
+    hi = instrument height at the free station. Returns (E, N, RL) or None
+    when the branch is geometrically invalid (mirror condition not met).
+    """
+    brg1_deg = survey_deg(survey_polar(e2, n2, e1, n1, "B"))
+    hd1 = survey_polar(e2, n2, e1, n1, "D")
+    hd2 = _survey_sin(survey_deg(va2)) * sd2
+    if hd2 <= 0:
+        raise ValueError("Slope distance must give a positive horizontal distance")
+    raa = survey_test_deg(survey_deg(brg2) - survey_deg(brg1))
+    rab = _survey_asn(_survey_sin(raa) * hd2 / hd1)
+    if mirror:
+        # VBA FreeStation_Mirror: dead BRG_A line omitted; mirror branch is
+        # valid only when |RAB| > |RAA|, then RAB is flipped to 180 − RAB.
+        if not 180 - abs(_survey_asn(_survey_sin(rab))) + abs(_survey_asn(_survey_sin(raa))) < 180:
+            return None
+        rab = 180 - rab
+    brg_out = brg1_deg - (180 - raa - rab)
+    easting = hd2 * _survey_sin(brg_out) + e2
+    northing = hd2 * _survey_cos(brg_out) + n2
+    rl = rl2 - _survey_cos(survey_deg(va2)) * sd2 + sh2 - hi
+    return easting, northing, rl
+
+
+def mean_bearing_faces(brg_f1, brg_f2):
+    """
+    Sheet "Mean B/S" bearing (I20): DMS(AVERAGE(DEG(F1), TESTDEG(DEG(F2)+180)))
+    — face-right bearing flipped 180° before averaging with face-left.
+    Single face falls back to that face alone (F2 flipped like the sheet).
+    """
+    if brg_f1 is not None and brg_f2 is not None:
+        return survey_dms(
+            (survey_deg(brg_f1) + survey_test_deg(survey_deg(brg_f2) + 180)) / 2
+        )
+    if brg_f1 is not None:
+        return brg_f1
+    if brg_f2 is not None:
+        # Sheet: DMS(TESTDEG(DEG(F2)+180)) — keep DD.MMSS form for downstream.
+        return survey_dms(survey_test_deg(survey_deg(brg_f2) + 180))
+    return None
+
+
+def mean_va_faces(va_f1, va_f2):
+    """
+    Sheet "Mean B/S" vertical angle (J20):
+    DMS((360 − (DEG(F1) + DEG(F2))) / 2 + DEG(F1)); F2 alone →
+    DMS(TESTDEG(360 − DEG(F2))). Zenith-angle convention.
+    """
+    if va_f1 is not None and va_f2 is not None:
+        return survey_dms((360 - (survey_deg(va_f1) + survey_deg(va_f2))) / 2 + survey_deg(va_f1))
+    if va_f1 is not None:
+        return va_f1
+    if va_f2 is not None:
+        return survey_dms(survey_test_deg(360 - survey_deg(va_f2)))
+    return None
+
+
+def mean_faces(a_f1, a_f2):
+    """Sheet AVERAGE(E20:E21) — plain mean of the faces that are present."""
+    if a_f1 is not None and a_f2 is not None:
+        return (a_f1 + a_f2) / 2
+    if a_f1 is not None:
+        return a_f1
+    if a_f2 is not None:
+        return a_f2
+    return None
 
 
 def format_one_in_x(xin):
@@ -2480,36 +2668,36 @@ class FileShortcutsSubMenu(PopupPanel):
 
 
 # ---------------------------------------------------------------------------
-# Mini-program calculators: 平水計算 / 坡度運算
+# Mini-program calculators: Level calc / Slope calc
 # ---------------------------------------------------------------------------
 class LevelCalcDialog(FramelessCalcDialog):
-    """平水計算 — linear interpolate level at a target chainage."""
+    """Level calc — linear interpolate level at a target chainage."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("平水計算")
+        self.setWindowTitle("Level calc")
         self.setMinimumSize(540, 200)
         self.resize(560, 220)
         root = install_ornate_calc_frame(self)
         root.setSpacing(6)
 
-        root.addWidget(make_draggable_title(self, "平水計算"))
+        root.addWidget(make_draggable_title(self, "Level calc"))
 
-        # Captions above; edits + 計算平水 share one baseline row (button right).
+        # Captions above; edits + Calc level share one baseline row (button right).
         cluster, fields = build_calc_action_cluster(
             [
-                ("高位平水", 100.0, 3, 88),
-                ("低位平水", 90.0, 3, 88),
-                ("全長", 50.0, 3, 88),
-                ("目標距離", 25.0, 3, 88),
+                ("High level", 100.0, 3, 88),
+                ("Low level", 90.0, 3, 88),
+                ("Full length", 50.0, 3, 88),
+                ("Target dist", 25.0, 3, 88),
             ],
-            "計算平水",
+            "Calc level",
             self._calculate,
         )
         self.high, self.low, self.full, self.target = fields
         root.addWidget(cluster, 0, Qt.AlignmentFlag.AlignLeft)
 
-        self.result = QLabel("結果將顯示於此")
+        self.result = QLabel("Result will appear here")
         self.result.setObjectName("calcResult")
         self.result.setWordWrap(True)
         root.addWidget(self.result)
@@ -2531,24 +2719,24 @@ class LevelCalcDialog(FramelessCalcDialog):
             )
             note = ""
             if target < 0 or target > full:
-                note = "\n（目標距離超出 [0, 全長]，已外插）"
+                note = "\n(Target outside [0, full length]; extrapolated)"
             elif abs(target) < 1e-12:
-                note = "\n（位於起點／高位）"
+                note = "\n(At start / high point)"
             elif abs(target - full) < 1e-12:
-                note = "\n（位於終點／低位）"
+                note = "\n(At end / low point)"
             self.result.setText(
-                f"◆ 目標距離的平水: {level:.3f}{note}"
+                f"◆ Level at target: {level:.3f}{note}"
             )
         except ValueError as exc:
-            self.result.setText(f"輸入錯誤: {exc}")
+            self.result.setText(f"Input error: {exc}")
 
 
 class SlopeCalcDialog(FramelessCalcDialog):
-    """坡度運算 — three calculators matching the surveying reference UIs."""
+    """Slope calc — three calculators matching the surveying reference UIs."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("坡度運算")
+        self.setWindowTitle("Slope calc")
         self.setMinimumSize(520, 560)
         self.resize(560, 620)
 
@@ -2556,7 +2744,7 @@ class SlopeCalcDialog(FramelessCalcDialog):
         frame_root.setContentsMargins(6, 6, 6, 6)
         frame_root.setSpacing(6)
 
-        frame_root.addWidget(make_draggable_title(self, "坡度運算"))
+        frame_root.addWidget(make_draggable_title(self, "Slope calc"))
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -2596,14 +2784,14 @@ class SlopeCalcDialog(FramelessCalcDialog):
         return frame, layout
 
     def _build_section_a(self):
-        frame, layout = self._section_frame("1", "兩點高差求坡度")
+        frame, layout = self._section_frame("1", "Slope from two-point level difference")
         cluster, fields = build_calc_action_cluster(
             [
-                ("長度 (L)", 10.0, 3, 88),
-                ("高位 LV", 10.0, 3, 88),
-                ("低位 LV", 9.5, 3, 88),
+                ("Length (L)", 10.0, 3, 88),
+                ("High LV", 10.0, 3, 88),
+                ("Low LV", 9.5, 3, 88),
             ],
-            "計算坡度",
+            "Calc slope",
             self._calc_a,
         )
         self.a_length, self.a_high, self.a_low = fields
@@ -2617,14 +2805,14 @@ class SlopeCalcDialog(FramelessCalcDialog):
         return frame
 
     def _build_section_b(self):
-        frame, layout = self._section_frame("2", "坡度推算高程")
+        frame, layout = self._section_frame("2", "Level from slope")
         cluster, fields = build_calc_action_cluster(
             [
-                ("長度 (L)", 10.0, 3, 88),
-                ("起始 LV", 10.0, 3, 88),
-                ("坡度 Fall (%)", 5.0, 3, 88),
+                ("Length (L)", 10.0, 3, 88),
+                ("Start LV", 10.0, 3, 88),
+                ("Fall (%)", 5.0, 3, 88),
             ],
-            "計算高程",
+            "Calc level",
             self._calc_b,
         )
         self.b_length, self.b_start, self.b_fall = fields
@@ -2638,12 +2826,12 @@ class SlopeCalcDialog(FramelessCalcDialog):
         return frame
 
     def _build_section_c(self):
-        frame, layout = self._section_frame("3", "坡度單位互相運算框")
-        layout.addWidget(QLabel("選擇已知條件:"))
+        frame, layout = self._section_frame("3", "Slope unit conversion")
+        layout.addWidget(QLabel("Known value:"))
         self.c_group = QButtonGroup(self)
-        self.radio_fall = QRadioButton("已知 坡度 (Fall %)")
-        self.radio_xin = QRadioButton("已知 1 in X")
-        self.radio_angle = QRadioButton("已知 角度 (DD.MMSS)")
+        self.radio_fall = QRadioButton("Fall (%)")
+        self.radio_xin = QRadioButton("1 in X")
+        self.radio_angle = QRadioButton("Angle (DD.MMSS)")
         self.radio_fall.setChecked(True)
         for i, radio in enumerate(
             (self.radio_fall, self.radio_xin, self.radio_angle)
@@ -2652,7 +2840,7 @@ class SlopeCalcDialog(FramelessCalcDialog):
             layout.addWidget(radio)
         self.c_group.idClicked.connect(lambda _id: self._on_c_kind_changed())
 
-        self.c_input_label = QLabel("輸入 坡度 (Fall %)")
+        self.c_input_label = QLabel("Enter Fall (%)")
         self.c_input_label.setObjectName("calcFieldCaption")
         layout.addWidget(self.c_input_label)
         c_edit = make_calc_line_edit(1.0, decimals=6, max_edit_width=140)
@@ -2673,14 +2861,14 @@ class SlopeCalcDialog(FramelessCalcDialog):
                 self.a_length.value(), self.a_high.value(), self.a_low.value()
             )
             self.a_result.setText(
-                "◆ 坡度 Fall: "
+                "◆ Fall: "
                 f"{fall:.3f} %\n"
                 f"◆ 1 IN X: {format_one_in_x(xin)}\n"
-                f"◆ 角度: {format_dms(ang)}"
+                f"◆ Angle: {format_dms(ang)}"
             )
             self.a_result.show()
         except ValueError as exc:
-            self.a_result.setText(f"輸入錯誤: {exc}")
+            self.a_result.setText(f"Input error: {exc}")
             self.a_result.show()
 
     def _calc_b(self):
@@ -2689,13 +2877,13 @@ class SlopeCalcDialog(FramelessCalcDialog):
                 self.b_length.value(), self.b_start.value(), self.b_fall.value()
             )
             self.b_result.setText(
-                f"◆ 結尾 LV: {ending:.3f}\n"
+                f"◆ Ending LV: {ending:.3f}\n"
                 f"◆ 1 IN X: {format_one_in_x(xin)}\n"
-                f"◆ 角度: {format_dms(ang)}"
+                f"◆ Angle: {format_dms(ang)}"
             )
             self.b_result.show()
         except ValueError as exc:
-            self.b_result.setText(f"輸入錯誤: {exc}")
+            self.b_result.setText(f"Input error: {exc}")
             self.b_result.show()
 
     def _c_kind(self):
@@ -2708,11 +2896,11 @@ class SlopeCalcDialog(FramelessCalcDialog):
     def _on_c_kind_changed(self):
         kind = self._c_kind()
         if kind == "fall":
-            self.c_input_label.setText("輸入 坡度 (Fall %)")
+            self.c_input_label.setText("Enter Fall (%)")
         elif kind == "xin":
-            self.c_input_label.setText("輸入 1 in X")
+            self.c_input_label.setText("Enter 1 in X")
         else:
-            self.c_input_label.setText("輸入 角度 (DD.MMSS)")
+            self.c_input_label.setText("Enter Angle (DD.MMSS)")
         self._calc_c_live()
 
     def _calc_c_live(self, *_args):
@@ -2727,23 +2915,674 @@ class SlopeCalcDialog(FramelessCalcDialog):
                 fall, xin, ang = convert_slope_units(kind, raw)
             lines = []
             if kind != "fall":
-                lines.append(f"◆ 坡度 Fall: {fall:.3f} %")
+                lines.append(f"◆ Fall: {fall:.3f} %")
             if kind != "xin":
                 lines.append(f"◆ 1 IN X: {format_one_in_x(xin)}")
             if kind != "angle":
                 lines.append(
-                    f"◆ 角度: {format_dms(ang)}  (DD.MMSS: {degrees_to_ddmmss(ang):.6f})"
+                    f"◆ Angle: {format_dms(ang)}  (DD.MMSS: {degrees_to_ddmmss(ang):.6f})"
                 )
             else:
                 # Still show DMS for clarity when DD.MMSS was the input.
-                lines.append(f"◆ 角度 (DMS): {format_dms(ang)}")
+                lines.append(f"◆ Angle (DMS): {format_dms(ang)}")
             self.c_result.setText("\n".join(lines) if lines else "—")
         except ValueError as exc:
-            self.c_result.setText(f"輸入錯誤: {exc}")
+            self.c_result.setText(f"Input error: {exc}")
+
+
+class FreeStationDialog(FramelessCalcDialog):
+    """
+    Free Station (resection) — mirrors the Free_Station_FAI.xls sheet math.
+
+    Page 1: standing station + up to four backsight rows, each with face-left
+    (F1) and face-right (F2) observations averaged like the sheet's "Mean B/S"
+    formulas, plus the per-pair review table (Preliminary / Mirror / chosen
+    E/N, Reduced Lv., Distance Check) with the sheet's Reject Both (Y) /
+    Use Mirror Angle (Y) overrides. Page 2: stored backsight records
+    (Name, Easting, Northing, RL) persisted in config as
+    "free_station_stations"; typing a known Name on page 1 auto-fills E/N/RL.
+    """
+
+    BS_ROWS = 4
+    STORE_KEY = "free_station_stations"
+
+    PAIR_COLUMNS = [
+        "From", "To", "Prelim E", "Prelim N", "Mirror E", "Mirror N",
+        "Easting", "Northing", "RL", "Dist.\ncheck", "Reject\nboth", "Use\nmirror",
+    ]
+
+    def __init__(self, config_manager=None, parent=None):
+        super().__init__(parent)
+        self.cfg = config_manager
+        self.setWindowTitle("Free Station")
+        self.setMinimumSize(700, 420)
+        self.resize(860, 690)
+        self.setStyleSheet(
+            CALC_DIALOG_STYLE
+            + MINI_PROGRAM_STYLE
+            + """
+            QTableWidget#fsTable {
+                background-color: transparent;
+                color: #e8e8e8;
+                gridline-color: rgba(90, 90, 90, 160);
+                border: 1px solid rgba(90, 90, 90, 160);
+                font-size: 8pt;
+            }
+            QTableWidget#fsTable QHeaderView {
+                background-color: rgba(45, 45, 45, 220);
+                border: none;
+            }
+            QTableWidget#fsTable QHeaderView::section {
+                background-color: rgba(45, 45, 45, 220);
+                color: #f5e6c8;
+                border: none;
+                padding: 2px 4px;
+                font-size: 8pt;
+            }
+            QTableWidget#fsTable QLineEdit {
+                background-color: rgba(42, 42, 42, 230);
+            }
+            QScrollBar:vertical {
+                background: rgba(30, 30, 30, 200); width: 10px; margin: 0;
+            }
+            QScrollBar::handle:vertical {
+                background: rgba(96, 96, 96, 220); min-height: 20px; border-radius: 4px;
+            }
+            QScrollBar:horizontal {
+                background: rgba(30, 30, 30, 200); height: 10px; margin: 0;
+            }
+            QScrollBar::handle:horizontal {
+                background: rgba(96, 96, 96, 220); min-width: 20px; border-radius: 4px;
+            }
+            QScrollBar::add-line, QScrollBar::sub-line {{
+                width: 0; height: 0;
+            }}
+            QScrollBar::add-page, QScrollBar::sub-page {{
+                background: transparent;
+            }}
+        """
+        )
+        root = install_ornate_calc_frame(self)
+        root.setSpacing(6)
+
+        # Title row: dialog title left, << 1 / 2 >> pager top-right.
+        title_row = QHBoxLayout()
+        title_row.setSpacing(4)
+        title_row.addWidget(make_draggable_title(self, "Free Station"))
+        title_row.addStretch()
+        self.page_prev_btn = QPushButton("<<")
+        self.page_prev_btn.setObjectName("calcAction")
+        self.page_prev_btn.setFixedWidth(34)
+        self.page_prev_btn.clicked.connect(lambda: self._flip_page(-1))
+        self.page_label = QLabel("1 / 2")
+        self.page_label.setObjectName("calcFieldCaption")
+        self.page_next_btn = QPushButton(">>")
+        self.page_next_btn.setObjectName("calcAction")
+        self.page_next_btn.setFixedWidth(34)
+        self.page_next_btn.clicked.connect(lambda: self._flip_page(1))
+        title_row.addWidget(self.page_prev_btn)
+        title_row.addWidget(self.page_label)
+        title_row.addWidget(self.page_next_btn)
+        root.addLayout(title_row)
+
+        self.pages = QStackedWidget()
+        self.pages.addWidget(self._build_input_page())
+        self.pages.addWidget(self._build_store_page())
+        root.addWidget(self.pages, 1)
+
+        # Shared bottom row.
+        close_row = QHBoxLayout()
+        copy_btn = QPushButton("Copy")
+        copy_btn.setObjectName("calcAction")
+        copy_btn.clicked.connect(self._copy_result)
+        close_row.addWidget(copy_btn)
+        close_row.addStretch()
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        close_row.addWidget(close_btn)
+        root.addLayout(close_row)
+
+        self._pair_choices = {}  # (from_tag, to_tag) -> "reject" | "mirror" | ""
+        self._station_records = self._load_station_records()
+        self._reload_store_table()
+
+    def accept(self):
+        # Prune blank store rows on close so they do not accumulate in config.
+        kept = [
+            rec for rec in self._station_records
+            if (rec.get("name") or "").strip()
+            or rec.get("e") is not None or rec.get("n") is not None
+        ]
+        if len(kept) != len(self._station_records):
+            self._station_records = kept
+            self._save_station_records()
+        super().accept()
+
+    # ------------------------------------------------------------------ page 1
+    def _build_input_page(self):
+        outer = QWidget()
+        outer.setObjectName("calcRoot")
+        outer.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        outer_l = QVBoxLayout(outer)
+        outer_l.setContentsMargins(0, 0, 0, 0)
+        outer_l.setSpacing(0)
+
+        # Scrollable so long pair tables / summaries never overflow the frame.
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        scroll.viewport().setAutoFillBackground(False)
+        outer_l.addWidget(scroll)
+
+        page = QWidget()
+        page.setObjectName("calcRoot")
+        page.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 2, 0)
+        layout.setSpacing(6)
+        scroll.setWidget(page)
+
+        # Standing station row: name + instrument height + Calculate button.
+        stand_row = QHBoxLayout()
+        stand_row.setSpacing(4)
+        stand_caption = QLabel("Standing station")
+        stand_caption.setObjectName("calcFieldCaption")
+        stand_row.addWidget(stand_caption)
+        self.station_name = QLineEdit()
+        self.station_name.setObjectName("calcNumeric")
+        self.station_name.setFixedWidth(90)
+        self.station_name.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        stand_row.addWidget(self.station_name)
+        hi_caption = QLabel("Inst. ht (m)")
+        hi_caption.setObjectName("calcFieldCaption")
+        stand_row.addWidget(hi_caption)
+        self.inst_height = make_calc_line_edit(0.0, decimals=3, max_edit_width=64)
+        stand_row.addWidget(self.inst_height)
+        stand_row.addStretch()
+        calc_btn = QPushButton("Calculate")
+        calc_btn.setObjectName("calcAction")
+        calc_btn.setFixedHeight(24)
+        calc_btn.clicked.connect(self._calculate)
+        stand_row.addWidget(calc_btn)
+        layout.addLayout(stand_row)
+
+        # Backsight grid: one coordinate row (F1 observations) + one F2
+        # observation sub-row per backsight, mirroring the Excel's
+        # "BSx - FL" / "BSx - FR" rows under one known-station block.
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(4)
+        grid.setVerticalSpacing(2)
+        headers = [
+            "", "Name", "Easting", "Northing", "RL",
+            "Bearing", "Vert. angle", "Slope dist", "Spot ht",
+        ]
+        for col, text in enumerate(headers):
+            cell = QLabel(text)
+            cell.setObjectName("calcFieldCaption")
+            grid.addWidget(cell, 0, col)
+        self.bs_fields = []
+        for row_idx in range(self.BS_ROWS):
+            tag = QLabel(f"BS{row_idx + 1}")
+            tag.setObjectName("calcFieldCaption")
+            grid.addWidget(tag, row_idx * 2 + 1, 0)
+            f1 = self._add_obs_row(grid, row_idx * 2 + 1, with_station=True)
+            f2 = self._add_obs_row(grid, row_idx * 2 + 2, with_station=False)
+            self.bs_fields.append({"f1": f1, "f2": f2})
+            f1["name"].textChanged.connect(
+                lambda text, idx=row_idx: self._autofill_from_store(idx, text)
+            )
+        grid_wrap = QWidget()
+        grid_wrap.setObjectName("calcRoot")
+        grid_wrap.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        grid_wrap.setLayout(grid)
+        layout.addWidget(grid_wrap)
+
+        # Per-pair review table (Excel columns incl. Reject Both / Use Mirror).
+        self.pair_table = QTableWidget(0, len(self.PAIR_COLUMNS))
+        self.pair_table.setObjectName("fsTable")
+        self.pair_table.setHorizontalHeaderLabels(self.PAIR_COLUMNS)
+        self.pair_table.verticalHeader().setVisible(False)
+        self.pair_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.pair_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.pair_table.setFixedHeight(158)
+        self.pair_table.horizontalHeader().setMinimumSectionSize(40)
+        self.pair_table.horizontalHeader().setStretchLastSection(True)
+        for col, width in enumerate([50, 50, 82, 82, 82, 82, 82, 82, 46, 54, 46, 48]):
+            self.pair_table.setColumnWidth(col, width)
+        layout.addWidget(self.pair_table)
+
+        self.result = QLabel("Result will appear here")
+        self.result.setObjectName("calcResult")
+        self.result.setWordWrap(True)
+        self.result.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(self.result)
+        return outer
+
+    def _add_obs_row(self, grid, row, with_station):
+        """
+        One observation row. with_station (F1) → Name/E/N/RL cells in
+        columns 1-4; observations always land in columns 5-8 so the F2
+        sub-row aligns under the F1 observation cells.
+        """
+        fields = {}
+        if with_station:
+            name = QLineEdit()
+            name.setObjectName("calcNumeric")
+            name.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            name.setFixedWidth(76)
+            name.setPlaceholderText("BS name")
+            grid.addWidget(name, row, 1)
+            fields["name"] = name
+            for col, (key, width) in enumerate(
+                [("easting", 88), ("northing", 88), ("rl", 56)], start=2
+            ):
+                edit = QLineEdit()
+                edit.setObjectName("calcNumeric")
+                edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                edit.setFixedWidth(width)
+                grid.addWidget(edit, row, col)
+                fields[key] = edit
+        obs_specs = [
+            ("bearing", 86, None), ("va", 86, None), ("sd", 72, 3), ("sh", 52, 3),
+        ]
+        for col, (key, width, decimals) in enumerate(obs_specs, start=5):
+            edit = QLineEdit()
+            edit.setObjectName("calcNumeric")
+            edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            edit.setFixedWidth(width)
+            grid.addWidget(edit, row, col)
+            fields[key] = edit
+        return fields
+
+    # ------------------------------------------------------------------ page 2
+    def _build_store_page(self):
+        page = QWidget()
+        page.setObjectName("calcRoot")
+        page.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        caption = QLabel("Stored backsight records (auto-fills page 1 by Name)")
+        caption.setObjectName("calcSectionTitle")
+        layout.addWidget(caption)
+
+        self.store_table = QTableWidget(0, 4)
+        self.store_table.setObjectName("fsTable")
+        self.store_table.setHorizontalHeaderLabels(["Name", "Easting", "Northing", "RL"])
+        self.store_table.verticalHeader().setVisible(False)
+        self.store_table.horizontalHeader().setMinimumSectionSize(46)
+        self.store_table.horizontalHeader().setStretchLastSection(True)
+        for col, width in enumerate([110, 130, 130, 90]):
+            self.store_table.setColumnWidth(col, width)
+        self.store_table.cellChanged.connect(self._on_store_cell_changed)
+        layout.addWidget(self.store_table, 1)
+
+        btn_row = QHBoxLayout()
+        add_btn = QPushButton("Add")
+        add_btn.setObjectName("calcAction")
+        add_btn.clicked.connect(self._store_add_row)
+        btn_row.addWidget(add_btn)
+        del_btn = QPushButton("Delete selected")
+        del_btn.setObjectName("calcAction")
+        del_btn.clicked.connect(self._store_delete_selected)
+        btn_row.addWidget(del_btn)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+        return page
+
+    def _flip_page(self, delta):
+        new_index = (self.pages.currentIndex() + delta) % self.pages.count()
+        self.pages.setCurrentIndex(new_index)
+        self.page_label.setText(f"{new_index + 1} / {self.pages.count()}")
+
+    # ------------------------------------------------------- stored records
+    def _load_station_records(self):
+        if self.cfg is None:
+            return []
+        records = self.cfg.get(self.STORE_KEY) or []
+        out = []
+        for rec in records:
+            if not isinstance(rec, dict):
+                continue
+            out.append(
+                {
+                    "name": str(rec.get("name", "") or ""),
+                    "e": self._to_float_or_none(rec.get("e")),
+                    "n": self._to_float_or_none(rec.get("n")),
+                    "rl": self._to_float_or_none(rec.get("rl")),
+                }
+            )
+        return out
+
+    @staticmethod
+    def _to_float_or_none(value):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _save_station_records(self):
+        # Keep row indices in sync with the table; empty rows are harmless
+        # (auto-fill skips them) and are pruned when the dialog closes.
+        if self.cfg is not None:
+            self.cfg.set([self.STORE_KEY], self._station_records)
+
+    def _reload_store_table(self):
+        self.store_table.blockSignals(True)
+        self.store_table.setRowCount(0)
+        for rec in self._station_records:
+            self._append_store_row(rec)
+        self.store_table.blockSignals(False)
+
+    def _append_store_row(self, rec):
+        row = self.store_table.rowCount()
+        self.store_table.insertRow(row)
+        values = [
+            rec.get("name", ""),
+            "" if rec.get("e") is None else f"{rec['e']:.3f}",
+            "" if rec.get("n") is None else f"{rec['n']:.3f}",
+            "" if rec.get("rl") is None else f"{rec['rl']:.3f}",
+        ]
+        for col, value in enumerate(values):
+            item = QTableWidgetItem(str(value))
+            self.store_table.setItem(row, col, item)
+
+    def _store_add_row(self):
+        self._station_records.append({"name": "", "e": None, "n": None, "rl": None})
+        self.store_table.blockSignals(True)
+        self._append_store_row(self._station_records[-1])
+        self.store_table.blockSignals(False)
+        self._save_station_records()
+
+    def _store_delete_selected(self):
+        rows = sorted(
+            {index.row() for index in self.store_table.selectedIndexes()},
+            reverse=True,
+        )
+        if not rows:
+            return
+        self.store_table.blockSignals(True)
+        for row in rows:
+            self.store_table.removeRow(row)
+            if 0 <= row < len(self._station_records):
+                del self._station_records[row]
+        self.store_table.blockSignals(False)
+        self._save_station_records()
+
+    def _on_store_cell_changed(self, row, col):
+        if not (0 <= row < len(self._station_records)):
+            return
+        text = (self.store_table.item(row, col).text() or "").strip()
+        rec = self._station_records[row]
+        if col == 0:
+            rec["name"] = text
+        else:
+            rec[["e", "n", "rl"][col - 1]] = self._to_float_or_none(text)
+        self._save_station_records()
+
+    def _autofill_from_store(self, idx, text):
+        name = (text or "").strip().lower()
+        if not name:
+            return
+        for rec in self._station_records:
+            if (rec.get("name") or "").strip().lower() == name:
+                fields = self.bs_fields[idx]["f1"]
+                if rec.get("e") is not None:
+                    fields["easting"].setText(_format_calc_value(rec["e"], 3))
+                if rec.get("n") is not None:
+                    fields["northing"].setText(_format_calc_value(rec["n"], 3))
+                if rec.get("rl") is not None:
+                    fields["rl"].setText(_format_calc_value(rec["rl"], 3))
+                return
+
+    # ------------------------------------------------------------------ math
+    def _parse_optional(self, edit, label):
+        """Parse a grid cell; '' → None. DD.MMSS values are kept as typed
+        (survey_deg inside the math helpers decodes them)."""
+        raw = (edit.text() or "").strip().replace(",", "")
+        if not raw:
+            return None
+        try:
+            return float(raw)
+        except ValueError as exc:
+            raise ValueError(f"{label}: enter a valid number") from exc
+
+    def _parse_required(self, edit, label):
+        value = self._parse_optional(edit, label)
+        if value is None:
+            raise ValueError(f"{label}: coordinate is required")
+        return value
+
+    def _read_backsights(self):
+        rows = []
+        for idx, fields in enumerate(self.bs_fields, start=1):
+            f1, f2 = fields["f1"], fields["f2"]
+            name = (f1["name"].text() or "").strip()
+            if not name:
+                continue
+            label = f"BS{idx} ({name})"
+            try:
+                e = self._parse_required(f1["easting"], label)
+                n = self._parse_required(f1["northing"], label)
+                brg = mean_bearing_faces(
+                    self._parse_optional(f1["bearing"], label),
+                    self._parse_optional(f2["bearing"], label),
+                )
+                va = mean_va_faces(
+                    self._parse_optional(f1["va"], label),
+                    self._parse_optional(f2["va"], label),
+                )
+                sd = mean_faces(
+                    self._parse_optional(f1["sd"], label),
+                    self._parse_optional(f2["sd"], label),
+                )
+                sh = mean_faces(
+                    self._parse_optional(f1["sh"], label),
+                    self._parse_optional(f2["sh"], label),
+                )
+                rl = self._parse_optional(f1["rl"], label)
+            except ValueError as exc:
+                raise ValueError(str(exc)) from exc
+            if brg is None:
+                raise ValueError(f"{label}: mean bearing is required (DD.MMSS)")
+            rows.append(
+                {
+                    "tag": f"BS{idx}", "name": name, "e": e, "n": n, "rl": rl,
+                    "brg": brg, "va": va, "sd": sd, "sh": sh or 0.0,
+                }
+            )
+        if len(rows) < 2:
+            raise ValueError("At least two backsight rows with names are required")
+        return rows
+
+    def _solve_pair(self, src, dst, hi):
+        """Solve one From→To pair; returns dict with prelim/mirror branches."""
+        prelim = free_station_branch(
+            src["e"], src["n"], dst["e"], dst["n"], dst["rl"] or 0.0,
+            src["brg"], dst["brg"], dst["va"], dst["sd"], dst["sh"],
+            hi, mirror=False,
+        )
+        mirror = free_station_branch(
+            src["e"], src["n"], dst["e"], dst["n"], dst["rl"] or 0.0,
+            src["brg"], dst["brg"], dst["va"], dst["sd"], dst["sh"],
+            hi, mirror=True,
+        )
+        return prelim, mirror
+
+    def _pair_residual(self, easting, northing, src):
+        if src["va"] is None or src["sd"] is None:
+            return None
+        return (
+            survey_polar(easting, northing, src["e"], src["n"], "D")
+            - survey_sd_to_hd(src["sd"], src["va"])
+        )
+
+    def _select_branch(self, prelim, mirror, resid_prelim):
+        """Sheet branch rule (H33/I33) — keep preliminary when its distance
+        check is < 0.05 m, otherwise the mirror branch when it exists."""
+        if resid_prelim is not None and abs(resid_prelim) < 0.05:
+            return prelim, "direct"
+        if mirror is not None:
+            return mirror, "mirror"
+        return prelim, "direct (check)"
+
+    def _calculate(self):
+        try:
+            hi = parse_calc_number(self.inst_height.text())
+            rows = self._read_backsights()
+        except ValueError as exc:
+            self.result.setText(f"Input error: {exc}")
+            return
+        self._last_hi = hi
+        station = (self.station_name.text() or "").strip() or "(unnamed)"
+        solutions = {}
+        for src in rows:
+            for dst in rows:
+                if src is dst or dst["va"] is None or dst["sd"] is None:
+                    continue
+                try:
+                    prelim, mirror = self._solve_pair(src, dst, hi)
+                except ValueError as exc:
+                    self.result.setText(f"Input error: {exc}")
+                    return
+                key = (src["tag"], dst["tag"])
+                solutions[key] = {
+                    "src": src, "dst": dst,
+                    "prelim": prelim, "mirror": mirror,
+                    "resid_prelim": self._pair_residual(prelim[0], prelim[1], src),
+                }
+        self._rebuild_pair_table(solutions)
+        self._update_summary(station, solutions)
+
+    def _rebuild_pair_table(self, solutions):
+        self.pair_table.blockSignals(True)
+        self.pair_table.setRowCount(0)
+        for (src_tag, dst_tag), sol in solutions.items():
+            row = self.pair_table.rowCount()
+            self.pair_table.insertRow(row)
+            choice = self._pair_choices.get((src_tag, dst_tag), "")
+            prelim, mirror = sol["prelim"], sol["mirror"]
+            chosen, branch = self._chosen_for(sol, choice)
+            resid = self._pair_residual(chosen[0], chosen[1], sol["src"]) if chosen else None
+            cells = [
+                sol["src"]["name"], sol["dst"]["name"],
+                "" if prelim is None else f"{prelim[0]:.4f}",
+                "" if prelim is None else f"{prelim[1]:.4f}",
+                "" if mirror is None else f"{mirror[0]:.4f}",
+                "" if mirror is None else f"{mirror[1]:.4f}",
+                "" if chosen is None else f"{chosen[0]:.4f}",
+                "" if chosen is None else f"{chosen[1]:.4f}",
+                "n/a" if sol["dst"]["rl"] is None else f"{chosen[2]:.3f}",
+                "" if resid is None else f"{resid:+.3f}",
+            ]
+            for col, value in enumerate(cells):
+                self.pair_table.setItem(row, col, QTableWidgetItem(value))
+            for col, checked in ((10, choice == "reject"), (11, choice == "mirror")):
+                box = QCheckBox()
+                box.setStyleSheet("QCheckBox { background-color: transparent; }")
+                if checked:
+                    box.setChecked(True)
+                box.toggled.connect(
+                    lambda checked, r=row, t=(src_tag, dst_tag), c=col,
+                           b=box: self._on_pair_choice(r, t, c, b)
+                )
+                wrap = QWidget()
+                wrap.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+                lay = QHBoxLayout(wrap)
+                lay.setContentsMargins(0, 0, 0, 0)
+                lay.addWidget(box)
+                lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.pair_table.setCellWidget(row, col, wrap)
+        self.pair_table.blockSignals(False)
+        self._current_solutions = solutions
+
+    def _on_pair_choice(self, row, key, col, box):
+        if col == 10:
+            choice = "reject" if box.isChecked() else ""
+            sibling = self.pair_table.cellWidget(row, 11).findChild(QCheckBox)
+        else:
+            choice = "mirror" if box.isChecked() else ""
+            sibling = self.pair_table.cellWidget(row, 10).findChild(QCheckBox)
+        if choice and sibling is not None and sibling.isChecked():
+            sibling.blockSignals(True)
+            sibling.setChecked(False)
+            sibling.blockSignals(False)
+        self._pair_choices[key] = choice
+        self._refresh_pair_row(row, key)
+        self._update_summary(
+            (self.station_name.text() or "").strip() or "(unnamed)",
+            self._current_solutions,
+        )
+
+    def _chosen_for(self, sol, choice):
+        """Apply a pair choice to a solution; returns (branch_tuple, tag)."""
+        prelim, mirror = sol["prelim"], sol["mirror"]
+        if choice == "reject":
+            return None, "rejected"
+        if choice == "mirror":
+            if mirror is not None:
+                return mirror, "mirror (Y)"
+            return prelim, "mirror n/a"
+        return self._select_branch(prelim, mirror, sol["resid_prelim"])
+
+    def _refresh_pair_row(self, row, key):
+        sol = self._current_solutions[key]
+        choice = self._pair_choices.get(key, "")
+        chosen, branch = self._chosen_for(sol, choice)
+        resid = self._pair_residual(chosen[0], chosen[1], sol["src"]) if chosen else None
+        values = {
+            6: "" if chosen is None else f"{chosen[0]:.4f}",
+            7: "" if chosen is None else f"{chosen[1]:.4f}",
+            8: "" if chosen is None else f"{chosen[2]:.3f}",
+            9: "" if resid is None else f"{resid:+.3f}",
+        }
+        for col, value in values.items():
+            self.pair_table.setItem(row, col, QTableWidgetItem(value))
+
+    def _update_summary(self, station, solutions):
+        try:
+            hi = parse_calc_number(self.inst_height.text())
+        except ValueError:
+            hi = getattr(self, "_last_hi", 0.0)
+        lines = [f"◆ Free station {station}   inst. ht {hi:.3f} m"]
+        kept = 0
+        for (src_tag, dst_tag), sol in solutions.items():
+            choice = self._pair_choices.get((src_tag, dst_tag), "")
+            chosen, branch = self._chosen_for(sol, choice)
+            if chosen is None:
+                lines.append(f"  {sol['src']['name']} → {sol['dst']['name']} : rejected")
+                continue
+            resid = self._pair_residual(chosen[0], chosen[1], sol["src"])
+            resid_text = f"{resid:+.3f}" if resid is not None else "n/a"
+            rl_text = f"{chosen[2]:.3f}" if sol["dst"]["rl"] is not None else "n/a"
+            lines.append(
+                f"  {sol['src']['name']} → {sol['dst']['name']} :  "
+                f"E {chosen[0]:.4f}  N {chosen[1]:.4f}  RL {rl_text}  "
+                f"ΔHD {resid_text}  ({branch})"
+            )
+            kept += 1
+        if not solutions:
+            self.result.setText(
+                "Input error: at least one backsight needs a vertical angle and slope distance"
+            )
+            return
+        if kept == 0:
+            lines.append("  (all pairs rejected — nothing to report)")
+        else:
+            lines.append("  ΔHD = distance check residual (m); direct/mirror = branch used")
+        self.result.setText("\n".join(lines))
+
+    def _copy_result(self):
+        text = self.result.text()
+        if text and text != "Result will appear here":
+            QApplication.clipboard().setText(text)
 
 
 # ---------------------------------------------------------------------------
-# Mini-program: Pomodoro (番茄鐘) / Translate (翻譯)
+# Mini-program: Pomodoro / Translate
 # ---------------------------------------------------------------------------
 MINI_PROGRAM_STYLE = f"""
     QLabel#pomodoroDisplay {{
@@ -2813,19 +3652,19 @@ POMODORO_PRESETS = (25, 5, 15)
 
 
 class PomodoroDialog(FramelessCalcDialog):
-    """番茄鐘 — compact countdown with 25/5/15 presets, custom minutes and progress bar."""
+    """Pomodoro — compact countdown with 25/5/15 presets, custom minutes and progress bar."""
 
     def __init__(self, config_manager, parent=None):
         super().__init__(parent)
         self.cfg = config_manager
-        self.setWindowTitle("番茄鐘 Pomodoro")
+        self.setWindowTitle("Pomodoro")
         self.setMinimumSize(380, 250)
         self.resize(400, 270)
         self.setStyleSheet(CALC_DIALOG_STYLE + MINI_PROGRAM_STYLE)
         root = install_ornate_calc_frame(self)
         root.setSpacing(6)
 
-        root.addWidget(make_draggable_title(self, "番茄鐘 Pomodoro"))
+        root.addWidget(make_draggable_title(self, "Pomodoro"))
 
         try:
             saved = int(self.cfg.get("pomodoro", "minutes") or 0)
@@ -2850,11 +3689,11 @@ class PomodoroDialog(FramelessCalcDialog):
         preset_row = QHBoxLayout()
         preset_row.setSpacing(4)
         for minutes in POMODORO_PRESETS:
-            btn = QPushButton(f"{minutes} 分")
+            btn = QPushButton(f"{minutes} min")
             btn.setObjectName("calcAction")
             btn.clicked.connect(lambda checked=False, m=minutes: self._set_minutes(m))
             preset_row.addWidget(btn)
-        custom_caption = QLabel("自訂 (分鐘)")
+        custom_caption = QLabel("Custom (min)")
         custom_caption.setObjectName("calcFieldCaption")
         preset_row.addWidget(custom_caption)
         self.minutes_spin = QSpinBox()
@@ -2868,9 +3707,9 @@ class PomodoroDialog(FramelessCalcDialog):
 
         control_row = QHBoxLayout()
         control_row.setSpacing(4)
-        self.start_btn = QPushButton("Start 開始")
-        self.pause_btn = QPushButton("Pause 暫停")
-        reset_btn = QPushButton("Reset 重設")
+        self.start_btn = QPushButton("Start")
+        self.pause_btn = QPushButton("Pause")
+        reset_btn = QPushButton("Reset")
         for btn in (self.start_btn, self.pause_btn, reset_btn):
             btn.setObjectName("calcAction")
             control_row.addWidget(btn)
@@ -2880,7 +3719,7 @@ class PomodoroDialog(FramelessCalcDialog):
         reset_btn.clicked.connect(self._reset)
         root.addLayout(control_row)
 
-        self.status = QLabel("準備就緒")
+        self.status = QLabel("Ready")
         self.status.setObjectName("calcResult")
         self.status.setWordWrap(True)
         root.addWidget(self.status)
@@ -2919,14 +3758,14 @@ class PomodoroDialog(FramelessCalcDialog):
             return
         self.running = True
         self.timer.start()
-        self.status.setText("進行中…")
+        self.status.setText("Running…")
         self._persist_minutes(self.total_seconds // 60)
 
     def _pause(self):
         if not self.running:
             return
         self._stop_ticking()
-        self.status.setText("已暫停")
+        self.status.setText("Paused")
 
     def _reset(self):
         self._stop_ticking()
@@ -2952,23 +3791,23 @@ class PomodoroDialog(FramelessCalcDialog):
             round(elapsed * 100.0 / self.total_seconds) if self.total_seconds else 0
         )
         if reset_status and not self.running:
-            self.status.setText("準備就緒")
+            self.status.setText("Ready")
 
     def _on_finished(self):
-        self.status.setText("時間到！時間到！")
+        self.status.setText("Time is up!")
         QApplication.beep()
         tray = getattr(QApplication.instance(), "_tray_icon", None)
         if tray is not None:
             tray.showMessage(
-                "番茄鐘 Pomodoro",
-                "時間到！Time is up.",
+                "Pomodoro",
+                "Time is up.",
                 QSystemTrayIcon.MessageIcon.Information,
                 4000,
             )
 
 
 class TranslateError(Exception):
-    """Raised with a user-facing (Chinese) message when translation fails."""
+    """Raised with a user-facing (English) message when translation fails."""
 
 
 def translate_text(text, target_lang, timeout=10):
@@ -2999,16 +3838,16 @@ def translate_text(text, target_lang, timeout=10):
             data = json.loads(response.read().decode("utf-8", "replace"))
     except urllib.error.HTTPError as exc:
         if exc.code == 429:
-            raise TranslateError("翻譯次數過多，請稍後再試。") from exc
-        raise TranslateError(f"翻譯服務回應錯誤 (HTTP {exc.code})。") from exc
+            raise TranslateError("Too many requests, please try again later.") from exc
+        raise TranslateError(f"Translation service error (HTTP {exc.code}).") from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        raise TranslateError("無法連線翻譯服務，請檢查網絡後再試。") from exc
+        raise TranslateError("Cannot reach the translation service, check the network and try again.") from exc
     except ValueError as exc:
-        raise TranslateError("翻譯服務回應格式錯誤。") from exc
+        raise TranslateError("Unexpected translation service response format.") from exc
 
     segments = data[0] if isinstance(data, list) and data else None
     if not segments:
-        raise TranslateError("翻譯服務沒有回傳結果。")
+        raise TranslateError("Translation service returned no result.")
     translated = "".join(
         seg[0] for seg in segments if isinstance(seg, (list, tuple)) and seg and seg[0]
     )
@@ -3041,21 +3880,21 @@ class _TranslateWorker(QRunnable):
             self.signals.failed.emit(self.request_id, str(exc))
         except Exception:
             # Never surface or log the request text.
-            self.signals.failed.emit(self.request_id, "翻譯失敗，請稍後再試。")
+            self.signals.failed.emit(self.request_id, "Translation failed, please try again later.")
 
 
 class TranslateDialog(FramelessCalcDialog):
-    """翻譯 — text translation via the public web endpoint (no API key, no persistence)."""
+    """Translate — text translation via the public web endpoint (no API key, no persistence)."""
 
     AUTO_DEBOUNCE_MS = 800
     CACHE_LIMIT = 8
 
     LANGUAGES = (
-        ("zh-TW", "繁體中文"),
+        ("zh-TW", "Chinese (Traditional)"),
         ("en", "English"),
-        ("zh-CN", "简体中文"),
-        ("ja", "日本語"),
-        ("ko", "한국어"),
+        ("zh-CN", "Chinese (Simplified)"),
+        ("ja", "Japanese"),
+        ("ko", "Korean"),
         ("fr", "Français"),
         ("de", "Deutsch"),
         ("es", "Español"),
@@ -3063,18 +3902,18 @@ class TranslateDialog(FramelessCalcDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("翻譯 Translate")
+        self.setWindowTitle("Translate")
         self.setMinimumSize(520, 340)
         self.resize(560, 380)
         self.setStyleSheet(CALC_DIALOG_STYLE + MINI_PROGRAM_STYLE)
         root = install_ornate_calc_frame(self)
         root.setSpacing(6)
 
-        root.addWidget(make_draggable_title(self, "翻譯 Translate"))
+        root.addWidget(make_draggable_title(self, "Translate"))
 
         lang_row = QHBoxLayout()
         lang_row.setSpacing(4)
-        lang_caption = QLabel("目標語言")
+        lang_caption = QLabel("Target language")
         lang_caption.setObjectName("calcFieldCaption")
         lang_row.addWidget(lang_caption)
         self.lang_combo = QComboBox()
@@ -3084,11 +3923,11 @@ class TranslateDialog(FramelessCalcDialog):
         self.lang_combo.setCurrentIndex(0)
         self.lang_combo.currentIndexChanged.connect(self._on_language_changed)
         lang_row.addWidget(self.lang_combo)
-        self.translate_btn = QPushButton("Translate 翻譯")
+        self.translate_btn = QPushButton("Translate")
         self.translate_btn.setObjectName("calcAction")
         self.translate_btn.clicked.connect(self._translate_now)
         lang_row.addWidget(self.translate_btn)
-        self.copy_btn = QPushButton("Copy 複製")
+        self.copy_btn = QPushButton("Copy")
         self.copy_btn.setObjectName("calcAction")
         self.copy_btn.setEnabled(False)
         self.copy_btn.clicked.connect(self._copy_result)
@@ -3098,12 +3937,12 @@ class TranslateDialog(FramelessCalcDialog):
 
         self.source_edit = QPlainTextEdit()
         self.source_edit.setObjectName("translateSource")
-        self.source_edit.setPlaceholderText("輸入要翻譯的文字… (auto-detect source)")
+        self.source_edit.setPlaceholderText("Type text to translate… (auto-detect source)")
         self.source_edit.setFixedHeight(76)
         self.source_edit.textChanged.connect(self._on_source_changed)
         root.addWidget(self.source_edit)
 
-        self.result = QLabel("結果將顯示於此")
+        self.result = QLabel("Result will appear here")
         self.result.setObjectName("calcResult")
         self.result.setWordWrap(True)
         self.result.setTextInteractionFlags(
@@ -3138,7 +3977,7 @@ class TranslateDialog(FramelessCalcDialog):
     def _on_source_changed(self):
         if not self.source_edit.toPlainText().strip():
             self._debounce.stop()
-            self.result.setText("結果將顯示於此")
+            self.result.setText("Result will appear here")
             self.copy_btn.setEnabled(False)
             self._pending_request = None
             return
@@ -3161,7 +4000,7 @@ class TranslateDialog(FramelessCalcDialog):
         self._request_counter += 1
         request_id = self._request_counter
         self._pending_request = request_id
-        self.result.setText("翻譯中…")
+        self.result.setText("Translating…")
         worker = _TranslateWorker(request_id, text, target)
         worker.signals.finished.connect(self._on_translated)
         worker.signals.failed.connect(self._on_translate_failed)
@@ -3187,7 +4026,7 @@ class TranslateDialog(FramelessCalcDialog):
     def _show_result(self, translated, detected):
         lines = [f"◆ {translated}"]
         if detected:
-            lines.append(f"（偵測語言: {detected}）")
+            lines.append(f"(Detected language: {detected})")
         self.result.setText("\n".join(lines))
         self.copy_btn.setEnabled(bool(translated))
 
@@ -3365,15 +4204,17 @@ class TextRecordsSubMenu(PopupPanel):
 
 
 # ---------------------------------------------------------------------------
-# 運算 submenu (third level under 小程式)
+# Calculations submenu (third level under Mini programs)
 # ---------------------------------------------------------------------------
 class OperationsSubMenu(PopupPanel):
-    """Third-level menu: 平水計算 / 坡度運算."""
+    """Third-level menu: Level calc / Slope calc / Free station."""
 
-    def __init__(self):
+    def __init__(self, config_manager=None):
         super().__init__()
+        self.cfg = config_manager
         self._level_dialog = None
         self._slope_dialog = None
+        self._free_station_dialog = None
         self.build_ui()
 
     def build_ui(self):
@@ -3389,7 +4230,7 @@ class OperationsSubMenu(PopupPanel):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(4)
 
-        title = QLabel("運算")
+        title = QLabel("Calculations")
         title.setStyleSheet("color: white; font-weight: bold;")
         layout.addWidget(title)
 
@@ -3398,15 +4239,20 @@ class OperationsSubMenu(PopupPanel):
         sep.setStyleSheet("background-color: rgba(255,255,255,120);")
         layout.addWidget(sep)
 
-        btn_level = QPushButton("平水計算")
+        btn_level = QPushButton("Level calc")
         btn_level.setStyleSheet(menu_button_style("#5a4a6e"))
         btn_level.clicked.connect(self.open_level_calc)
         layout.addWidget(btn_level)
 
-        btn_slope = QPushButton("坡度運算")
+        btn_slope = QPushButton("Slope calc")
         btn_slope.setStyleSheet(menu_button_style("#4a5a6e"))
         btn_slope.clicked.connect(self.open_slope_calc)
         layout.addWidget(btn_slope)
+
+        btn_free_station = QPushButton("Free station")
+        btn_free_station.setStyleSheet(menu_button_style("#6e5a4a"))
+        btn_free_station.clicked.connect(self.open_free_station)
+        layout.addWidget(btn_free_station)
 
         self.setStyleSheet(MENU_STYLE + """
             OperationsSubMenu { background-color: transparent; }
@@ -3444,6 +4290,15 @@ class OperationsSubMenu(PopupPanel):
         self._slope_dialog.activateWindow()
         QTimer.singleShot(200, self._release_suppress)
 
+    def open_free_station(self):
+        self._suppress_hide = True
+        if self._free_station_dialog is None:
+            self._free_station_dialog = FreeStationDialog(self.cfg, None)
+        self._free_station_dialog.show()
+        self._free_station_dialog.raise_()
+        self._free_station_dialog.activateWindow()
+        QTimer.singleShot(200, self._release_suppress)
+
     def _release_suppress(self):
         self._suppress_hide = False
 
@@ -3451,20 +4306,22 @@ class OperationsSubMenu(PopupPanel):
         if self._suppress_hide or self.isActiveWindow():
             return
         active = QApplication.activeWindow()
-        if isinstance(active, (LevelCalcDialog, SlopeCalcDialog)):
+        if isinstance(active, (LevelCalcDialog, SlopeCalcDialog, FreeStationDialog)):
             return
         if self._level_dialog is not None and self._level_dialog.isVisible():
             return
         if self._slope_dialog is not None and self._slope_dialog.isVisible():
             return
+        if self._free_station_dialog is not None and self._free_station_dialog.isVisible():
+            return
         self.hide()
 
 
 # ---------------------------------------------------------------------------
-# 小程式 submenu (Text records + 運算)
+# Mini programs submenu (Text records + Calculations)
 # ---------------------------------------------------------------------------
 class MiniProgramsSubMenu(PopupPanel):
-    """Second-level menu under 小程式: Text records + 運算."""
+    """Second-level menu under Mini programs: Text records + Calculations."""
 
     def __init__(self, config_manager):
         super().__init__()
@@ -3488,7 +4345,7 @@ class MiniProgramsSubMenu(PopupPanel):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(4)
 
-        title = QLabel("小程式")
+        title = QLabel("Mini programs")
         title.setStyleSheet("color: white; font-weight: bold;")
         layout.addWidget(title)
 
@@ -3511,10 +4368,10 @@ class MiniProgramsSubMenu(PopupPanel):
         text_row.addWidget(btn_text)
         layout.addLayout(text_row)
 
-        # 運算 >>
+        # Calculations >>
         ops_row = QHBoxLayout()
         ops_row.setSpacing(4)
-        ops_lbl = QLabel("運算")
+        ops_lbl = QLabel("Calculations")
         ops_lbl.setStyleSheet("color: white; font-weight: bold;")
         btn_ops = QPushButton(">>")
         btn_ops.setFixedWidth(30)
@@ -3530,12 +4387,12 @@ class MiniProgramsSubMenu(PopupPanel):
         sep2.setStyleSheet("background-color: rgba(255,255,255,120);")
         layout.addWidget(sep2)
 
-        btn_pomodoro = QPushButton("番茄鐘 Pomodoro")
+        btn_pomodoro = QPushButton("Pomodoro")
         btn_pomodoro.setStyleSheet(menu_button_style("#6e4a2a"))
         btn_pomodoro.clicked.connect(self.open_pomodoro)
         layout.addWidget(btn_pomodoro)
 
-        btn_translate = QPushButton("翻譯 Translate")
+        btn_translate = QPushButton("Translate")
         btn_translate.setStyleSheet(menu_button_style("#2a5a4a"))
         btn_translate.clicked.connect(self.open_translate)
         layout.addWidget(btn_translate)
@@ -3574,7 +4431,7 @@ class MiniProgramsSubMenu(PopupPanel):
 
     def open_operations(self):
         if self.operations_submenu is None:
-            self.operations_submenu = OperationsSubMenu()
+            self.operations_submenu = OperationsSubMenu(self.cfg)
         self._hide_nested(keep="ops")
         self._suppress_hide = True
         self.operations_submenu.refresh_and_show(self.geometry())
@@ -3734,10 +4591,10 @@ class PetMenu(PopupPanel):
         sep2.setStyleSheet("background-color: rgba(255,255,255,120);")
         self.main_layout.addWidget(sep2)
 
-        # 小程式: collapsed header + >> (Text records + 運算 live inside)
+        # Mini programs: collapsed header + >> (Text records + Calculations live inside)
         mini_header = QHBoxLayout()
         mini_header.setSpacing(4)
-        self.mini_programs_title = QLabel("小程式")
+        self.mini_programs_title = QLabel("Mini programs")
         self.mini_programs_title.setStyleSheet("color: white; font-weight: bold;")
         self.btn_mini_open = QPushButton(">>")
         self.btn_mini_open.setFixedWidth(30)
