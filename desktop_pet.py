@@ -1912,14 +1912,154 @@ def convert_slope_units(known_kind, value):
 
 def level_at_target(high_level, low_level, full_length, target_distance):
     """
-    平水計算 (linear interpolate along a grade line).
+    Level calc (linear interpolate along a grade line).
     Assumes high level at chainage 0 and low level at full_length:
         level = high - (high - low) * (target / full)
     Extrapolation is allowed when target is outside [0, full].
     """
     if full_length <= 0:
-        raise ValueError("全長必須大於 0")
+        raise ValueError("Full length must be greater than 0")
     return high_level - (high_level - low_level) * (target_distance / full_length)
+
+
+# ---------------------------------------------------------------------------
+# Free Station (resection) math — ported 1:1 from Free_Station_FAI.xls
+#
+# The workbook's "Free Station" sheet drives the VBA functions below
+# (Simple_Utilities_Suite_2010.bas, formulas on sheet rows 20/24/28/33-38).
+# Angles are typed as surveying DD.MMSS text (e.g. 330.1402 = 330°14'01.8").
+# Vertical angles follow the total-station ZENITH convention (90° = horizon):
+# horizontal distance = slope × sin(zenith), vertical delta = slope × cos(zenith).
+#
+# Triangle (station S, backsights BS1/BS2), sheet pair "From BS1 → To BS2":
+#   BRG1 = bearing BS2→BS1, HD1 = |BS2→BS1|            (from control coords)
+#   HD2  = SD_to_HD(VA_to, SD_to)                      (observed to "To" BS)
+#   RAA  = observed angle at S between BS1 and BS2 bearings
+#   RAB  = asin(sin(RAA) × HD2 / HD1)                  (sine rule, angle at BS1)
+#   BRG2 = BRG1 − (180 − RAA − RAB)                    (bearing BS2→S)
+#   E/N  = HD2·sin(BRG2)+E2, HD2·cos(BRG2)+N2          (polar from BS2)
+#   RL   = RL(To) − SD·cos(zenith) + prism_ht − inst_ht
+# The mirror branch flips RAB = 180 − RAB (other sine-rule solution) when
+# |RAB| > |RAA|; the sheet keeps whichever branch passes the distance check.
+# ---------------------------------------------------------------------------
+def _survey_round(value, decimals):
+    # VBA Format(x, "0.0000")-style rounding used inside DEG/DMS.
+    return round(value, decimals)
+
+
+def survey_deg(ddmmss):
+    """VBA DEG(): DD.MMSS number → decimal degrees."""
+    if ddmmss == 0:
+        return 0.0
+    b0 = abs(ddmmss)
+    dd = math.floor(b0)
+    mm = _survey_round((b0 - math.floor(b0)) * 100, 4)
+    ss = _survey_round(mm - math.floor(mm), 4)
+    return survey_test_deg(dd + math.floor(mm) / 60 + ss / 36) * abs(ddmmss) / ddmmss
+
+
+def survey_dms(degrees):
+    """VBA DMS(): decimal degrees → DD.MMSS number."""
+    if degrees == 0:
+        return 0.0
+    b0 = abs(degrees)
+    dd = math.floor(b0)
+    mm = math.floor((b0 - dd) * 60)
+    ss = _survey_round(((b0 - dd) * 60 - mm) * 60, 2)
+    if ss >= 60:
+        ss -= 60
+        mm += 1
+    if mm >= 60:
+        mm -= 60
+        dd += 1
+    return survey_test_dms(dd + mm / 100 + ss / 10000) * abs(degrees) / degrees
+
+
+def survey_test_dms(value):
+    if abs(value) > 360:
+        value = (abs(value) - math.floor(abs(value) / 360) * 360) * abs(value) / value
+    if value < 0:
+        value = survey_dms(survey_deg(value) + 360)
+    return value
+
+
+def survey_test_deg(value):
+    if abs(value) > 360:
+        value = (abs(value) - math.floor(abs(value) / 360) * 360) * abs(value) / value
+    if value < 0:
+        value += 360
+    return value
+
+
+def _survey_sin(deg):
+    return math.sin(deg * math.pi / 180)
+
+
+def _survey_cos(deg):
+    return math.cos(deg * math.pi / 180)
+
+
+def _survey_asn(x):
+    d = math.sqrt(-x * x + 1)
+    if d == 0:
+        return x * 90
+    return math.atan(x / d) * 180 / math.pi
+
+
+def _survey_acs(x):
+    d = math.sqrt(-x * x + 1)
+    if d == 0:
+        return (1 - x) * 180 / 2
+    return (math.atan(-x / d) + 2 * math.atan(1)) * 180 / math.pi
+
+
+def survey_polar(se, sn, e, n, kind):
+    """VBA Polar(): kind 'D' → horizontal distance, 'B' → bearing (DD.MMSS)."""
+    de = e - se
+    dn = n - sn
+    if kind == "D":
+        return math.sqrt(de * de + dn * dn)
+    if kind == "B":
+        if de >= 0:
+            return survey_dms(_survey_acs(dn / math.sqrt(de * de + dn * dn)))
+        return survey_dms(360 - _survey_acs(dn / math.sqrt(de * de + dn * dn)))
+    raise ValueError(f"Unknown polar kind: {kind}")
+
+
+def survey_sd_to_hd(sd, zenith_ddmmss):
+    """VBA SDtoHD(): slope distance → horizontal distance (zenith angle)."""
+    return _survey_sin(survey_deg(zenith_ddmmss)) * sd
+
+
+def free_station_branch(e1, n1, e2, n2, rl2, brg1, brg2, va2, sd2, sh2, hi, mirror):
+    """
+    One sine-rule branch of the workbook's FreeStation / FreeStation_Mirror.
+
+    (e1, n1) = "From" backsight control coords (direction only);
+    (e2, n2, rl2) = "To" backsight control coords + reduced level;
+    (brg1, brg2) = observed mean bearings to From / To (DD.MMSS);
+    (va2, sd2, sh2) = observed zenith angle, slope distance, prism height to To;
+    hi = instrument height at the free station. Returns (E, N, RL) or None
+    when the branch is geometrically invalid (mirror condition not met).
+    """
+    brg1_deg = survey_deg(survey_polar(e2, n2, e1, n1, "B"))
+    hd1 = survey_polar(e2, n2, e1, n1, "D")
+    hd2 = _survey_sin(survey_deg(va2)) * sd2
+    if hd2 <= 0:
+        raise ValueError("Slope distance must give a positive horizontal distance")
+    raa = survey_test_deg(survey_deg(brg2) - survey_deg(brg1))
+    rab = _survey_asn(_survey_sin(raa) * hd2 / hd1)
+    if mirror:
+        # VBA FreeStation_Mirror: dead BRG_A line omitted; mirror branch is
+        # valid only when |RAB| > |RAA|, then RAB is flipped to 180 − RAB.
+        if not 180 - abs(_survey_asn(_survey_sin(rab))) + abs(_survey_asn(_survey_sin(raa))) < 180:
+            return None
+        rab = 180 - rab
+    brg_out = brg1_deg - (180 - raa - rab)
+    easting = hd2 * _survey_sin(brg_out) + e2
+    northing = hd2 * _survey_cos(brg_out) + n2
+    rl = rl2 - _survey_cos(survey_deg(va2)) * sd2 + sh2 - hi
+    return easting, northing, rl
 
 
 def format_one_in_x(xin):
@@ -2739,11 +2879,234 @@ class SlopeCalcDialog(FramelessCalcDialog):
                 lines.append(f"◆ 角度 (DMS): {format_dms(ang)}")
             self.c_result.setText("\n".join(lines) if lines else "—")
         except ValueError as exc:
-            self.c_result.setText(f"輸入錯誤: {exc}")
+            self.c_result.setText(f"Input error: {exc}")
+
+
+class FreeStationDialog(FramelessCalcDialog):
+    """
+    Free Station (resection) — mirrors the Free_Station_FAI.xls sheet math.
+
+    Two or three backsight rows: control coordinates (E/N/RL) plus the observed
+    mean bearing (DD.MMSS), zenith angle, slope distance and prism height.
+    Every ordered From→To pair is solved like the sheet (preliminary branch,
+    mirror branch, sheet branch-selection rule) and reported with the sheet's
+    distance-check residual.
+    """
+
+    BS_ROWS = 3
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Free Station")
+        self.setMinimumSize(680, 300)
+        self.resize(700, 350)
+        self.setStyleSheet(CALC_DIALOG_STYLE + MINI_PROGRAM_STYLE)
+        root = install_ornate_calc_frame(self)
+        root.setSpacing(6)
+
+        root.addWidget(make_draggable_title(self, "Free Station"))
+
+        # Standing station row: name + instrument height + Calculate button.
+        stand_row = QHBoxLayout()
+        stand_row.setSpacing(4)
+        stand_caption = QLabel("Standing station")
+        stand_caption.setObjectName("calcFieldCaption")
+        stand_row.addWidget(stand_caption)
+        self.station_name = QLineEdit()
+        self.station_name.setObjectName("calcNumeric")
+        self.station_name.setFixedWidth(90)
+        self.station_name.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        stand_row.addWidget(self.station_name)
+        hi_caption = QLabel("Inst. ht (m)")
+        hi_caption.setObjectName("calcFieldCaption")
+        stand_row.addWidget(hi_caption)
+        self.inst_height = make_calc_line_edit(0.0, decimals=3, max_edit_width=64)
+        stand_row.addWidget(self.inst_height)
+        stand_row.addStretch()
+        calc_btn = QPushButton("Calculate")
+        calc_btn.setObjectName("calcAction")
+        calc_btn.setFixedHeight(24)
+        calc_btn.clicked.connect(self._calculate)
+        stand_row.addWidget(calc_btn)
+        root.addLayout(stand_row)
+
+        # Backsight grid: one compact row per backsight, headers on top.
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(4)
+        grid.setVerticalSpacing(2)
+        headers = [
+            "", "Name", "Easting", "Northing", "RL",
+            "Bearing", "Vert. angle", "Slope dist", "Spot ht",
+        ]
+        for col, text in enumerate(headers):
+            cell = QLabel(text)
+            cell.setObjectName("calcFieldCaption")
+            grid.addWidget(cell, 0, col)
+        self.bs_fields = []
+        for row_idx in range(self.BS_ROWS):
+            tag = QLabel(f"BS{row_idx + 1}")
+            tag.setObjectName("calcFieldCaption")
+            grid.addWidget(tag, row_idx + 1, 0)
+            name = QLineEdit()
+            name.setObjectName("calcNumeric")
+            name.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            name.setFixedWidth(76)
+            grid.addWidget(name, row_idx + 1, 1)
+            specs = [
+                ("easting", 88, 3), ("northing", 88, 3), ("rl", 56, 3),
+                ("bearing", 86, None), ("va", 86, None), ("sd", 72, 3),
+                ("sh", 52, 3),
+            ]
+            edits = {}
+            for key, width, decimals in specs:
+                edit = QLineEdit()
+                edit.setObjectName("calcNumeric")
+                edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                edit.setFixedWidth(width)
+                if decimals is not None:
+                    edit.setText(_format_calc_value(0.0, decimals))
+                grid.addWidget(edit, row_idx + 1, len(edits) + 2)
+                edits[key] = edit
+            self.bs_fields.append({"name": name, **edits})
+        grid_wrap = QWidget()
+        grid_wrap.setObjectName("calcRoot")
+        grid_wrap.setLayout(grid)
+        root.addWidget(grid_wrap)
+
+        self.result = QLabel("Result will appear here")
+        self.result.setObjectName("calcResult")
+        self.result.setWordWrap(True)
+        self.result.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        root.addWidget(self.result)
+        root.addStretch()
+
+        close_row = QHBoxLayout()
+        copy_btn = QPushButton("Copy")
+        copy_btn.setObjectName("calcAction")
+        copy_btn.clicked.connect(self._copy_result)
+        close_row.addWidget(copy_btn)
+        close_row.addStretch()
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        close_row.addWidget(close_btn)
+        root.addLayout(close_row)
+
+    def _parse_optional(self, edit, label, kind="number"):
+        """Parse a grid cell; '' → None. kind 'ddmmss' keeps the DD.MMSS value
+        as typed (survey_deg inside the math helpers decodes it)."""
+        raw = (edit.text() or "").strip().replace(",", "")
+        if not raw:
+            return None
+        try:
+            value = float(raw)
+        except ValueError as exc:
+            raise ValueError(f"{label}: enter a valid number") from exc
+        return value
+
+    def _read_backsights(self):
+        rows = []
+        for idx, fields in enumerate(self.bs_fields, start=1):
+            name = (fields["name"].text() or "").strip()
+            if not name:
+                continue
+            label = f"BS{idx} ({name})"
+            try:
+                e = parse_calc_number(fields["easting"].text())
+                n = parse_calc_number(fields["northing"].text())
+                brg = self._parse_optional(fields["bearing"], label, kind="ddmmss")
+                va = self._parse_optional(fields["va"], label, kind="ddmmss")
+                sd = self._parse_optional(fields["sd"], label)
+                rl = self._parse_optional(fields["rl"], label)
+                sh = self._parse_optional(fields["sh"], label)
+            except ValueError as exc:
+                raise ValueError(str(exc)) from exc
+            if brg is None:
+                raise ValueError(f"{label}: mean bearing is required (DD.MMSS)")
+            rows.append(
+                {
+                    "tag": f"BS{idx}", "name": name, "e": e, "n": n, "rl": rl,
+                    "brg": brg, "va": va, "sd": sd, "sh": sh or 0.0,
+                }
+            )
+        if len(rows) < 2:
+            raise ValueError("At least two backsight rows with names are required")
+        return rows
+
+    def _calculate(self):
+        try:
+            hi = parse_calc_number(self.inst_height.text())
+            rows = self._read_backsights()
+        except ValueError as exc:
+            self.result.setText(f"Input error: {exc}")
+            return
+        station = (self.station_name.text() or "").strip() or "(unnamed)"
+        lines = [f"◆ Free station {station}   inst. ht {hi:.3f} m"]
+        any_result = False
+        for src in rows:
+            for dst in rows:
+                if src is dst or dst["va"] is None or dst["sd"] is None:
+                    continue
+                try:
+                    prelim = free_station_branch(
+                        src["e"], src["n"], dst["e"], dst["n"], dst["rl"] or 0.0,
+                        src["brg"], dst["brg"], dst["va"], dst["sd"], dst["sh"],
+                        hi, mirror=False,
+                    )
+                    mirror = free_station_branch(
+                        src["e"], src["n"], dst["e"], dst["n"], dst["rl"] or 0.0,
+                        src["brg"], dst["brg"], dst["va"], dst["sd"], dst["sh"],
+                        hi, mirror=True,
+                    )
+                except ValueError as exc:
+                    self.result.setText(f"Input error: {exc}")
+                    return
+                # Sheet branch rule (H33/I33): keep the preliminary branch when
+                # its distance check against the From backsight is < 0.05 m,
+                # otherwise fall back to the mirror branch when it exists.
+                easting, northing, rl = prelim
+                branch = "direct"
+                if src["va"] is not None and src["sd"] is not None:
+                    resid = (
+                        survey_polar(easting, northing, src["e"], src["n"], "D")
+                        - survey_sd_to_hd(src["sd"], src["va"])
+                    )
+                else:
+                    resid = None
+                if resid is not None and abs(resid) >= 0.05:
+                    if mirror is not None:
+                        easting, northing, rl = mirror
+                        branch = "mirror"
+                        resid = (
+                            survey_polar(easting, northing, src["e"], src["n"], "D")
+                            - survey_sd_to_hd(src["sd"], src["va"])
+                        )
+                    else:
+                        branch = "direct (check)"
+                resid_text = f"{resid:+.3f}" if resid is not None else "n/a"
+                rl_text = f"{rl:.3f}" if dst["rl"] is not None else "n/a"
+                lines.append(
+                    f"  {src['name']} → {dst['name']} :  "
+                    f"E {easting:.4f}  N {northing:.4f}  RL {rl_text}  "
+                    f"ΔHD {resid_text}  ({branch})"
+                )
+                any_result = True
+        if not any_result:
+            self.result.setText(
+                "Input error: at least one backsight needs a vertical angle and slope distance"
+            )
+            return
+        lines.append("  ΔHD = distance check residual (m); direct/mirror = branch used")
+        self.result.setText("\n".join(lines))
+
+    def _copy_result(self):
+        text = self.result.text()
+        if text and text != "Result will appear here":
+            QApplication.clipboard().setText(text)
 
 
 # ---------------------------------------------------------------------------
-# Mini-program: Pomodoro (番茄鐘) / Translate (翻譯)
+# Mini-program: Pomodoro / Translate
 # ---------------------------------------------------------------------------
 MINI_PROGRAM_STYLE = f"""
     QLabel#pomodoroDisplay {{
@@ -3368,12 +3731,13 @@ class TextRecordsSubMenu(PopupPanel):
 # 運算 submenu (third level under 小程式)
 # ---------------------------------------------------------------------------
 class OperationsSubMenu(PopupPanel):
-    """Third-level menu: 平水計算 / 坡度運算."""
+    """Third-level menu: Level calc / Slope calc / Free station."""
 
     def __init__(self):
         super().__init__()
         self._level_dialog = None
         self._slope_dialog = None
+        self._free_station_dialog = None
         self.build_ui()
 
     def build_ui(self):
@@ -3403,10 +3767,15 @@ class OperationsSubMenu(PopupPanel):
         btn_level.clicked.connect(self.open_level_calc)
         layout.addWidget(btn_level)
 
-        btn_slope = QPushButton("坡度運算")
+        btn_slope = QPushButton("Slope calc")
         btn_slope.setStyleSheet(menu_button_style("#4a5a6e"))
         btn_slope.clicked.connect(self.open_slope_calc)
         layout.addWidget(btn_slope)
+
+        btn_free_station = QPushButton("Free station")
+        btn_free_station.setStyleSheet(menu_button_style("#6e5a4a"))
+        btn_free_station.clicked.connect(self.open_free_station)
+        layout.addWidget(btn_free_station)
 
         self.setStyleSheet(MENU_STYLE + """
             OperationsSubMenu { background-color: transparent; }
@@ -3444,6 +3813,15 @@ class OperationsSubMenu(PopupPanel):
         self._slope_dialog.activateWindow()
         QTimer.singleShot(200, self._release_suppress)
 
+    def open_free_station(self):
+        self._suppress_hide = True
+        if self._free_station_dialog is None:
+            self._free_station_dialog = FreeStationDialog(None)
+        self._free_station_dialog.show()
+        self._free_station_dialog.raise_()
+        self._free_station_dialog.activateWindow()
+        QTimer.singleShot(200, self._release_suppress)
+
     def _release_suppress(self):
         self._suppress_hide = False
 
@@ -3451,11 +3829,13 @@ class OperationsSubMenu(PopupPanel):
         if self._suppress_hide or self.isActiveWindow():
             return
         active = QApplication.activeWindow()
-        if isinstance(active, (LevelCalcDialog, SlopeCalcDialog)):
+        if isinstance(active, (LevelCalcDialog, SlopeCalcDialog, FreeStationDialog)):
             return
         if self._level_dialog is not None and self._level_dialog.isVisible():
             return
         if self._slope_dialog is not None and self._slope_dialog.isVisible():
+            return
+        if self._free_station_dialog is not None and self._free_station_dialog.isVisible():
             return
         self.hide()
 
