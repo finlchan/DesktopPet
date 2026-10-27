@@ -1,7 +1,7 @@
 Desktop Pet
 ==================
 
-Version: 261027.01
+Version: 261027.02
 Published: 2026-10-27
 
 A floating shortcut menu and document record gadget on the Windows desktop.
@@ -62,6 +62,20 @@ Free_Station_FAI.xls survey spreadsheet:
   mirror branch when valid).
 - Output: station Easting/Northing, reduced level, and the distance-check
   residual ΔHD per pair. Copy button copies the result block.
+
+What's new in 261027.02 (2026-10-27)
+--------
+1. Free Station dialog: 4 backsight rows (was 3), each with face-left (F1) and
+   face-right (F2) observations averaged exactly like the sheet's "Mean B/S"
+   formulas (bearing: mean of F1 and F2+180°; vertical angle:
+   (360−F1−F2)/2+F1; slope distance / spot height: plain average).
+2. Per-pair review table like the Excel: From / To, Preliminary E/N,
+   Mirror E/N, chosen Easting/Northing, Reduced Lv., Distance Check, with
+   per-pair "Reject both" and "Use mirror angle" checkboxes; the summary
+   respects the choices.
+3. "<< 1 / 2 >>" pager: page 2 stores backsight records (Name, Easting,
+   Northing, RL) in config as "free_station_stations" (backward compatible);
+   typing a stored name on page 1 auto-fills that row's E/N/RL (still editable).
 
 What's new in 261027.01 (2026-10-27)
 --------
