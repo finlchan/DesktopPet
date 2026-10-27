@@ -1,7 +1,7 @@
 Desktop Pet
 ==================
 
-Version: 261026.03
+Version: 261026.04
 Published: 2026-10-26
 
 A floating shortcut menu and document record gadget on the Windows desktop.
@@ -42,6 +42,12 @@ Settings
 5. Text records: add/edit/delete text records (Title + Body); list has search/filter.
 6. System: set window level (Normal / Always on top / Always on bottom);
    enable/disable "Start with Windows" (registry Run key; Windows only).
+
+What's new in 261026.04 (2026-10-26)
+--------
+1. All mini-program dialogs (平水計算, 坡度運算, 番茄鐘, 翻譯): frameless + ornate frame +
+   ~70% opaque panels; reliable drag on the picture-frame border and the title row.
+2. 番茄鐘 / 翻譯 now match the calc dialogs (no OS title bar, translucent content fill).
 
 What's new in 261026.03 (2026-10-26)
 --------
@@ -134,7 +140,7 @@ Notes
 
 --------------------------------------------------------------------------------
 
-版本：261026.03
+版本：261026.04
 發布日期：2026-10-26
 
 一款位於 Windows 桌面上的浮動快捷選單與文檔記錄小工具。
@@ -167,6 +173,11 @@ Notes
 檔案快捷方式 (File shortcuts)：可設定類型 (File / URL)、「項目名稱」、路徑或網址及「描述」（列表可搜尋／篩選）。
 文檔記錄 (Document record)：設定「標題 (Title)」與一個或多個「資料儲存資料夾 (Data storage folders)」（按「Add」可加入更多資料夾）；應用程式將自動列出這些資料夾內的所有檔案。
 系統設定 (System)：設定視窗層級（一般 / 置頂 / 置底）；可啟用／停用「隨 Windows 啟動」（登錄檔 Run 機碼；僅 Windows）。
+
+261026.04 更新內容（2026-10-26）
+1. 所有小程式視窗（平水計算、坡度運算、番茄鐘、翻譯）：無系統標題列、畫框外觀、
+   約 70% 不透明；可在畫框邊框與標題列拖曳移動。
+2. 番茄鐘／翻譯與運算視窗一致（半透明內容區、無 OS 標題列）。
 
 261026.03 更新內容（2026-10-26）
 1. 小程式 → 番茄鐘：倒數計時器，提供 25／5／15 分鐘預設及自訂分鐘（1–600），

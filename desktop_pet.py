@@ -52,7 +52,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261026.03"
+APP_VERSION = "261026.04"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -1503,10 +1503,65 @@ CALC_DIALOG_STYLE = f"""
 """
 
 
+class _WindowDragFilter(QObject):
+    """
+    Event filter that moves a frameless window when the user drags on the
+    filtered grip widget (frame border / title). Uses grabMouse so dragging
+    continues after the cursor leaves the grip.
+    """
+
+    def __init__(self, window, grip, parent=None):
+        super().__init__(parent)
+        self._window = window
+        self._grip = grip
+        self._drag_offset = None
+
+    def eventFilter(self, obj, event):
+        if obj is not self._grip:
+            return False
+        etype = event.type()
+        if etype == QEvent.Type.MouseButtonPress:
+            if event.button() == Qt.MouseButton.LeftButton:
+                self._drag_offset = (
+                    event.globalPosition().toPoint()
+                    - self._window.frameGeometry().topLeft()
+                )
+                self._grip.grabMouse()
+                return True
+            return False
+        if etype == QEvent.Type.MouseMove:
+            if self._drag_offset is not None:
+                self._window.move(
+                    event.globalPosition().toPoint() - self._drag_offset
+                )
+                return True
+            return False
+        if etype == QEvent.Type.MouseButtonRelease:
+            if event.button() == Qt.MouseButton.LeftButton and self._drag_offset is not None:
+                self._drag_offset = None
+                self._grip.releaseMouse()
+                return True
+            return False
+        return False
+
+
+def enable_window_drag(window, widget):
+    """Make presses/drags on `widget` move `window` (keeps a filter ref on window)."""
+    filt = _WindowDragFilter(window, widget, window)
+    widget.installEventFilter(filt)
+    widget.setCursor(QCursor(Qt.CursorShape.SizeAllCursor))
+    grips = getattr(window, "_drag_grips", None)
+    if grips is None:
+        grips = []
+        window._drag_grips = grips
+    grips.append(filt)
+    return filt
+
+
 def install_ornate_calc_frame(dialog):
     """
-    Nested gilt/wood picture-frame chrome inside a calc dialog.
-    Returns the innermost QVBoxLayout for dialog content.
+    Nested gilt/wood picture-frame chrome inside a mini-program dialog.
+    Frame outer/mid borders are drag grips. Returns innermost content layout.
     """
     shell = QVBoxLayout(dialog)
     shell.setContentsMargins(7, 7, 7, 7)
@@ -1515,13 +1570,14 @@ def install_ornate_calc_frame(dialog):
     outer = QFrame()
     outer.setObjectName("calcOrnateOuter")
     outer_l = QVBoxLayout(outer)
-    outer_l.setContentsMargins(4, 4, 4, 4)
+    # Visible gilt margin around mid — this is the primary drag ring.
+    outer_l.setContentsMargins(8, 8, 8, 8)
     outer_l.setSpacing(0)
 
     mid = QFrame()
     mid.setObjectName("calcOrnateMid")
     mid_l = QVBoxLayout(mid)
-    mid_l.setContentsMargins(5, 5, 5, 5)
+    mid_l.setContentsMargins(6, 6, 6, 6)
     mid_l.setSpacing(0)
 
     inner = QFrame()
@@ -1534,13 +1590,27 @@ def install_ornate_calc_frame(dialog):
     outer_l.addWidget(mid)
     shell.addWidget(outer)
     dialog._calc_ornate_outer = outer
+    dialog._calc_ornate_mid = mid
+    dialog._calc_ornate_inner = inner
+    # Drag on the ornate molding (outer + mid rings), not the content panel.
+    enable_window_drag(dialog, outer)
+    enable_window_drag(dialog, mid)
     return inner_l
+
+
+def make_draggable_title(dialog, text):
+    """Section/window title label that also drags the frameless dialog."""
+    title = QLabel(text)
+    title.setObjectName("calcSectionTitle")
+    title.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+    enable_window_drag(dialog, title)
+    return title
 
 
 class FramelessCalcDialog(QDialog):
     """
-    Frameless calculator shell: ornate frame only (no OS title bar),
-    ~70% opaque content fill, drag by frame/empty/title areas.
+    Shared mini-program shell: frameless (no OS title bar), ornate frame chrome,
+    ~70% opaque content fill. Drag via frame borders and title (event filters).
     """
 
     def __init__(self, parent=None):
@@ -1552,52 +1622,7 @@ class FramelessCalcDialog(QDialog):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setStyleSheet(CALC_DIALOG_STYLE)
-        self._drag_offset = None
-
-    def _widget_blocks_drag(self, widget):
-        """True when the press target is an interactive control (not a drag handle)."""
-        w = widget
-        while w is not None and w is not self:
-            if isinstance(
-                w,
-                (
-                    QLineEdit,
-                    QPushButton,
-                    QRadioButton,
-                    QAbstractSpinBox,
-                    QPlainTextEdit,
-                    QTextEdit,
-                ),
-            ):
-                return True
-            # Scrollbars / sliders — still allow drag on labels and empty panel.
-            if w.inherits("QAbstractSlider"):
-                return True
-            w = w.parentWidget()
-        return False
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            child = self.childAt(event.position().toPoint())
-            if child is None or not self._widget_blocks_drag(child):
-                self._drag_offset = (
-                    event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-                )
-                event.accept()
-                return
-        self._drag_offset = None
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event):
-        if self._drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
-            self.move(event.globalPosition().toPoint() - self._drag_offset)
-            event.accept()
-            return
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event):
-        self._drag_offset = None
-        super().mouseReleaseEvent(event)
+        self._drag_grips = []
 
 
 def parse_calc_number(text):
@@ -2306,9 +2331,7 @@ class LevelCalcDialog(FramelessCalcDialog):
         root = install_ornate_calc_frame(self)
         root.setSpacing(6)
 
-        title = QLabel("平水計算")
-        title.setObjectName("calcSectionTitle")
-        root.addWidget(title)
+        root.addWidget(make_draggable_title(self, "平水計算"))
 
         # Captions above; edits + 計算平水 share one baseline row (button right).
         cluster, fields = build_calc_action_cluster(
@@ -2369,7 +2392,9 @@ class SlopeCalcDialog(FramelessCalcDialog):
 
         frame_root = install_ornate_calc_frame(self)
         frame_root.setContentsMargins(6, 6, 6, 6)
-        frame_root.setSpacing(0)
+        frame_root.setSpacing(6)
+
+        frame_root.addWidget(make_draggable_title(self, "坡度運算"))
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -2558,31 +2583,31 @@ class SlopeCalcDialog(FramelessCalcDialog):
 # ---------------------------------------------------------------------------
 # Mini-program: Pomodoro (番茄鐘) / Translate (翻譯)
 # ---------------------------------------------------------------------------
-MINI_PROGRAM_STYLE = """
-    QLabel#pomodoroDisplay {
-        background-color: #101a10;
+MINI_PROGRAM_STYLE = f"""
+    QLabel#pomodoroDisplay {{
+        background-color: rgba(16, 26, 16, {CALC_PANEL_ALPHA});
         color: #7CFC7C;
         border: 1px solid #2d5a2d;
         border-radius: 4px;
         padding: 6px 10px;
         font-family: "Consolas", "Courier New", monospace;
         font-size: 24pt;
-    }
-    QProgressBar#pomodoroProgress {
-        background-color: #2a2a2a;
+    }}
+    QProgressBar#pomodoroProgress {{
+        background-color: rgba(42, 42, 42, 210);
         color: #f0f0f0;
         border: 1px solid #555;
         border-radius: 3px;
         min-height: 14px;
         max-height: 16px;
         text-align: center;
-    }
-    QProgressBar#pomodoroProgress::chunk {
+    }}
+    QProgressBar#pomodoroProgress::chunk {{
         background-color: #3f8f3f;
         border-radius: 2px;
-    }
-    QSpinBox {
-        background-color: #2a2a2a;
+    }}
+    QSpinBox {{
+        background-color: rgba(42, 42, 42, 230);
         color: #f0f0f0;
         border: 1px solid #666;
         border-radius: 3px;
@@ -2591,41 +2616,41 @@ MINI_PROGRAM_STYLE = """
         max-height: 22px;
         selection-background-color: #3d5a80;
         selection-color: #ffffff;
-    }
-    QSpinBox:focus { border: 1px solid #c9a84c; }
-    QPlainTextEdit#translateSource {
-        background-color: #2a2a2a;
+    }}
+    QSpinBox:focus {{ border: 1px solid #c9a84c; }}
+    QPlainTextEdit#translateSource {{
+        background-color: rgba(42, 42, 42, 230);
         color: #f0f0f0;
         border: 1px solid #666;
         border-radius: 3px;
         padding: 3px 5px;
         selection-background-color: #3d5a80;
         selection-color: #ffffff;
-    }
-    QPlainTextEdit#translateSource:focus { border: 1px solid #c9a84c; }
-    QComboBox#translateLang {
-        background-color: #2a2a2a;
+    }}
+    QPlainTextEdit#translateSource:focus {{ border: 1px solid #c9a84c; }}
+    QComboBox#translateLang {{
+        background-color: rgba(42, 42, 42, 230);
         color: #f0f0f0;
         border: 1px solid #666;
         border-radius: 3px;
         padding: 2px 6px;
         min-height: 18px;
         max-height: 22px;
-    }
-    QComboBox#translateLang:focus { border: 1px solid #c9a84c; }
-    QComboBox#translateLang QAbstractItemView {
-        background-color: #2a2a2a;
+    }}
+    QComboBox#translateLang:focus {{ border: 1px solid #c9a84c; }}
+    QComboBox#translateLang QAbstractItemView {{
+        background-color: rgba(42, 42, 42, 245);
         color: #f0f0f0;
         selection-background-color: #3d5a80;
         selection-color: #ffffff;
-    }
+    }}
 """
 
 # Preset durations offered on the Pomodoro dialog (minutes).
 POMODORO_PRESETS = (25, 5, 15)
 
 
-class PomodoroDialog(QDialog):
+class PomodoroDialog(FramelessCalcDialog):
     """番茄鐘 — compact countdown with 25/5/15 presets, custom minutes and progress bar."""
 
     def __init__(self, config_manager, parent=None):
@@ -2638,9 +2663,7 @@ class PomodoroDialog(QDialog):
         root = install_ornate_calc_frame(self)
         root.setSpacing(6)
 
-        title = QLabel("番茄鐘 Pomodoro")
-        title.setObjectName("calcSectionTitle")
-        root.addWidget(title)
+        root.addWidget(make_draggable_title(self, "番茄鐘 Pomodoro"))
 
         try:
             saved = int(self.cfg.get("pomodoro", "minutes") or 0)
@@ -2859,7 +2882,7 @@ class _TranslateWorker(QRunnable):
             self.signals.failed.emit(self.request_id, "翻譯失敗，請稍後再試。")
 
 
-class TranslateDialog(QDialog):
+class TranslateDialog(FramelessCalcDialog):
     """翻譯 — text translation via the public web endpoint (no API key, no persistence)."""
 
     AUTO_DEBOUNCE_MS = 800
@@ -2885,9 +2908,7 @@ class TranslateDialog(QDialog):
         root = install_ornate_calc_frame(self)
         root.setSpacing(6)
 
-        title = QLabel("翻譯 Translate")
-        title.setObjectName("calcSectionTitle")
-        root.addWidget(title)
+        root.addWidget(make_draggable_title(self, "翻譯 Translate"))
 
         lang_row = QHBoxLayout()
         lang_row.setSpacing(4)
