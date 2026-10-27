@@ -53,7 +53,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261026.07"
+APP_VERSION = "261026.08"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -1486,17 +1486,12 @@ CALC_DIALOG_STYLE = f"""
         background-color: transparent;
         border: none;
     }}
-    QFrame#calcWindowCenter {{
-        background-color: rgba(28, 28, 28, {WINDOW_CENTER_ALPHA});
+    /* Fills for calcWindowCenter / calcOrnateInner are painted in
+       TranslucentFillFrame.paintEvent — QSS rgba is unreliable with
+       WA_TranslucentBackground (often ignores alpha → identical looks). */
+    QFrame#calcWindowCenter, QFrame#calcOrnateInner {{
+        background-color: transparent;
         border: none;
-    }}
-    QFrame#calcOrnateInner {{
-        background-color: rgba(30, 30, 30, {CALC_PANEL_ALPHA});
-        border: 1px solid #c9a84c;
-        border-top-color: #e8d48b;
-        border-left-color: #e8d48b;
-        border-right-color: #7a5e18;
-        border-bottom-color: #7a5e18;
     }}
 """
 
@@ -1644,13 +1639,53 @@ class OrnateBorderFrame(QFrame):
         painter.end()
 
 
+class TranslucentFillFrame(QFrame):
+    """
+    Panel that paints an ARGB fill via QPainter (not QSS).
+
+    QSS `background-color: rgba(...)` under WA_TranslucentBackground is
+    unreliable: on this X11 path the alpha is often dropped so 60% vs 80%
+    look identical; Windows can paint it fully opaque. paintEvent writes a
+    real alpha into the ARGB window buffer.
+    """
+
+    def __init__(self, object_name, fill_color, parent=None, draw_inset_border=False):
+        super().__init__(parent)
+        self.setObjectName(object_name)
+        self._fill = QColor(fill_color)
+        self._draw_inset_border = bool(draw_inset_border)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.setAutoFillBackground(False)
+
+    def set_fill_alpha(self, alpha):
+        c = QColor(self._fill)
+        c.setAlpha(int(alpha))
+        self._fill = c
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        painter.fillRect(self.rect(), self._fill)
+        if self._draw_inset_border:
+            r = self.rect().adjusted(0, 0, -1, -1)
+            painter.setPen(QPen(QColor("#e8d48b"), 1))
+            painter.drawLine(r.topLeft(), r.topRight())
+            painter.drawLine(r.topLeft(), r.bottomLeft())
+            painter.setPen(QPen(QColor("#7a5e18"), 1))
+            painter.drawLine(r.topRight(), r.bottomRight())
+            painter.drawLine(r.bottomLeft(), r.bottomRight())
+        painter.end()
+
+
 def install_ornate_calc_frame(dialog):
     """
     Nested gilt/wood picture-frame chrome inside a mini-program dialog.
 
-    Outer/mid paint border rings only (transparent center) so the gray content
-    panel's rgba alpha composites against the desktop. Only those border bands
-    drag the window. Returns innermost content layout.
+    Outer/mid paint border rings only. Window center (~70%) and gray panel
+    (~80%) are TranslucentFillFrame layers with real ARGB paint. Only the
+    border bands drag the window. Returns innermost content layout.
     """
     shell = QVBoxLayout(dialog)
     shell.setContentsMargins(7, 7, 7, 7)
@@ -1679,19 +1714,17 @@ def install_ornate_calc_frame(dialog):
     mid_l.setSpacing(0)
 
     # ~70% opaque window center (behind the gray content panel).
-    center = QFrame()
-    center.setObjectName("calcWindowCenter")
-    center.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-    center.setAutoFillBackground(False)
+    center_fill = QColor(28, 28, 28, WINDOW_CENTER_ALPHA)
+    center = TranslucentFillFrame("calcWindowCenter", center_fill, mid)
     center_l = QVBoxLayout(center)
     center_l.setContentsMargins(0, 0, 0, 0)
     center_l.setSpacing(0)
 
-    # ~80% opaque gray content panel.
-    inner = QFrame()
-    inner.setObjectName("calcOrnateInner")
-    inner.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-    inner.setAutoFillBackground(False)
+    # ~80% opaque gray content panel (QPainter ARGB, not QSS rgba).
+    panel_fill = QColor(30, 30, 30, CALC_PANEL_ALPHA)
+    inner = TranslucentFillFrame(
+        "calcOrnateInner", panel_fill, center, draw_inset_border=True
+    )
     # Content must keep a normal arrow cursor (not inherit SizeAll from frame).
     inner.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
     inner_l = QVBoxLayout(inner)
