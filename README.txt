@@ -47,6 +47,7 @@ What's new in 261026.05 (2026-10-27)
 --------
 1. Mini-program dialogs: window drag is limited to the ornate frame border band only
    (gilt/wood margin). Title row and inner content no longer move the window.
+2. Gray content panel opacity set to ~60% opaque (ornate frame stays solid).
 
 What's new in 261026.04 (2026-10-26)
 --------
@@ -181,6 +182,7 @@ Notes
 
 261026.05 更新內容（2026-10-27）
 1. 小程式視窗：僅畫框邊框（鎏金／木紋外圈）可拖曳移動；標題列與內容區點擊不再移動視窗。
+2. 灰色內容區不透明度約 60%（畫框保持實色）。
 
 261026.04 更新內容（2026-10-26）
 1. 所有小程式視窗（平水計算、坡度運算、番茄鐘、翻譯）：無系統標題列、畫框外觀、

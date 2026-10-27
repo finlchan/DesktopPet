@@ -1387,8 +1387,8 @@ MENU_STYLE = """
     }
 """
 
-# Content-panel fill alpha (~70% opaque / 半透明感). Chrome stays more solid.
-CALC_PANEL_ALPHA = 178  # round(255 * 0.70)
+# Gray content-panel fill alpha (~60% opaque / 半透明感). Ornate frame stays solid.
+CALC_PANEL_ALPHA = 153  # round(255 * 0.60)
 
 # Dark theme + gilt/wood picture-frame chrome for calculator dialogs.
 CALC_DIALOG_STYLE = f"""
