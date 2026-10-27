@@ -52,7 +52,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261026.04"
+APP_VERSION = "261026.05"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -1503,17 +1503,38 @@ CALC_DIALOG_STYLE = f"""
 """
 
 
-class _WindowDragFilter(QObject):
+# Ornate frame layout margins (px) — only this band is a window-drag zone.
+ORNATE_OUTER_MARGIN = 8
+ORNATE_MID_MARGIN = 6
+
+
+def _point_in_border_band(pos, rect, thickness):
+    """True if pos lies in the outer ring of `rect` with the given thickness."""
+    if thickness <= 0:
+        return False
+    x, y = pos.x(), pos.y()
+    w, h = rect.width(), rect.height()
+    if w <= 0 or h <= 0:
+        return False
+    return (
+        x < thickness
+        or y < thickness
+        or x >= w - thickness
+        or y >= h - thickness
+    )
+
+
+class _FrameBorderDragFilter(QObject):
     """
-    Event filter that moves a frameless window when the user drags on the
-    filtered grip widget (frame border / title). Uses grabMouse so dragging
-    continues after the cursor leaves the grip.
+    Drag the frameless window only when the press lands in the ornate frame
+    border band (gilt/wood margin). Presses inside the content rect are ignored.
     """
 
-    def __init__(self, window, grip, parent=None):
+    def __init__(self, window, grip, border_thickness, parent=None):
         super().__init__(parent)
         self._window = window
         self._grip = grip
+        self._border_thickness = int(border_thickness)
         self._drag_offset = None
 
     def eventFilter(self, obj, event):
@@ -1521,14 +1542,18 @@ class _WindowDragFilter(QObject):
             return False
         etype = event.type()
         if etype == QEvent.Type.MouseButtonPress:
-            if event.button() == Qt.MouseButton.LeftButton:
-                self._drag_offset = (
-                    event.globalPosition().toPoint()
-                    - self._window.frameGeometry().topLeft()
-                )
-                self._grip.grabMouse()
-                return True
-            return False
+            if event.button() != Qt.MouseButton.LeftButton:
+                return False
+            pos = event.position().toPoint()
+            if not _point_in_border_band(pos, self._grip.rect(), self._border_thickness):
+                # Click is on the content side of this frame layer — do not drag.
+                return False
+            self._drag_offset = (
+                event.globalPosition().toPoint()
+                - self._window.frameGeometry().topLeft()
+            )
+            self._grip.grabMouse()
+            return True
         if etype == QEvent.Type.MouseMove:
             if self._drag_offset is not None:
                 self._window.move(
@@ -1545,9 +1570,9 @@ class _WindowDragFilter(QObject):
         return False
 
 
-def enable_window_drag(window, widget):
-    """Make presses/drags on `widget` move `window` (keeps a filter ref on window)."""
-    filt = _WindowDragFilter(window, widget, window)
+def enable_frame_border_drag(window, widget, border_thickness):
+    """Drag `window` only from the border band of `widget` (keeps filter ref)."""
+    filt = _FrameBorderDragFilter(window, widget, border_thickness, window)
     widget.installEventFilter(filt)
     widget.setCursor(QCursor(Qt.CursorShape.SizeAllCursor))
     grips = getattr(window, "_drag_grips", None)
@@ -1561,7 +1586,8 @@ def enable_window_drag(window, widget):
 def install_ornate_calc_frame(dialog):
     """
     Nested gilt/wood picture-frame chrome inside a mini-program dialog.
-    Frame outer/mid borders are drag grips. Returns innermost content layout.
+    Only the outer/mid border bands drag the window; the inner content panel
+    (title, inputs, buttons) does not. Returns innermost content layout.
     """
     shell = QVBoxLayout(dialog)
     shell.setContentsMargins(7, 7, 7, 7)
@@ -1570,18 +1596,29 @@ def install_ornate_calc_frame(dialog):
     outer = QFrame()
     outer.setObjectName("calcOrnateOuter")
     outer_l = QVBoxLayout(outer)
-    # Visible gilt margin around mid — this is the primary drag ring.
-    outer_l.setContentsMargins(8, 8, 8, 8)
+    outer_l.setContentsMargins(
+        ORNATE_OUTER_MARGIN,
+        ORNATE_OUTER_MARGIN,
+        ORNATE_OUTER_MARGIN,
+        ORNATE_OUTER_MARGIN,
+    )
     outer_l.setSpacing(0)
 
     mid = QFrame()
     mid.setObjectName("calcOrnateMid")
     mid_l = QVBoxLayout(mid)
-    mid_l.setContentsMargins(6, 6, 6, 6)
+    mid_l.setContentsMargins(
+        ORNATE_MID_MARGIN,
+        ORNATE_MID_MARGIN,
+        ORNATE_MID_MARGIN,
+        ORNATE_MID_MARGIN,
+    )
     mid_l.setSpacing(0)
 
     inner = QFrame()
     inner.setObjectName("calcOrnateInner")
+    # Content must keep a normal arrow cursor (not inherit SizeAll from frame).
+    inner.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
     inner_l = QVBoxLayout(inner)
     inner_l.setContentsMargins(10, 10, 10, 10)
     inner_l.setSpacing(8)
@@ -1592,25 +1629,35 @@ def install_ornate_calc_frame(dialog):
     dialog._calc_ornate_outer = outer
     dialog._calc_ornate_mid = mid
     dialog._calc_ornate_inner = inner
-    # Drag on the ornate molding (outer + mid rings), not the content panel.
-    enable_window_drag(dialog, outer)
-    enable_window_drag(dialog, mid)
+    # Drag grips: gilt outer ring + wood mid ring only (hit-tested to the band).
+    enable_frame_border_drag(dialog, outer, ORNATE_OUTER_MARGIN)
+    enable_frame_border_drag(dialog, mid, ORNATE_MID_MARGIN)
     return inner_l
 
 
-def make_draggable_title(dialog, text):
-    """Section/window title label that also drags the frameless dialog."""
+def make_dialog_title(text):
+    """Inner window title label (not a drag handle — content stays clickable)."""
     title = QLabel(text)
     title.setObjectName("calcSectionTitle")
-    title.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
-    enable_window_drag(dialog, title)
+    title.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
     return title
+
+
+def make_draggable_title(dialog_or_text, text=None):
+    """
+    Build the dialog title label. Title is NOT a drag grip (only the ornate
+    frame border moves the window). Accepts make_draggable_title(text) or
+    the older make_draggable_title(dialog, text) call shape.
+    """
+    if text is None:
+        return make_dialog_title(dialog_or_text)
+    return make_dialog_title(text)
 
 
 class FramelessCalcDialog(QDialog):
     """
     Shared mini-program shell: frameless (no OS title bar), ornate frame chrome,
-    ~70% opaque content fill. Drag via frame borders and title (event filters).
+    ~70% opaque content fill. Window drag only on the ornate border band.
     """
 
     def __init__(self, parent=None):

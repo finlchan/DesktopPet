@@ -1,8 +1,8 @@
 Desktop Pet
 ==================
 
-Version: 261026.04
-Published: 2026-10-26
+Version: 261026.05
+Published: 2026-10-27
 
 A floating shortcut menu and document record gadget on the Windows desktop.
 
@@ -42,6 +42,11 @@ Settings
 5. Text records: add/edit/delete text records (Title + Body); list has search/filter.
 6. System: set window level (Normal / Always on top / Always on bottom);
    enable/disable "Start with Windows" (registry Run key; Windows only).
+
+What's new in 261026.05 (2026-10-27)
+--------
+1. Mini-program dialogs: window drag is limited to the ornate frame border band only
+   (gilt/wood margin). Title row and inner content no longer move the window.
 
 What's new in 261026.04 (2026-10-26)
 --------
@@ -140,8 +145,8 @@ Notes
 
 --------------------------------------------------------------------------------
 
-版本：261026.04
-發布日期：2026-10-26
+版本：261026.05
+發布日期：2026-10-27
 
 一款位於 Windows 桌面上的浮動快捷選單與文檔記錄小工具。
 
@@ -173,6 +178,9 @@ Notes
 檔案快捷方式 (File shortcuts)：可設定類型 (File / URL)、「項目名稱」、路徑或網址及「描述」（列表可搜尋／篩選）。
 文檔記錄 (Document record)：設定「標題 (Title)」與一個或多個「資料儲存資料夾 (Data storage folders)」（按「Add」可加入更多資料夾）；應用程式將自動列出這些資料夾內的所有檔案。
 系統設定 (System)：設定視窗層級（一般 / 置頂 / 置底）；可啟用／停用「隨 Windows 啟動」（登錄檔 Run 機碼；僅 Windows）。
+
+261026.05 更新內容（2026-10-27）
+1. 小程式視窗：僅畫框邊框（鎏金／木紋外圈）可拖曳移動；標題列與內容區點擊不再移動視窗。
 
 261026.04 更新內容（2026-10-26）
 1. 所有小程式視窗（平水計算、坡度運算、番茄鐘、翻譯）：無系統標題列、畫框外觀、
