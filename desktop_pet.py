@@ -53,7 +53,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261026.06"
+APP_VERSION = "261026.07"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -1388,9 +1388,11 @@ MENU_STYLE = """
     }
 """
 
-# Gray content-panel fill alpha (~60% opaque / 半透明感). Ornate border rings
-# are painted separately (border-only) so this alpha composites against the desktop.
-CALC_PANEL_ALPHA = 153  # round(255 * 0.60)
+# Layered translucency (composites against the desktop; ornate rings stay solid):
+#   calcWindowCenter  — interior behind the content panel (~70% opaque)
+#   calcOrnateInner   — gray content panel (~80% opaque)
+WINDOW_CENTER_ALPHA = 178  # round(255 * 0.70)
+CALC_PANEL_ALPHA = 204  # round(255 * 0.80)
 
 # Dark theme for mini-program dialogs.
 # IMPORTANT: calcOrnateOuter / Mid must stay background-transparent — their
@@ -1482,6 +1484,10 @@ CALC_DIALOG_STYLE = f"""
     }}
     QFrame#calcOrnateOuter, QFrame#calcOrnateMid {{
         background-color: transparent;
+        border: none;
+    }}
+    QFrame#calcWindowCenter {{
+        background-color: rgba(28, 28, 28, {WINDOW_CENTER_ALPHA});
         border: none;
     }}
     QFrame#calcOrnateInner {{
@@ -1672,6 +1678,16 @@ def install_ornate_calc_frame(dialog):
     )
     mid_l.setSpacing(0)
 
+    # ~70% opaque window center (behind the gray content panel).
+    center = QFrame()
+    center.setObjectName("calcWindowCenter")
+    center.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+    center.setAutoFillBackground(False)
+    center_l = QVBoxLayout(center)
+    center_l.setContentsMargins(0, 0, 0, 0)
+    center_l.setSpacing(0)
+
+    # ~80% opaque gray content panel.
     inner = QFrame()
     inner.setObjectName("calcOrnateInner")
     inner.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
@@ -1682,11 +1698,13 @@ def install_ornate_calc_frame(dialog):
     inner_l.setContentsMargins(10, 10, 10, 10)
     inner_l.setSpacing(8)
 
-    mid_l.addWidget(inner)
+    center_l.addWidget(inner)
+    mid_l.addWidget(center)
     outer_l.addWidget(mid)
     shell.addWidget(outer)
     dialog._calc_ornate_outer = outer
     dialog._calc_ornate_mid = mid
+    dialog._calc_window_center = center
     dialog._calc_ornate_inner = inner
     # Drag grips: gilt outer ring + wood mid ring only (hit-tested to the band).
     enable_frame_border_drag(dialog, outer, ORNATE_OUTER_MARGIN)
