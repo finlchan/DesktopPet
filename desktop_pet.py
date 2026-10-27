@@ -23,6 +23,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QPixmap, QPainter, QColor, QCursor, QIcon, QAction, QMovie, QDesktopServices,
+    QPainterPath, QLinearGradient, QBrush, QPen,
 )
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout, QHBoxLayout, QGridLayout,
@@ -52,7 +53,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261026.04"
+APP_VERSION = "261026.08"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -1387,10 +1388,17 @@ MENU_STYLE = """
     }
 """
 
-# Content-panel fill alpha (~70% opaque / 半透明感). Chrome stays more solid.
-CALC_PANEL_ALPHA = 178  # round(255 * 0.70)
+# Layered translucency (composites against the desktop; ornate rings stay solid):
+#   calcWindowCenter  — interior behind the content panel (~70% opaque)
+#   calcOrnateInner   — gray content panel (~80% opaque)
+WINDOW_CENTER_ALPHA = 178  # round(255 * 0.70)
+CALC_PANEL_ALPHA = 204  # round(255 * 0.80)
 
-# Dark theme + gilt/wood picture-frame chrome for calculator dialogs.
+# Dark theme for mini-program dialogs.
+# IMPORTANT: calcOrnateOuter / Mid must stay background-transparent — their
+# chrome is painted as a border RING only (see OrnateBorderFrame). A full-rect
+# QSS fill on those layers used to sit under the translucent panel and made
+# the window look fully opaque.
 CALC_DIALOG_STYLE = f"""
     QDialog {{
         background-color: transparent;
@@ -1406,7 +1414,7 @@ CALC_DIALOG_STYLE = f"""
         background-color: transparent;
     }}
     QWidget#calcRoot {{
-        background-color: rgba(30, 30, 30, {CALC_PANEL_ALPHA});
+        background-color: transparent;
         color: #e8e8e8;
         border: none;
     }}
@@ -1474,46 +1482,52 @@ CALC_DIALOG_STYLE = f"""
         border: 1px solid rgba(58, 58, 58, 200);
         border-radius: 4px;
     }}
-    QFrame#calcOrnateOuter {{
-        background: qlineargradient(
-            x1:0, y1:0, x2:1, y2:1,
-            stop:0 rgba(42, 28, 14, 230), stop:0.22 rgba(107, 78, 30, 235),
-            stop:0.45 rgba(212, 175, 55, 245), stop:0.55 rgba(240, 215, 140, 250),
-            stop:0.68 rgba(212, 175, 55, 245), stop:0.85 rgba(107, 78, 30, 235),
-            stop:1 rgba(42, 28, 14, 230)
-        );
-        border: 1px solid #1a1008;
+    QFrame#calcOrnateOuter, QFrame#calcOrnateMid {{
+        background-color: transparent;
+        border: none;
     }}
-    QFrame#calcOrnateMid {{
-        background: qlineargradient(
-            x1:0, y1:0, x2:0, y2:1,
-            stop:0 rgba(90, 61, 36, 235), stop:0.5 rgba(58, 36, 20, 235),
-            stop:1 rgba(90, 61, 36, 235)
-        );
-        border: 1px solid #1a1208;
-    }}
-    QFrame#calcOrnateInner {{
-        background-color: rgba(30, 30, 30, {CALC_PANEL_ALPHA});
-        border: 1px solid #c9a84c;
-        border-top-color: #e8d48b;
-        border-left-color: #e8d48b;
-        border-right-color: #7a5e18;
-        border-bottom-color: #7a5e18;
+    /* Fills for calcWindowCenter / calcOrnateInner are painted in
+       TranslucentFillFrame.paintEvent — QSS rgba is unreliable with
+       WA_TranslucentBackground (often ignores alpha → identical looks). */
+    QFrame#calcWindowCenter, QFrame#calcOrnateInner {{
+        background-color: transparent;
+        border: none;
     }}
 """
 
 
-class _WindowDragFilter(QObject):
+# Ornate frame layout margins (px) — only this band is a window-drag zone.
+ORNATE_OUTER_MARGIN = 8
+ORNATE_MID_MARGIN = 6
+
+
+def _point_in_border_band(pos, rect, thickness):
+    """True if pos lies in the outer ring of `rect` with the given thickness."""
+    if thickness <= 0:
+        return False
+    x, y = pos.x(), pos.y()
+    w, h = rect.width(), rect.height()
+    if w <= 0 or h <= 0:
+        return False
+    return (
+        x < thickness
+        or y < thickness
+        or x >= w - thickness
+        or y >= h - thickness
+    )
+
+
+class _FrameBorderDragFilter(QObject):
     """
-    Event filter that moves a frameless window when the user drags on the
-    filtered grip widget (frame border / title). Uses grabMouse so dragging
-    continues after the cursor leaves the grip.
+    Drag the frameless window only when the press lands in the ornate frame
+    border band (gilt/wood margin). Presses inside the content rect are ignored.
     """
 
-    def __init__(self, window, grip, parent=None):
+    def __init__(self, window, grip, border_thickness, parent=None):
         super().__init__(parent)
         self._window = window
         self._grip = grip
+        self._border_thickness = int(border_thickness)
         self._drag_offset = None
 
     def eventFilter(self, obj, event):
@@ -1521,14 +1535,18 @@ class _WindowDragFilter(QObject):
             return False
         etype = event.type()
         if etype == QEvent.Type.MouseButtonPress:
-            if event.button() == Qt.MouseButton.LeftButton:
-                self._drag_offset = (
-                    event.globalPosition().toPoint()
-                    - self._window.frameGeometry().topLeft()
-                )
-                self._grip.grabMouse()
-                return True
-            return False
+            if event.button() != Qt.MouseButton.LeftButton:
+                return False
+            pos = event.position().toPoint()
+            if not _point_in_border_band(pos, self._grip.rect(), self._border_thickness):
+                # Click is on the content side of this frame layer — do not drag.
+                return False
+            self._drag_offset = (
+                event.globalPosition().toPoint()
+                - self._window.frameGeometry().topLeft()
+            )
+            self._grip.grabMouse()
+            return True
         if etype == QEvent.Type.MouseMove:
             if self._drag_offset is not None:
                 self._window.move(
@@ -1545,9 +1563,9 @@ class _WindowDragFilter(QObject):
         return False
 
 
-def enable_window_drag(window, widget):
-    """Make presses/drags on `widget` move `window` (keeps a filter ref on window)."""
-    filt = _WindowDragFilter(window, widget, window)
+def enable_frame_border_drag(window, widget, border_thickness):
+    """Drag `window` only from the border band of `widget` (keeps filter ref)."""
+    filt = _FrameBorderDragFilter(window, widget, border_thickness, window)
     widget.installEventFilter(filt)
     widget.setCursor(QCursor(Qt.CursorShape.SizeAllCursor))
     grips = getattr(window, "_drag_grips", None)
@@ -1558,59 +1576,199 @@ def enable_window_drag(window, widget):
     return filt
 
 
+class OrnateBorderFrame(QFrame):
+    """
+    Ornate picture-frame layer that paints ONLY a border ring.
+
+    Root cause of “no transparency”: a QSS gradient background on this frame
+    filled the entire rect (including under the translucent content panel), so
+    the panel composited against opaque frame pixels instead of the desktop.
+    """
+
+    def __init__(self, object_name, band_thickness, kind, parent=None):
+        super().__init__(parent)
+        self.setObjectName(object_name)
+        self._band_thickness = int(band_thickness)
+        self._kind = kind  # "gilt" | "wood"
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.setAutoFillBackground(False)
+
+    def paintEvent(self, event):
+        t = self._band_thickness
+        if t <= 0:
+            return
+        r = self.rect()
+        if r.width() <= 2 * t or r.height() <= 2 * t:
+            return
+        outer = QPainterPath()
+        outer.addRect(float(r.x()), float(r.y()), float(r.width()), float(r.height()))
+        hole = QPainterPath()
+        hole.addRect(
+            float(r.x() + t),
+            float(r.y() + t),
+            float(r.width() - 2 * t),
+            float(r.height() - 2 * t),
+        )
+        ring = outer.subtracted(hole)
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        if self._kind == "gilt":
+            grad = QLinearGradient(r.topLeft(), r.bottomRight())
+            grad.setColorAt(0.0, QColor(42, 28, 14))
+            grad.setColorAt(0.22, QColor(107, 78, 30))
+            grad.setColorAt(0.45, QColor(212, 175, 55))
+            grad.setColorAt(0.55, QColor(240, 215, 140))
+            grad.setColorAt(0.68, QColor(212, 175, 55))
+            grad.setColorAt(0.85, QColor(107, 78, 30))
+            grad.setColorAt(1.0, QColor(42, 28, 14))
+            painter.fillPath(ring, QBrush(grad))
+            painter.setPen(QPen(QColor(26, 16, 8), 1))
+            painter.drawRect(r.adjusted(0, 0, -1, -1))
+            painter.setPen(QPen(QColor(232, 212, 139), 1))
+            painter.drawRect(r.adjusted(t - 1, t - 1, -(t), -(t)))
+        else:
+            grad = QLinearGradient(r.topLeft(), r.bottomLeft())
+            grad.setColorAt(0.0, QColor(90, 61, 36))
+            grad.setColorAt(0.5, QColor(58, 36, 20))
+            grad.setColorAt(1.0, QColor(90, 61, 36))
+            painter.fillPath(ring, QBrush(grad))
+            painter.setPen(QPen(QColor(26, 18, 8), 1))
+            painter.drawRect(r.adjusted(0, 0, -1, -1))
+        painter.end()
+
+
+class TranslucentFillFrame(QFrame):
+    """
+    Panel that paints an ARGB fill via QPainter (not QSS).
+
+    QSS `background-color: rgba(...)` under WA_TranslucentBackground is
+    unreliable: on this X11 path the alpha is often dropped so 60% vs 80%
+    look identical; Windows can paint it fully opaque. paintEvent writes a
+    real alpha into the ARGB window buffer.
+    """
+
+    def __init__(self, object_name, fill_color, parent=None, draw_inset_border=False):
+        super().__init__(parent)
+        self.setObjectName(object_name)
+        self._fill = QColor(fill_color)
+        self._draw_inset_border = bool(draw_inset_border)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.setAutoFillBackground(False)
+
+    def set_fill_alpha(self, alpha):
+        c = QColor(self._fill)
+        c.setAlpha(int(alpha))
+        self._fill = c
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        painter.fillRect(self.rect(), self._fill)
+        if self._draw_inset_border:
+            r = self.rect().adjusted(0, 0, -1, -1)
+            painter.setPen(QPen(QColor("#e8d48b"), 1))
+            painter.drawLine(r.topLeft(), r.topRight())
+            painter.drawLine(r.topLeft(), r.bottomLeft())
+            painter.setPen(QPen(QColor("#7a5e18"), 1))
+            painter.drawLine(r.topRight(), r.bottomRight())
+            painter.drawLine(r.bottomLeft(), r.bottomRight())
+        painter.end()
+
+
 def install_ornate_calc_frame(dialog):
     """
     Nested gilt/wood picture-frame chrome inside a mini-program dialog.
-    Frame outer/mid borders are drag grips. Returns innermost content layout.
+
+    Outer/mid paint border rings only. Window center (~70%) and gray panel
+    (~80%) are TranslucentFillFrame layers with real ARGB paint. Only the
+    border bands drag the window. Returns innermost content layout.
     """
     shell = QVBoxLayout(dialog)
     shell.setContentsMargins(7, 7, 7, 7)
     shell.setSpacing(0)
 
-    outer = QFrame()
-    outer.setObjectName("calcOrnateOuter")
+    outer = OrnateBorderFrame(
+        "calcOrnateOuter", ORNATE_OUTER_MARGIN, "gilt", dialog
+    )
     outer_l = QVBoxLayout(outer)
-    # Visible gilt margin around mid — this is the primary drag ring.
-    outer_l.setContentsMargins(8, 8, 8, 8)
+    outer_l.setContentsMargins(
+        ORNATE_OUTER_MARGIN,
+        ORNATE_OUTER_MARGIN,
+        ORNATE_OUTER_MARGIN,
+        ORNATE_OUTER_MARGIN,
+    )
     outer_l.setSpacing(0)
 
-    mid = QFrame()
-    mid.setObjectName("calcOrnateMid")
+    mid = OrnateBorderFrame("calcOrnateMid", ORNATE_MID_MARGIN, "wood", outer)
     mid_l = QVBoxLayout(mid)
-    mid_l.setContentsMargins(6, 6, 6, 6)
+    mid_l.setContentsMargins(
+        ORNATE_MID_MARGIN,
+        ORNATE_MID_MARGIN,
+        ORNATE_MID_MARGIN,
+        ORNATE_MID_MARGIN,
+    )
     mid_l.setSpacing(0)
 
-    inner = QFrame()
-    inner.setObjectName("calcOrnateInner")
+    # ~70% opaque window center (behind the gray content panel).
+    center_fill = QColor(28, 28, 28, WINDOW_CENTER_ALPHA)
+    center = TranslucentFillFrame("calcWindowCenter", center_fill, mid)
+    center_l = QVBoxLayout(center)
+    center_l.setContentsMargins(0, 0, 0, 0)
+    center_l.setSpacing(0)
+
+    # ~80% opaque gray content panel (QPainter ARGB, not QSS rgba).
+    panel_fill = QColor(30, 30, 30, CALC_PANEL_ALPHA)
+    inner = TranslucentFillFrame(
+        "calcOrnateInner", panel_fill, center, draw_inset_border=True
+    )
+    # Content must keep a normal arrow cursor (not inherit SizeAll from frame).
+    inner.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
     inner_l = QVBoxLayout(inner)
     inner_l.setContentsMargins(10, 10, 10, 10)
     inner_l.setSpacing(8)
 
-    mid_l.addWidget(inner)
+    center_l.addWidget(inner)
+    mid_l.addWidget(center)
     outer_l.addWidget(mid)
     shell.addWidget(outer)
     dialog._calc_ornate_outer = outer
     dialog._calc_ornate_mid = mid
+    dialog._calc_window_center = center
     dialog._calc_ornate_inner = inner
-    # Drag on the ornate molding (outer + mid rings), not the content panel.
-    enable_window_drag(dialog, outer)
-    enable_window_drag(dialog, mid)
+    # Drag grips: gilt outer ring + wood mid ring only (hit-tested to the band).
+    enable_frame_border_drag(dialog, outer, ORNATE_OUTER_MARGIN)
+    enable_frame_border_drag(dialog, mid, ORNATE_MID_MARGIN)
     return inner_l
 
 
-def make_draggable_title(dialog, text):
-    """Section/window title label that also drags the frameless dialog."""
+def make_dialog_title(text):
+    """Inner window title label (not a drag handle — content stays clickable)."""
     title = QLabel(text)
     title.setObjectName("calcSectionTitle")
-    title.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
-    enable_window_drag(dialog, title)
+    title.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
     return title
+
+
+def make_draggable_title(dialog_or_text, text=None):
+    """
+    Build the dialog title label. Title is NOT a drag grip (only the ornate
+    frame border moves the window). Accepts make_draggable_title(text) or
+    the older make_draggable_title(dialog, text) call shape.
+    """
+    if text is None:
+        return make_dialog_title(dialog_or_text)
+    return make_dialog_title(text)
 
 
 class FramelessCalcDialog(QDialog):
     """
-    Shared mini-program shell: frameless (no OS title bar), ornate frame chrome,
-    ~70% opaque content fill. Drag via frame borders and title (event filters).
+    Shared mini-program shell: frameless (no OS title bar), ornate border-ring
+    chrome, ~60% opaque content panel that composites against the desktop.
+    Window drag only on the ornate border band.
     """
 
     def __init__(self, parent=None):
@@ -1620,7 +1778,11 @@ class FramelessCalcDialog(QDialog):
             | Qt.WindowType.Dialog
             | Qt.WindowType.WindowStaysOnTopHint
         )
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        # Required for child rgba() panels to composite against the desktop
+        # (otherwise they blend onto an opaque system/back buffer).
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.setAutoFillBackground(False)
         self.setStyleSheet(CALC_DIALOG_STYLE)
         self._drag_grips = []
 

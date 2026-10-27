@@ -6,7 +6,7 @@ on:
       release_tag:
         description: "Existing release tag to upload DesktopPet.exe to (leave empty to skip release upload)"
         required: false
-        default: "v261026.04"
+        default: "v261026.08"
         type: string
   push:
     tags:
