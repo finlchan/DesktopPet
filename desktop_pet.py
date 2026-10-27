@@ -53,7 +53,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261026.08"
+APP_VERSION = "261027.01"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -841,7 +841,7 @@ class SettingsDialog(QDialog):
         text_layout.addLayout(tr_btn_layout)
 
         tr_info = QLabel(
-            "Text records appear under 小程式 → Text records in the pet menu. "
+            "Text records appear under Mini programs → Text records in the pet menu. "
             "Click >> to browse titles; click a title to read the body."
         )
         tr_info.setWordWrap(True)
@@ -1791,11 +1791,11 @@ def parse_calc_number(text):
     """Parse a typed calculator field; raises ValueError on empty/invalid input."""
     raw = (text or "").strip().replace(",", "")
     if not raw or raw in ("-", "+", ".", "-.", "+."):
-        raise ValueError("請輸入有效數值")
+        raise ValueError("Enter a valid number")
     try:
         return float(raw)
     except ValueError as exc:
-        raise ValueError("請輸入有效數值") from exc
+        raise ValueError("Enter a valid number") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -1854,7 +1854,7 @@ def slope_from_length_diff(length, high_lv, low_lv):
     rise = high_lv - low_lv; Fall% = rise/L*100; 1 in X = L/rise; angle = atan(rise/L).
     """
     if length == 0:
-        raise ValueError("長度 (L) 必須不為 0")
+        raise ValueError("Length (L) must not be 0")
     rise = high_lv - low_lv
     if rise == 0:
         return 0.0, float("inf"), 0.0
@@ -1893,7 +1893,7 @@ def convert_slope_units(known_kind, value):
         return fall_pct, one_in_x, angle_deg
     if known_kind == "xin":
         if value == 0:
-            raise ValueError("1 in X 的 X 不可為 0")
+            raise ValueError("1 in X: X must not be 0")
         one_in_x = value
         fall_pct = 100.0 / one_in_x
         angle_deg = math.degrees(math.atan(1.0 / one_in_x))
@@ -1901,7 +1901,7 @@ def convert_slope_units(known_kind, value):
     if known_kind == "angle":
         angle_deg = value
         if abs(angle_deg) % 180 == 90:
-            raise ValueError("角度不可為 ±90°")
+            raise ValueError("Angle must not be ±90°")
         fall_pct = 100.0 * math.tan(math.radians(angle_deg))
         if fall_pct == 0:
             return 0.0, float("inf"), angle_deg
@@ -2620,36 +2620,36 @@ class FileShortcutsSubMenu(PopupPanel):
 
 
 # ---------------------------------------------------------------------------
-# Mini-program calculators: 平水計算 / 坡度運算
+# Mini-program calculators: Level calc / Slope calc
 # ---------------------------------------------------------------------------
 class LevelCalcDialog(FramelessCalcDialog):
-    """平水計算 — linear interpolate level at a target chainage."""
+    """Level calc — linear interpolate level at a target chainage."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("平水計算")
+        self.setWindowTitle("Level calc")
         self.setMinimumSize(540, 200)
         self.resize(560, 220)
         root = install_ornate_calc_frame(self)
         root.setSpacing(6)
 
-        root.addWidget(make_draggable_title(self, "平水計算"))
+        root.addWidget(make_draggable_title(self, "Level calc"))
 
-        # Captions above; edits + 計算平水 share one baseline row (button right).
+        # Captions above; edits + Calc level share one baseline row (button right).
         cluster, fields = build_calc_action_cluster(
             [
-                ("高位平水", 100.0, 3, 88),
-                ("低位平水", 90.0, 3, 88),
-                ("全長", 50.0, 3, 88),
-                ("目標距離", 25.0, 3, 88),
+                ("High level", 100.0, 3, 88),
+                ("Low level", 90.0, 3, 88),
+                ("Full length", 50.0, 3, 88),
+                ("Target dist", 25.0, 3, 88),
             ],
-            "計算平水",
+            "Calc level",
             self._calculate,
         )
         self.high, self.low, self.full, self.target = fields
         root.addWidget(cluster, 0, Qt.AlignmentFlag.AlignLeft)
 
-        self.result = QLabel("結果將顯示於此")
+        self.result = QLabel("Result will appear here")
         self.result.setObjectName("calcResult")
         self.result.setWordWrap(True)
         root.addWidget(self.result)
@@ -2671,24 +2671,24 @@ class LevelCalcDialog(FramelessCalcDialog):
             )
             note = ""
             if target < 0 or target > full:
-                note = "\n（目標距離超出 [0, 全長]，已外插）"
+                note = "\n(Target outside [0, full length]; extrapolated)"
             elif abs(target) < 1e-12:
-                note = "\n（位於起點／高位）"
+                note = "\n(At start / high point)"
             elif abs(target - full) < 1e-12:
-                note = "\n（位於終點／低位）"
+                note = "\n(At end / low point)"
             self.result.setText(
-                f"◆ 目標距離的平水: {level:.3f}{note}"
+                f"◆ Level at target: {level:.3f}{note}"
             )
         except ValueError as exc:
-            self.result.setText(f"輸入錯誤: {exc}")
+            self.result.setText(f"Input error: {exc}")
 
 
 class SlopeCalcDialog(FramelessCalcDialog):
-    """坡度運算 — three calculators matching the surveying reference UIs."""
+    """Slope calc — three calculators matching the surveying reference UIs."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("坡度運算")
+        self.setWindowTitle("Slope calc")
         self.setMinimumSize(520, 560)
         self.resize(560, 620)
 
@@ -2696,7 +2696,7 @@ class SlopeCalcDialog(FramelessCalcDialog):
         frame_root.setContentsMargins(6, 6, 6, 6)
         frame_root.setSpacing(6)
 
-        frame_root.addWidget(make_draggable_title(self, "坡度運算"))
+        frame_root.addWidget(make_draggable_title(self, "Slope calc"))
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -2736,14 +2736,14 @@ class SlopeCalcDialog(FramelessCalcDialog):
         return frame, layout
 
     def _build_section_a(self):
-        frame, layout = self._section_frame("1", "兩點高差求坡度")
+        frame, layout = self._section_frame("1", "Slope from two-point level difference")
         cluster, fields = build_calc_action_cluster(
             [
-                ("長度 (L)", 10.0, 3, 88),
-                ("高位 LV", 10.0, 3, 88),
-                ("低位 LV", 9.5, 3, 88),
+                ("Length (L)", 10.0, 3, 88),
+                ("High LV", 10.0, 3, 88),
+                ("Low LV", 9.5, 3, 88),
             ],
-            "計算坡度",
+            "Calc slope",
             self._calc_a,
         )
         self.a_length, self.a_high, self.a_low = fields
@@ -2757,14 +2757,14 @@ class SlopeCalcDialog(FramelessCalcDialog):
         return frame
 
     def _build_section_b(self):
-        frame, layout = self._section_frame("2", "坡度推算高程")
+        frame, layout = self._section_frame("2", "Level from slope")
         cluster, fields = build_calc_action_cluster(
             [
-                ("長度 (L)", 10.0, 3, 88),
-                ("起始 LV", 10.0, 3, 88),
-                ("坡度 Fall (%)", 5.0, 3, 88),
+                ("Length (L)", 10.0, 3, 88),
+                ("Start LV", 10.0, 3, 88),
+                ("Fall (%)", 5.0, 3, 88),
             ],
-            "計算高程",
+            "Calc level",
             self._calc_b,
         )
         self.b_length, self.b_start, self.b_fall = fields
@@ -2778,12 +2778,12 @@ class SlopeCalcDialog(FramelessCalcDialog):
         return frame
 
     def _build_section_c(self):
-        frame, layout = self._section_frame("3", "坡度單位互相運算框")
-        layout.addWidget(QLabel("選擇已知條件:"))
+        frame, layout = self._section_frame("3", "Slope unit conversion")
+        layout.addWidget(QLabel("Known value:"))
         self.c_group = QButtonGroup(self)
-        self.radio_fall = QRadioButton("已知 坡度 (Fall %)")
-        self.radio_xin = QRadioButton("已知 1 in X")
-        self.radio_angle = QRadioButton("已知 角度 (DD.MMSS)")
+        self.radio_fall = QRadioButton("Fall (%)")
+        self.radio_xin = QRadioButton("1 in X")
+        self.radio_angle = QRadioButton("Angle (DD.MMSS)")
         self.radio_fall.setChecked(True)
         for i, radio in enumerate(
             (self.radio_fall, self.radio_xin, self.radio_angle)
@@ -2792,7 +2792,7 @@ class SlopeCalcDialog(FramelessCalcDialog):
             layout.addWidget(radio)
         self.c_group.idClicked.connect(lambda _id: self._on_c_kind_changed())
 
-        self.c_input_label = QLabel("輸入 坡度 (Fall %)")
+        self.c_input_label = QLabel("Enter Fall (%)")
         self.c_input_label.setObjectName("calcFieldCaption")
         layout.addWidget(self.c_input_label)
         c_edit = make_calc_line_edit(1.0, decimals=6, max_edit_width=140)
@@ -2813,14 +2813,14 @@ class SlopeCalcDialog(FramelessCalcDialog):
                 self.a_length.value(), self.a_high.value(), self.a_low.value()
             )
             self.a_result.setText(
-                "◆ 坡度 Fall: "
+                "◆ Fall: "
                 f"{fall:.3f} %\n"
                 f"◆ 1 IN X: {format_one_in_x(xin)}\n"
-                f"◆ 角度: {format_dms(ang)}"
+                f"◆ Angle: {format_dms(ang)}"
             )
             self.a_result.show()
         except ValueError as exc:
-            self.a_result.setText(f"輸入錯誤: {exc}")
+            self.a_result.setText(f"Input error: {exc}")
             self.a_result.show()
 
     def _calc_b(self):
@@ -2829,13 +2829,13 @@ class SlopeCalcDialog(FramelessCalcDialog):
                 self.b_length.value(), self.b_start.value(), self.b_fall.value()
             )
             self.b_result.setText(
-                f"◆ 結尾 LV: {ending:.3f}\n"
+                f"◆ Ending LV: {ending:.3f}\n"
                 f"◆ 1 IN X: {format_one_in_x(xin)}\n"
-                f"◆ 角度: {format_dms(ang)}"
+                f"◆ Angle: {format_dms(ang)}"
             )
             self.b_result.show()
         except ValueError as exc:
-            self.b_result.setText(f"輸入錯誤: {exc}")
+            self.b_result.setText(f"Input error: {exc}")
             self.b_result.show()
 
     def _c_kind(self):
@@ -2848,11 +2848,11 @@ class SlopeCalcDialog(FramelessCalcDialog):
     def _on_c_kind_changed(self):
         kind = self._c_kind()
         if kind == "fall":
-            self.c_input_label.setText("輸入 坡度 (Fall %)")
+            self.c_input_label.setText("Enter Fall (%)")
         elif kind == "xin":
-            self.c_input_label.setText("輸入 1 in X")
+            self.c_input_label.setText("Enter 1 in X")
         else:
-            self.c_input_label.setText("輸入 角度 (DD.MMSS)")
+            self.c_input_label.setText("Enter Angle (DD.MMSS)")
         self._calc_c_live()
 
     def _calc_c_live(self, *_args):
@@ -2867,16 +2867,16 @@ class SlopeCalcDialog(FramelessCalcDialog):
                 fall, xin, ang = convert_slope_units(kind, raw)
             lines = []
             if kind != "fall":
-                lines.append(f"◆ 坡度 Fall: {fall:.3f} %")
+                lines.append(f"◆ Fall: {fall:.3f} %")
             if kind != "xin":
                 lines.append(f"◆ 1 IN X: {format_one_in_x(xin)}")
             if kind != "angle":
                 lines.append(
-                    f"◆ 角度: {format_dms(ang)}  (DD.MMSS: {degrees_to_ddmmss(ang):.6f})"
+                    f"◆ Angle: {format_dms(ang)}  (DD.MMSS: {degrees_to_ddmmss(ang):.6f})"
                 )
             else:
                 # Still show DMS for clarity when DD.MMSS was the input.
-                lines.append(f"◆ 角度 (DMS): {format_dms(ang)}")
+                lines.append(f"◆ Angle (DMS): {format_dms(ang)}")
             self.c_result.setText("\n".join(lines) if lines else "—")
         except ValueError as exc:
             self.c_result.setText(f"Input error: {exc}")
@@ -3176,19 +3176,19 @@ POMODORO_PRESETS = (25, 5, 15)
 
 
 class PomodoroDialog(FramelessCalcDialog):
-    """番茄鐘 — compact countdown with 25/5/15 presets, custom minutes and progress bar."""
+    """Pomodoro — compact countdown with 25/5/15 presets, custom minutes and progress bar."""
 
     def __init__(self, config_manager, parent=None):
         super().__init__(parent)
         self.cfg = config_manager
-        self.setWindowTitle("番茄鐘 Pomodoro")
+        self.setWindowTitle("Pomodoro")
         self.setMinimumSize(380, 250)
         self.resize(400, 270)
         self.setStyleSheet(CALC_DIALOG_STYLE + MINI_PROGRAM_STYLE)
         root = install_ornate_calc_frame(self)
         root.setSpacing(6)
 
-        root.addWidget(make_draggable_title(self, "番茄鐘 Pomodoro"))
+        root.addWidget(make_draggable_title(self, "Pomodoro"))
 
         try:
             saved = int(self.cfg.get("pomodoro", "minutes") or 0)
@@ -3213,11 +3213,11 @@ class PomodoroDialog(FramelessCalcDialog):
         preset_row = QHBoxLayout()
         preset_row.setSpacing(4)
         for minutes in POMODORO_PRESETS:
-            btn = QPushButton(f"{minutes} 分")
+            btn = QPushButton(f"{minutes} min")
             btn.setObjectName("calcAction")
             btn.clicked.connect(lambda checked=False, m=minutes: self._set_minutes(m))
             preset_row.addWidget(btn)
-        custom_caption = QLabel("自訂 (分鐘)")
+        custom_caption = QLabel("Custom (min)")
         custom_caption.setObjectName("calcFieldCaption")
         preset_row.addWidget(custom_caption)
         self.minutes_spin = QSpinBox()
@@ -3231,9 +3231,9 @@ class PomodoroDialog(FramelessCalcDialog):
 
         control_row = QHBoxLayout()
         control_row.setSpacing(4)
-        self.start_btn = QPushButton("Start 開始")
-        self.pause_btn = QPushButton("Pause 暫停")
-        reset_btn = QPushButton("Reset 重設")
+        self.start_btn = QPushButton("Start")
+        self.pause_btn = QPushButton("Pause")
+        reset_btn = QPushButton("Reset")
         for btn in (self.start_btn, self.pause_btn, reset_btn):
             btn.setObjectName("calcAction")
             control_row.addWidget(btn)
@@ -3243,7 +3243,7 @@ class PomodoroDialog(FramelessCalcDialog):
         reset_btn.clicked.connect(self._reset)
         root.addLayout(control_row)
 
-        self.status = QLabel("準備就緒")
+        self.status = QLabel("Ready")
         self.status.setObjectName("calcResult")
         self.status.setWordWrap(True)
         root.addWidget(self.status)
@@ -3282,14 +3282,14 @@ class PomodoroDialog(FramelessCalcDialog):
             return
         self.running = True
         self.timer.start()
-        self.status.setText("進行中…")
+        self.status.setText("Running…")
         self._persist_minutes(self.total_seconds // 60)
 
     def _pause(self):
         if not self.running:
             return
         self._stop_ticking()
-        self.status.setText("已暫停")
+        self.status.setText("Paused")
 
     def _reset(self):
         self._stop_ticking()
@@ -3315,23 +3315,23 @@ class PomodoroDialog(FramelessCalcDialog):
             round(elapsed * 100.0 / self.total_seconds) if self.total_seconds else 0
         )
         if reset_status and not self.running:
-            self.status.setText("準備就緒")
+            self.status.setText("Ready")
 
     def _on_finished(self):
-        self.status.setText("時間到！時間到！")
+        self.status.setText("Time is up!")
         QApplication.beep()
         tray = getattr(QApplication.instance(), "_tray_icon", None)
         if tray is not None:
             tray.showMessage(
-                "番茄鐘 Pomodoro",
-                "時間到！Time is up.",
+                "Pomodoro",
+                "Time is up.",
                 QSystemTrayIcon.MessageIcon.Information,
                 4000,
             )
 
 
 class TranslateError(Exception):
-    """Raised with a user-facing (Chinese) message when translation fails."""
+    """Raised with a user-facing (English) message when translation fails."""
 
 
 def translate_text(text, target_lang, timeout=10):
@@ -3362,16 +3362,16 @@ def translate_text(text, target_lang, timeout=10):
             data = json.loads(response.read().decode("utf-8", "replace"))
     except urllib.error.HTTPError as exc:
         if exc.code == 429:
-            raise TranslateError("翻譯次數過多，請稍後再試。") from exc
-        raise TranslateError(f"翻譯服務回應錯誤 (HTTP {exc.code})。") from exc
+            raise TranslateError("Too many requests, please try again later.") from exc
+        raise TranslateError(f"Translation service error (HTTP {exc.code}).") from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        raise TranslateError("無法連線翻譯服務，請檢查網絡後再試。") from exc
+        raise TranslateError("Cannot reach the translation service, check the network and try again.") from exc
     except ValueError as exc:
-        raise TranslateError("翻譯服務回應格式錯誤。") from exc
+        raise TranslateError("Unexpected translation service response format.") from exc
 
     segments = data[0] if isinstance(data, list) and data else None
     if not segments:
-        raise TranslateError("翻譯服務沒有回傳結果。")
+        raise TranslateError("Translation service returned no result.")
     translated = "".join(
         seg[0] for seg in segments if isinstance(seg, (list, tuple)) and seg and seg[0]
     )
@@ -3404,21 +3404,21 @@ class _TranslateWorker(QRunnable):
             self.signals.failed.emit(self.request_id, str(exc))
         except Exception:
             # Never surface or log the request text.
-            self.signals.failed.emit(self.request_id, "翻譯失敗，請稍後再試。")
+            self.signals.failed.emit(self.request_id, "Translation failed, please try again later.")
 
 
 class TranslateDialog(FramelessCalcDialog):
-    """翻譯 — text translation via the public web endpoint (no API key, no persistence)."""
+    """Translate — text translation via the public web endpoint (no API key, no persistence)."""
 
     AUTO_DEBOUNCE_MS = 800
     CACHE_LIMIT = 8
 
     LANGUAGES = (
-        ("zh-TW", "繁體中文"),
+        ("zh-TW", "Chinese (Traditional)"),
         ("en", "English"),
-        ("zh-CN", "简体中文"),
-        ("ja", "日本語"),
-        ("ko", "한국어"),
+        ("zh-CN", "Chinese (Simplified)"),
+        ("ja", "Japanese"),
+        ("ko", "Korean"),
         ("fr", "Français"),
         ("de", "Deutsch"),
         ("es", "Español"),
@@ -3426,18 +3426,18 @@ class TranslateDialog(FramelessCalcDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("翻譯 Translate")
+        self.setWindowTitle("Translate")
         self.setMinimumSize(520, 340)
         self.resize(560, 380)
         self.setStyleSheet(CALC_DIALOG_STYLE + MINI_PROGRAM_STYLE)
         root = install_ornate_calc_frame(self)
         root.setSpacing(6)
 
-        root.addWidget(make_draggable_title(self, "翻譯 Translate"))
+        root.addWidget(make_draggable_title(self, "Translate"))
 
         lang_row = QHBoxLayout()
         lang_row.setSpacing(4)
-        lang_caption = QLabel("目標語言")
+        lang_caption = QLabel("Target language")
         lang_caption.setObjectName("calcFieldCaption")
         lang_row.addWidget(lang_caption)
         self.lang_combo = QComboBox()
@@ -3447,11 +3447,11 @@ class TranslateDialog(FramelessCalcDialog):
         self.lang_combo.setCurrentIndex(0)
         self.lang_combo.currentIndexChanged.connect(self._on_language_changed)
         lang_row.addWidget(self.lang_combo)
-        self.translate_btn = QPushButton("Translate 翻譯")
+        self.translate_btn = QPushButton("Translate")
         self.translate_btn.setObjectName("calcAction")
         self.translate_btn.clicked.connect(self._translate_now)
         lang_row.addWidget(self.translate_btn)
-        self.copy_btn = QPushButton("Copy 複製")
+        self.copy_btn = QPushButton("Copy")
         self.copy_btn.setObjectName("calcAction")
         self.copy_btn.setEnabled(False)
         self.copy_btn.clicked.connect(self._copy_result)
@@ -3461,12 +3461,12 @@ class TranslateDialog(FramelessCalcDialog):
 
         self.source_edit = QPlainTextEdit()
         self.source_edit.setObjectName("translateSource")
-        self.source_edit.setPlaceholderText("輸入要翻譯的文字… (auto-detect source)")
+        self.source_edit.setPlaceholderText("Type text to translate… (auto-detect source)")
         self.source_edit.setFixedHeight(76)
         self.source_edit.textChanged.connect(self._on_source_changed)
         root.addWidget(self.source_edit)
 
-        self.result = QLabel("結果將顯示於此")
+        self.result = QLabel("Result will appear here")
         self.result.setObjectName("calcResult")
         self.result.setWordWrap(True)
         self.result.setTextInteractionFlags(
@@ -3501,7 +3501,7 @@ class TranslateDialog(FramelessCalcDialog):
     def _on_source_changed(self):
         if not self.source_edit.toPlainText().strip():
             self._debounce.stop()
-            self.result.setText("結果將顯示於此")
+            self.result.setText("Result will appear here")
             self.copy_btn.setEnabled(False)
             self._pending_request = None
             return
@@ -3524,7 +3524,7 @@ class TranslateDialog(FramelessCalcDialog):
         self._request_counter += 1
         request_id = self._request_counter
         self._pending_request = request_id
-        self.result.setText("翻譯中…")
+        self.result.setText("Translating…")
         worker = _TranslateWorker(request_id, text, target)
         worker.signals.finished.connect(self._on_translated)
         worker.signals.failed.connect(self._on_translate_failed)
@@ -3550,7 +3550,7 @@ class TranslateDialog(FramelessCalcDialog):
     def _show_result(self, translated, detected):
         lines = [f"◆ {translated}"]
         if detected:
-            lines.append(f"（偵測語言: {detected}）")
+            lines.append(f"(Detected language: {detected})")
         self.result.setText("\n".join(lines))
         self.copy_btn.setEnabled(bool(translated))
 
@@ -3728,7 +3728,7 @@ class TextRecordsSubMenu(PopupPanel):
 
 
 # ---------------------------------------------------------------------------
-# 運算 submenu (third level under 小程式)
+# Calculations submenu (third level under Mini programs)
 # ---------------------------------------------------------------------------
 class OperationsSubMenu(PopupPanel):
     """Third-level menu: Level calc / Slope calc / Free station."""
@@ -3753,7 +3753,7 @@ class OperationsSubMenu(PopupPanel):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(4)
 
-        title = QLabel("運算")
+        title = QLabel("Calculations")
         title.setStyleSheet("color: white; font-weight: bold;")
         layout.addWidget(title)
 
@@ -3762,7 +3762,7 @@ class OperationsSubMenu(PopupPanel):
         sep.setStyleSheet("background-color: rgba(255,255,255,120);")
         layout.addWidget(sep)
 
-        btn_level = QPushButton("平水計算")
+        btn_level = QPushButton("Level calc")
         btn_level.setStyleSheet(menu_button_style("#5a4a6e"))
         btn_level.clicked.connect(self.open_level_calc)
         layout.addWidget(btn_level)
@@ -3841,10 +3841,10 @@ class OperationsSubMenu(PopupPanel):
 
 
 # ---------------------------------------------------------------------------
-# 小程式 submenu (Text records + 運算)
+# Mini programs submenu (Text records + Calculations)
 # ---------------------------------------------------------------------------
 class MiniProgramsSubMenu(PopupPanel):
-    """Second-level menu under 小程式: Text records + 運算."""
+    """Second-level menu under Mini programs: Text records + Calculations."""
 
     def __init__(self, config_manager):
         super().__init__()
@@ -3868,7 +3868,7 @@ class MiniProgramsSubMenu(PopupPanel):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(4)
 
-        title = QLabel("小程式")
+        title = QLabel("Mini programs")
         title.setStyleSheet("color: white; font-weight: bold;")
         layout.addWidget(title)
 
@@ -3891,10 +3891,10 @@ class MiniProgramsSubMenu(PopupPanel):
         text_row.addWidget(btn_text)
         layout.addLayout(text_row)
 
-        # 運算 >>
+        # Calculations >>
         ops_row = QHBoxLayout()
         ops_row.setSpacing(4)
-        ops_lbl = QLabel("運算")
+        ops_lbl = QLabel("Calculations")
         ops_lbl.setStyleSheet("color: white; font-weight: bold;")
         btn_ops = QPushButton(">>")
         btn_ops.setFixedWidth(30)
@@ -3910,12 +3910,12 @@ class MiniProgramsSubMenu(PopupPanel):
         sep2.setStyleSheet("background-color: rgba(255,255,255,120);")
         layout.addWidget(sep2)
 
-        btn_pomodoro = QPushButton("番茄鐘 Pomodoro")
+        btn_pomodoro = QPushButton("Pomodoro")
         btn_pomodoro.setStyleSheet(menu_button_style("#6e4a2a"))
         btn_pomodoro.clicked.connect(self.open_pomodoro)
         layout.addWidget(btn_pomodoro)
 
-        btn_translate = QPushButton("翻譯 Translate")
+        btn_translate = QPushButton("Translate")
         btn_translate.setStyleSheet(menu_button_style("#2a5a4a"))
         btn_translate.clicked.connect(self.open_translate)
         layout.addWidget(btn_translate)
@@ -4114,10 +4114,10 @@ class PetMenu(PopupPanel):
         sep2.setStyleSheet("background-color: rgba(255,255,255,120);")
         self.main_layout.addWidget(sep2)
 
-        # 小程式: collapsed header + >> (Text records + 運算 live inside)
+        # Mini programs: collapsed header + >> (Text records + Calculations live inside)
         mini_header = QHBoxLayout()
         mini_header.setSpacing(4)
-        self.mini_programs_title = QLabel("小程式")
+        self.mini_programs_title = QLabel("Mini programs")
         self.mini_programs_title.setStyleSheet("color: white; font-weight: bold;")
         self.btn_mini_open = QPushButton(">>")
         self.btn_mini_open.setFixedWidth(30)
