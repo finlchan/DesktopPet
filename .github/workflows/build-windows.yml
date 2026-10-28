@@ -43,7 +43,8 @@ jobs:
       - name: Build DesktopPet.exe with PyInstaller
         shell: cmd
         run: |
-          python -m PyInstaller --noconfirm --onefile --windowed --icon "logo.ico" --add-data "packaging\config.json;." --add-data "paypal_qr.jpg;." --add-data "logo.ico;." --add-data "logo.png;." --add-data "README.txt;." --name "DesktopPet" desktop_pet.py
+          REM openpyxl/xlrd are imported lazily for Free Station IMPORT — collect them explicitly.
+          python -m PyInstaller --noconfirm --onefile --windowed --icon "logo.ico" --add-data "packaging\config.json;." --add-data "paypal_qr.jpg;." --add-data "logo.ico;." --add-data "logo.png;." --add-data "README.txt;." --hidden-import openpyxl --hidden-import xlrd --collect-submodules openpyxl --name "DesktopPet" desktop_pet.py
 
       - name: Upload DesktopPet.exe artifact
         uses: actions/upload-artifact@v4

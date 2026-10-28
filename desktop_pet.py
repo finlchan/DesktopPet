@@ -54,7 +54,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261027.02"
+APP_VERSION = "261028.01"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -1951,6 +1951,205 @@ def _survey_round(value, decimals):
     return round(value, decimals)
 
 
+# ---------------------------------------------------------------------------
+# Free Station Excel import (Free Station sheet → dialog fields)
+#
+# Annotated / 4-BS layout (IMPORT map): standing D12, inst. ht H12; BS Name /
+# E / N / RL at D/E/F/G rows 14–17; face obs C/D/E/F rows 25–32 (BS1..BS4).
+# Classic Free_Station_FAI.xls V1.00: standing D10, inst. ht H10; same Name /
+# E/N/RL columns; BS1–3 faces at rows 20–21 / 24–25 / 28–29. Auto-detected.
+# Readers: openpyxl for .xlsx/.xlsm, xlrd for .xls (see requirements.txt).
+# ---------------------------------------------------------------------------
+_FS_SHEET_NAMES = ("free station", "freestation")
+
+
+def _excel_cell_to_text(value):
+    """Normalize an Excel cell to dialog text; blank / non-scalar → ''."""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (int, float)):
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return ""
+        if number != number:  # NaN
+            return ""
+        if abs(number - round(number)) < 1e-12 and abs(number) < 1e12:
+            return str(int(round(number)))
+        text = f"{number:.10f}".rstrip("0").rstrip(".")
+        return text
+    return str(value).strip()
+
+
+def _excel_a1(col_letters, row_1based):
+    col = 0
+    for ch in col_letters.upper():
+        col = col * 26 + (ord(ch) - ord("A") + 1)
+    return row_1based - 1, col - 1
+
+
+def _load_free_station_sheet_cells(path):
+    """
+    Return (sheet_title, get_cell) where get_cell('D', 12) → raw value.
+    Raises ValueError / ImportError with a user-facing message.
+    """
+    path = Path(path)
+    suffix = path.suffix.lower()
+    if suffix in (".xlsx", ".xlsm"):
+        try:
+            import openpyxl
+        except ImportError as exc:
+            raise ImportError(
+                "openpyxl is required to read .xlsx/.xlsm "
+                "(pip install openpyxl)"
+            ) from exc
+        # Avoid read_only: some .xlsx/.xlsm files yield empty cells there.
+        wb = openpyxl.load_workbook(path, data_only=True, read_only=False)
+        try:
+            sheet = _pick_free_station_worksheet(
+                list(wb.sheetnames), lambda name: wb[name]
+            )
+            title = sheet.title
+            cache = {}
+            for row in sheet.iter_rows(
+                min_row=1, max_row=40, min_col=1, max_col=12
+            ):
+                for cell in row:
+                    if cell.value is not None and cell.value != "":
+                        cache[(cell.row, cell.column)] = cell.value
+        finally:
+            wb.close()
+
+        def get_cell(col_letters, row_1based):
+            r, c = _excel_a1(col_letters, row_1based)
+            return cache.get((r + 1, c + 1))
+
+        return title, get_cell
+
+    if suffix == ".xls":
+        try:
+            import xlrd
+        except ImportError as exc:
+            raise ImportError(
+                "xlrd is required to read .xls (pip install xlrd)"
+            ) from exc
+        wb = xlrd.open_workbook(path)
+        sheet = _pick_free_station_worksheet(
+            wb.sheet_names(), lambda name: wb.sheet_by_name(name)
+        )
+        title = sheet.name
+
+        def get_cell(col_letters, row_1based):
+            r, c = _excel_a1(col_letters, row_1based)
+            if r < 0 or c < 0 or r >= sheet.nrows or c >= sheet.ncols:
+                return None
+            return sheet.cell_value(r, c)
+
+        return title, get_cell
+
+    raise ValueError(
+        f"Unsupported file type '{suffix or path.name}'. "
+        "Use .xlsm, .xlsx, or .xls"
+    )
+
+
+def _pick_free_station_worksheet(names, getter):
+    for name in names:
+        if (name or "").strip().lower() in _FS_SHEET_NAMES:
+            return getter(name)
+    for name in names:
+        lowered = (name or "").strip().lower()
+        if "free" in lowered and "station" in lowered:
+            return getter(name)
+    if not names:
+        raise ValueError("Workbook has no sheets")
+    return getter(names[0])
+
+
+def parse_free_station_workbook(path):
+    """
+    Read Free Station sheet fields for IMPORT.
+
+    Returns dict:
+      station_name, inst_height,
+      backsights: list of 4 dicts {name, easting, northing, rl, f1, f2}
+      where f1/f2 are dicts {bearing, va, sd, sh} (strings, possibly '').
+    """
+    _title, get = _load_free_station_sheet_cells(path)
+
+    def text(col, row):
+        return _excel_cell_to_text(get(col, row))
+
+    # Layout detect: annotated map uses D12; classic V1.00 uses D10 + "BS1 - FL" @ B20.
+    # Prefer annotated whenever D12 is filled (even if classic labels linger).
+    d12 = text("D", 12)
+    d10 = text("D", 10)
+    b20 = text("B", 20).upper()
+    if d12:
+        classic = False
+    elif d10 or b20.startswith("BS1"):
+        classic = True
+    else:
+        classic = False
+
+    if classic:
+        station_name = d10
+        inst_height = text("H", 10)
+        # Classic obs rows (FL/FR); BS4 unused in V1.00 templates.
+        obs_rows = [(20, 21), (24, 25), (28, 29), (None, None)]
+    else:
+        station_name = d12
+        inst_height = text("H", 12)
+        obs_rows = [(25, 26), (27, 28), (29, 30), (31, 32)]
+
+    backsights = []
+    for idx in range(4):
+        row = 14 + idx  # D14..D17 Name; E/F/G Easting/Northing/RL
+        name = text("D", row)
+        easting = text("E", row)
+        northing = text("F", row)
+        rl = text("G", row)
+        f1_row, f2_row = obs_rows[idx]
+
+        def face(obs_row):
+            if obs_row is None:
+                return {"bearing": "", "va": "", "sd": "", "sh": ""}
+            return {
+                "bearing": text("C", obs_row),
+                "va": text("D", obs_row),
+                "sd": text("E", obs_row),
+                "sh": text("F", obs_row),
+            }
+
+        # Requirement: only keep face measurements when Name is non-empty.
+        if name:
+            f1, f2 = face(f1_row), face(f2_row)
+        else:
+            empty = {"bearing": "", "va": "", "sd": "", "sh": ""}
+            f1, f2 = empty, empty
+        backsights.append(
+            {
+                "name": name,
+                "easting": easting if name else "",
+                "northing": northing if name else "",
+                "rl": rl if name else "",
+                "f1": f1,
+                "f2": f2,
+            }
+        )
+
+    return {
+        "station_name": station_name,
+        "inst_height": inst_height,
+        "backsights": backsights,
+        "layout": "classic" if classic else "annotated",
+    }
+
+
 def survey_deg(ddmmss):
     """VBA DEG(): DD.MMSS number → decimal degrees."""
     if ddmmss == 0:
@@ -2938,7 +3137,8 @@ class FreeStationDialog(FramelessCalcDialog):
     (F1) and face-right (F2) observations averaged like the sheet's "Mean B/S"
     formulas, plus the per-pair review table (Preliminary / Mirror / chosen
     E/N, Reduced Lv., Distance Check) with the sheet's Reject Both (Y) /
-    Use Mirror Angle (Y) overrides. Page 2: stored backsight records
+    Use Mirror Angle (Y) overrides. IMPORT (left of Calculate) loads the Free
+    Station sheet from .xlsm/.xlsx/.xls. Page 2: stored backsight records
     (Name, Easting, Northing, RL) persisted in config as
     "free_station_stations"; typing a known Name on page 1 auto-fills E/N/RL.
     """
@@ -3100,6 +3300,15 @@ class FreeStationDialog(FramelessCalcDialog):
         self.inst_height = make_calc_line_edit(0.0, decimals=3, max_edit_width=64)
         stand_row.addWidget(self.inst_height)
         stand_row.addStretch()
+        import_btn = QPushButton("IMPORT")
+        import_btn.setObjectName("calcAction")
+        import_btn.setFixedHeight(24)
+        import_btn.setToolTip(
+            "Import standing station, instrument height, and BS rows "
+            "from a Free Station sheet (.xlsm / .xlsx / .xls)"
+        )
+        import_btn.clicked.connect(self._import_from_excel)
+        stand_row.addWidget(import_btn)
         calc_btn = QPushButton("Calculate")
         calc_btn.setObjectName("calcAction")
         calc_btn.setFixedHeight(24)
@@ -3338,6 +3547,53 @@ class FreeStationDialog(FramelessCalcDialog):
                     fields["rl"].setText(_format_calc_value(rec["rl"], 3))
                 return
 
+    # ------------------------------------------------------------- Excel IMPORT
+    def _import_from_excel(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import Free Station sheet",
+            "",
+            "Excel workbooks (*.xlsm *.xlsx *.xls);;All files (*)",
+        )
+        if not path:
+            return
+        try:
+            data = parse_free_station_workbook(path)
+        except (OSError, ValueError, ImportError) as exc:
+            QMessageBox.warning(self, "Import failed", str(exc))
+            return
+        except Exception as exc:  # openpyxl/xlrd can raise assorted errors
+            QMessageBox.warning(self, "Import failed", f"Could not read file:\n{exc}")
+            return
+
+        self.station_name.setText(data.get("station_name") or "")
+        hi_text = data.get("inst_height") or ""
+        self.inst_height.setText(hi_text if hi_text else "0.000")
+
+        for idx, bs in enumerate(data.get("backsights") or []):
+            if idx >= len(self.bs_fields):
+                break
+            f1, f2 = self.bs_fields[idx]["f1"], self.bs_fields[idx]["f2"]
+            # Block store auto-fill while we set Name so Excel E/N/RL win.
+            f1["name"].blockSignals(True)
+            f1["name"].setText(bs.get("name") or "")
+            f1["name"].blockSignals(False)
+            f1["easting"].setText(bs.get("easting") or "")
+            f1["northing"].setText(bs.get("northing") or "")
+            f1["rl"].setText(bs.get("rl") or "")
+            for face_fields, face_data in ((f1, bs.get("f1") or {}), (f2, bs.get("f2") or {})):
+                face_fields["bearing"].setText(face_data.get("bearing") or "")
+                face_fields["va"].setText(face_data.get("va") or "")
+                face_fields["sd"].setText(face_data.get("sd") or "")
+                face_fields["sh"].setText(face_data.get("sh") or "")
+
+        named = sum(1 for bs in data.get("backsights") or [] if (bs.get("name") or "").strip())
+        self.result.setText(
+            f"Imported from {Path(path).name} "
+            f"({data.get('layout', 'annotated')} layout): "
+            f"{named} backsight name(s). Press Calculate when ready."
+        )
+
     # ------------------------------------------------------------------ math
     def _parse_optional(self, edit, label):
         """Parse a grid cell; '' → None. DD.MMSS values are kept as typed
@@ -3549,6 +3805,7 @@ class FreeStationDialog(FramelessCalcDialog):
             hi = getattr(self, "_last_hi", 0.0)
         lines = [f"◆ Free station {station}   inst. ht {hi:.3f} m"]
         kept = 0
+        accepted = []  # (e, n, rl_or_None) for Average line
         for (src_tag, dst_tag), sol in solutions.items():
             choice = self._pair_choices.get((src_tag, dst_tag), "")
             chosen, branch = self._chosen_for(sol, choice)
@@ -3557,12 +3814,14 @@ class FreeStationDialog(FramelessCalcDialog):
                 continue
             resid = self._pair_residual(chosen[0], chosen[1], sol["src"])
             resid_text = f"{resid:+.3f}" if resid is not None else "n/a"
-            rl_text = f"{chosen[2]:.3f}" if sol["dst"]["rl"] is not None else "n/a"
+            has_rl = sol["dst"]["rl"] is not None
+            rl_text = f"{chosen[2]:.3f}" if has_rl else "n/a"
             lines.append(
                 f"  {sol['src']['name']} → {sol['dst']['name']} :  "
                 f"E {chosen[0]:.4f}  N {chosen[1]:.4f}  RL {rl_text}  "
                 f"ΔHD {resid_text}  ({branch})"
             )
+            accepted.append((chosen[0], chosen[1], chosen[2] if has_rl else None))
             kept += 1
         if not solutions:
             self.result.setText(
@@ -3572,6 +3831,17 @@ class FreeStationDialog(FramelessCalcDialog):
         if kept == 0:
             lines.append("  (all pairs rejected — nothing to report)")
         else:
+            avg_e = sum(e for e, _n, _rl in accepted) / kept
+            avg_n = sum(n for _e, n, _rl in accepted) / kept
+            rl_vals = [rl for _e, _n, rl in accepted if rl is not None]
+            if rl_vals:
+                avg_rl_text = f"{sum(rl_vals) / len(rl_vals):.3f}"
+            else:
+                avg_rl_text = "n/a"
+            lines.append(
+                f"  Average :  E {avg_e:.4f}  N {avg_n:.4f}  RL {avg_rl_text}  "
+                f"({kept} pair{'s' if kept != 1 else ''})"
+            )
             lines.append("  ΔHD = distance check residual (m); direct/mirror = branch used")
         self.result.setText("\n".join(lines))
 

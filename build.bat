@@ -36,7 +36,8 @@ if not defined PY_CMD (
 echo Using: %PY_CMD%
 
 REM Bundle only the blank template config into the EXE - never root config.json.
-%PY_CMD% -m PyInstaller --noconfirm --onefile --windowed --icon "logo.ico" --add-data "packaging\config.json;." --add-data "paypal_qr.jpg;." --add-data "logo.ico;." --add-data "logo.png;." --add-data "README.txt;." --name "DesktopPet" desktop_pet.py
+REM openpyxl/xlrd are imported lazily for Free Station IMPORT — collect them explicitly.
+%PY_CMD% -m PyInstaller --noconfirm --onefile --windowed --icon "logo.ico" --add-data "packaging\config.json;." --add-data "paypal_qr.jpg;." --add-data "logo.ico;." --add-data "logo.png;." --add-data "README.txt;." --hidden-import openpyxl --hidden-import xlrd --collect-submodules openpyxl --name "DesktopPet" desktop_pet.py
 if errorlevel 1 (
     echo Build failed.
     pause

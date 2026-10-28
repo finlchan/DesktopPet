@@ -1,8 +1,8 @@
 Desktop Pet
 ==================
 
-Version: 261027.02
-Published: 2026-10-27
+Version: 261028.01
+Published: 2026-10-28
 
 A floating shortcut menu and document record gadget on the Windows desktop.
 
@@ -50,18 +50,35 @@ Settings
 Free Station calculator
 --------
 Mini programs → Calculations → Free station resects the standing station from
-2–3 known backsight stations, mirroring the "Free Station" sheet of the
-Free_Station_FAI.xls survey spreadsheet:
+2–4 known backsight stations, mirroring the "Free Station" sheet of the
+Free_Station_FAI.xls / .xlsm survey spreadsheet:
 
 - Per backsight: name, Easting, Northing, reduced level (optional), observed
   mean bearing (DD.MMSS, e.g. 330.140182 = 330°14'01.8"), vertical (zenith)
-  angle, slope distance and prism/spot height.
+  angle, slope distance and prism/spot height (face-left / face-right).
+- IMPORT (left of Calculate) loads standing station, instrument height, BS
+  names/coords, and face observations from a Free Station sheet
+  (.xlsm / .xlsx / .xls). Measurement cells are filled only for BS rows whose
+  Name is non-empty after import. Runtime deps: openpyxl + xlrd (bundled in
+  the Windows EXE via PyInstaller --hidden-import / --collect-submodules).
 - Every ordered From→To pair is solved by the sine rule exactly as the sheet's
   FreeStation / FreeStation_Mirror VBA functions; the sheet's branch rule is
   kept (preliminary branch unless its distance check exceeds 0.05 m, then the
   mirror branch when valid).
 - Output: station Easting/Northing, reduced level, and the distance-check
-  residual ΔHD per pair. Copy button copies the result block.
+  residual ΔHD per accepted pair, plus an Average (mean E / N / RL) of those
+  pair results. Copy button copies the result block.
+
+What's new in 261028.01 (2026-10-28)
+--------
+1. Free Station: IMPORT button (left of Calculate) reads the Free Station
+   sheet from .xlsm / .xlsx / .xls into standing station, instrument height,
+   and BS1–BS4 name / E / N / RL / face observations. Face measurement cells
+   are filled only when that BS Name is non-empty after import.
+2. Free Station green results: Average line (mean E, N, RL of accepted pair
+   solutions) after the per-pair coordinate lines.
+3. requirements.txt / PyInstaller / Windows CI: openpyxl + xlrd for Excel
+   import (lazy import at runtime; collected explicitly for the EXE).
 
 What's new in 261027.02 (2026-10-27)
 --------
