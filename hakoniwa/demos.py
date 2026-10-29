@@ -100,6 +100,17 @@ def make_demo_coral() -> IslandState:
                     break
             if oil_placed:
                 break
+    # Civic color blocks after coastal breakwater so 防波堤 still gets a shore cell.
+    free_grass = [
+        (i, j)
+        for i, j in land
+        if cells[i][j].terrain == "grass" and cells[i][j].building is None
+    ]
+    for idx, kind in enumerate(("bank", "supermarket", "shrine")):
+        if idx >= len(free_grass):
+            break
+        gi, gj = free_grass[idx]
+        cells[gi][gj].building = kind
 
     state = IslandState(
         size=GRID_SIZE,
@@ -107,9 +118,10 @@ def make_demo_coral() -> IslandState:
         funds=820,
         food=640,
         population=180,
+        bank_deposit=150,
         name="珊瑚灘島",
         cells=cells,
-        log=["示範島：珊瑚灘（觀光唯讀；防波堤／油田）"],
+        log=["示範島：珊瑚灘（觀光唯讀；防波堤／油田／銀行超市神社）"],
         comments=[
             GuestbookEntry(
                 id="demo-coral-1",

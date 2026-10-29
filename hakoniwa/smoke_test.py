@@ -26,8 +26,10 @@ from hakoniwa.grid import (
     point_in_diamond,
 )
 from hakoniwa.model import (
+    BANK_TRANSFER_LOT,
     BREAKWATER_TSUNAMI_FACTOR,
     COST_AFFOREST,
+    COST_BANK,
     COST_BREAKWATER,
     COST_DEFENSE,
     COST_EXCAVATE,
@@ -44,19 +46,25 @@ from hakoniwa.model import (
     COST_QUARRY,
     COST_RAISE,
     COST_SHIPYARD,
+    COST_SHRINE,
+    COST_SUPERMARKET,
     DEFENSE_RADIUS,
     DEFENSE_SPAWN_FACTOR,
     DEFENSE_STOMP_SAVE_CHANCE,
     FIRE_BASE_CHANCE,
+    FOOD_BUY_LOT,
     FOOD_EXPORT_LOT,
     FOOD_PER_FARM,
     FOREST_FIRE_FACTOR,
     FUNDS_PER_FACTORY,
+    FUNDS_PER_FOOD_BUY,
     FUNDS_PER_FOOD_LOT,
     FUNDS_PER_OILFIELD,
     FUNDS_PER_QUARRY,
     FUNDS_PER_TIMBER_LOT,
+    FUNDS_SOFT_CAP,
     HAPPINESS_POP_PER_MONUMENT,
+    HAPPINESS_POP_PER_SHRINE,
     LABOR_PER_FACTORY,
     LABOR_PER_FARM,
     LABOR_PER_QUARRY,
@@ -68,10 +76,13 @@ from hakoniwa.model import (
     OIL_DEPLETION_CHANCE,
     OIL_DISCOVER_CHANCE,
     SAVE_VERSION,
+    SCORE_PER_BANK,
     SCORE_PER_BREAKWATER,
     SCORE_PER_MONUMENT,
     SCORE_PER_OILFIELD,
     SCORE_PER_QUARRY,
+    SCORE_PER_SHRINE,
+    SCORE_PER_SUPERMARKET,
     TIMBER_LOT,
     TOWN_TO_CITY_POP,
     TREE_GROWTH_PER_TURN,
@@ -84,6 +95,7 @@ from hakoniwa.model import (
     IslandState,
     assign_labor,
     compute_island_score,
+    food_buy_cost,
     food_export_funds,
     scaled_yield,
     timber_funds,
@@ -188,15 +200,27 @@ def test_catalog_costs():
     assert COST_HARBOR == 800
     assert COST_SHIPYARD == 500
     assert COST_MONUMENT == 9999
+    assert COST_BANK == 500
+    assert COST_SUPERMARKET == 300
+    assert COST_SHRINE == 800
     assert SCORE_PER_MONUMENT == 2000
     assert SCORE_PER_QUARRY == 70
     assert SCORE_PER_BREAKWATER == 50
     assert SCORE_PER_OILFIELD == 120
+    assert SCORE_PER_BANK == 90
+    assert SCORE_PER_SUPERMARKET == 40
+    assert SCORE_PER_SHRINE == 800
     assert HAPPINESS_POP_PER_MONUMENT == 5
+    assert HAPPINESS_POP_PER_SHRINE == 8
+    assert FUNDS_SOFT_CAP == 9999
+    assert BANK_TRANSFER_LOT == 100
     assert FOOD_EXPORT_LOT == 100
     assert FUNDS_PER_FOOD_LOT == 5
+    assert FOOD_BUY_LOT == 100
+    assert FUNDS_PER_FOOD_BUY == 8
     assert FUNDS_PER_QUARRY == 8
     assert FUNDS_PER_OILFIELD == 50
+    assert SAVE_VERSION == 10
     assert 0 < OIL_DISCOVER_CHANCE <= 1
     assert 0 < OIL_DEPLETION_CHANCE < 1
     assert TSUNAMI_BASE_CHANCE > 0
@@ -206,6 +230,8 @@ def test_catalog_costs():
     assert LABOR_PER_QUARRY == 500
     assert food_export_funds(1) == 5
     assert food_export_funds(3) == 15
+    assert food_buy_cost(1) == 8
+    assert food_buy_cost(2) == 16
     assert DEFENSE_RADIUS == 2
     assert 0 < DEFENSE_SPAWN_FACTOR < 1
     assert 0 < DEFENSE_STOMP_SAVE_CHANCE < 1
@@ -672,6 +698,10 @@ def test_local_demos():
     assert coral.building_count("quarry") == 1
     assert coral.building_count("breakwater") == 1
     assert coral.terrain_count("oilfield") >= 1
+    assert coral.building_count("bank") == 1
+    assert coral.building_count("supermarket") == 1
+    assert coral.building_count("shrine") == 1
+    assert coral.bank_deposit == 150
     row = island_summary(coral)
     assert row["id"] == "demo-coral"
     assert row["land"] == coral.land_count()
@@ -1068,6 +1098,119 @@ def test_breakwater_oilfield_tsunami():
     assert loaded3.to_dict()["version"] == SAVE_VERSION
 
 
+def test_bank_supermarket_shrine():
+    """銀行緩衝／超市買糧／神社分數色塊（變體民生設施）."""
+    state = IslandState.new_game()
+    land = [(i, j) for i in range(20) for j in range(20) if state.is_land(i, j)]
+    for i, j in land:
+        if state.cell(i, j).terrain == "dirt":
+            assert state.level_land(i, j) == "ok"
+    grass = [
+        (i, j)
+        for i, j in land
+        if state.cell(i, j).terrain == "grass" and state.cell(i, j).building is None
+    ]
+    assert len(grass) >= 3
+    bi, bj = grass[0]
+    si, sj = grass[1]
+    hi, hj = grass[2]
+
+    # Soft cap without bank: excess discarded.
+    state.funds = FUNDS_SOFT_CAP + 250
+    notes = state._apply_funds_cap()
+    assert state.funds == FUNDS_SOFT_CAP
+    assert state.bank_deposit == 0
+    assert any("捨棄" in n for n in notes)
+
+    # Place bank / supermarket / shrine.
+    state.funds = COST_BANK + COST_SUPERMARKET + COST_SHRINE + 500
+    before = state.funds
+    assert state.place_building(bi, bj, "bank") == "ok"
+    assert state.cell(bi, bj).building == "bank"
+    assert state.place_building(si, sj, "supermarket") == "ok"
+    assert state.cell(si, sj).building == "supermarket"
+    assert state.place_building(hi, hj, "shrine") == "ok"
+    assert state.cell(hi, hj).building == "shrine"
+    assert state.funds == before - COST_BANK - COST_SUPERMARKET - COST_SHRINE
+    assert state.has_bank() and state.has_supermarket()
+    assert state.shrine_count() == 1
+    assert state.happiness_bonus() == HAPPINESS_POP_PER_SHRINE
+    assert state.island_score() >= SCORE_PER_BANK + SCORE_PER_SUPERMARKET + SCORE_PER_SHRINE
+
+    # Soft cap with bank: excess → deposit.
+    state.funds = FUNDS_SOFT_CAP + 180
+    state.bank_deposit = 0
+    notes = state._apply_funds_cap()
+    assert state.funds == FUNDS_SOFT_CAP
+    assert state.bank_deposit == 180
+    assert any("銀行緩衝" in n for n in notes)
+
+    # Manual deposit / withdraw.
+    state.funds = BANK_TRANSFER_LOT + 40
+    dep_before = state.bank_deposit
+    assert state.deposit_funds() == "ok"
+    assert state.funds == 40
+    assert state.bank_deposit == dep_before + BANK_TRANSFER_LOT
+    assert state.withdraw_funds() == "ok"
+    assert state.funds == 40 + BANK_TRANSFER_LOT
+    assert state.bank_deposit == dep_before
+
+    # Supermarket buy food.
+    state.food = 50
+    state.funds = max(state.funds, FUNDS_PER_FOOD_BUY + 20)
+    funds_before = state.funds
+    food_before = state.food
+    assert state.can_buy_food()
+    assert state.buy_food(1) == "ok"
+    assert state.food == food_before + FOOD_BUY_LOT
+    assert state.funds == funds_before - FUNDS_PER_FOOD_BUY
+    # Without supermarket → locked.
+    state.cell(si, sj).building = None
+    assert state.can_buy_food() is False
+    assert state.buy_food(1) != "ok"
+    state.cell(si, sj).building = "supermarket"
+
+    # Toolbar keys.
+    keys = {k for k, *_ in TOOL_SPECS}
+    assert "bank" in keys and "supermarket" in keys and "shrine" in keys
+    assert "deposit" in keys and "withdraw" in keys and "buy_food" in keys
+    ok, _ = tool_enabled(state, "deposit", None)
+    assert ok is True  # has bank + enough liquid after withdraw above
+    # Ensure enough liquid for deposit tool.
+    state.funds = max(state.funds, BANK_TRANSFER_LOT)
+    ok, _ = tool_enabled(state, "deposit", None)
+    assert ok is True
+    state.bank_deposit = max(state.bank_deposit, BANK_TRANSFER_LOT)
+    ok, _ = tool_enabled(state, "withdraw", None)
+    assert ok is True
+    state.funds = max(state.funds, FUNDS_PER_FOOD_BUY)
+    ok, _ = tool_enabled(state, "buy_food", None)
+    assert ok is True
+    ok, _ = tool_enabled(state, "bank", (bi, bj))
+    assert ok is False  # occupied
+
+    # next_turn applies soft cap via bank after oil/income.
+    state.funds = FUNDS_SOFT_CAP + 50
+    state.bank_deposit = 10
+    state.food = max(state.food, 500)
+    notes = state.next_turn()
+    assert state.funds <= FUNDS_SOFT_CAP
+    assert state.bank_deposit >= 10
+    assert any("島分數" in n for n in notes)
+    assert any("神社" in n for n in notes) or state.shrine_count() == 1
+
+    # Save round-trip.
+    blob = state.to_dict()
+    assert blob["version"] == SAVE_VERSION
+    assert "bank_deposit" in blob
+    loaded = IslandState.from_dict(blob)
+    assert loaded.building_count("bank") == 1
+    assert loaded.building_count("supermarket") == 1
+    assert loaded.shrine_count() == 1
+    assert loaded.bank_deposit == state.bank_deposit
+    assert loaded.island_score() == state.island_score()
+
+
 def test_settlements_and_disasters():
     """Village/town/city evolution + fire/typhoon/quake stubs (local-first)."""
     import random
@@ -1432,7 +1575,8 @@ def test_defense_and_missile_base():
 
 def test_tool_enabled_rules():
     state = IslandState.new_game()
-    # No selection → cell tools disabled; wait needs a monster; export needs port.
+    # No selection → cell tools disabled; wait needs a monster; export needs port;
+    # bank/supermarket actions need their buildings.
     for key, *_ in TOOL_SPECS:
         ok, reason = tool_enabled(state, key, None)
         assert ok is False
@@ -1440,6 +1584,10 @@ def test_tool_enabled_rules():
             assert "怪獸" in reason
         elif key == "export":
             assert "港灣" in reason or "造船" in reason
+        elif key in ("deposit", "withdraw"):
+            assert "銀行" in reason
+        elif key == "buy_food":
+            assert "超市" in reason
         else:
             assert "選格" in reason
 
@@ -1940,6 +2088,7 @@ def main():
     test_monument_and_island_score()
     test_mountain_quarry_labor()
     test_breakwater_oilfield_tsunami()
+    test_bank_supermarket_shrine()
     test_local_demos()
     test_save_load_roundtrip()
     test_remote_url_normalize()

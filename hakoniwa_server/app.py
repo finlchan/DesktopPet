@@ -46,13 +46,22 @@ class PlaceBody(CellAction):
         ...,
         description=(
             "farm | factory | quarry | defense | missile_base | "
-            "harbor | shipyard | breakwater | monument"
+            "harbor | shipyard | breakwater | monument | "
+            "bank | supermarket | shrine"
         ),
     )
 
 
 class ExportBody(BaseModel):
     lots: int = Field(1, ge=1, description="food export batches (100 t each)")
+
+
+class BuyFoodBody(BaseModel):
+    lots: int = Field(1, ge=1, description="supermarket food buy batches (100 t each)")
+
+
+class BankTransferBody(BaseModel):
+    amount: int = Field(..., ge=1, description="bank deposit/withdraw amount")
 
 
 class ActionResult(BaseModel):
@@ -185,6 +194,30 @@ def wait_monster() -> ActionResult:
 @app.post("/api/v1/island/export", response_model=ActionResult, dependencies=[Depends(require_api_key)])
 def export_food(body: ExportBody) -> ActionResult:
     msg, island = store.export_food(body.lots)
+    if msg != "ok":
+        return ActionResult(ok=False, error=msg, island=island)
+    return ActionResult(ok=True, island=island)
+
+
+@app.post("/api/v1/island/buy-food", response_model=ActionResult, dependencies=[Depends(require_api_key)])
+def buy_food(body: BuyFoodBody) -> ActionResult:
+    msg, island = store.buy_food(body.lots)
+    if msg != "ok":
+        return ActionResult(ok=False, error=msg, island=island)
+    return ActionResult(ok=True, island=island)
+
+
+@app.post("/api/v1/island/deposit", response_model=ActionResult, dependencies=[Depends(require_api_key)])
+def deposit_funds(body: BankTransferBody) -> ActionResult:
+    msg, island = store.deposit_funds(body.amount)
+    if msg != "ok":
+        return ActionResult(ok=False, error=msg, island=island)
+    return ActionResult(ok=True, island=island)
+
+
+@app.post("/api/v1/island/withdraw", response_model=ActionResult, dependencies=[Depends(require_api_key)])
+def withdraw_funds(body: BankTransferBody) -> ActionResult:
+    msg, island = store.withdraw_funds(body.amount)
     if msg != "ok":
         return ActionResult(ok=False, error=msg, island=island)
     return ActionResult(ok=True, island=island)
