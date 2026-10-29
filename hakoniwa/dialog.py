@@ -1,4 +1,4 @@
-"""箱庭島 window — FramelessCalcDialog chrome + map + turn actions."""
+"""箱庭島 window — FramelessCalcDialog chrome + map + turn / terrain actions."""
 
 from __future__ import annotations
 
@@ -16,7 +16,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .model import BUILDINGS, LANDFILL_COST, TERRAIN, IslandState
+from .model import (
+    BUILDINGS,
+    COST_AFFOREST,
+    COST_FACTORY,
+    COST_FARM,
+    COST_LANDFILL,
+    COST_LEVEL,
+    TERRAIN,
+    IslandState,
+)
 from .save import default_save_path, load_island, save_island
 from .view import HakoniwaMapWidget
 
@@ -29,7 +38,7 @@ def _dp():
 
 
 class HakoniwaIslandDialog(QDialog):
-    """Playable 箱庭島 scaffold (local mock state + JSON save).
+    """Playable 箱庭島 v1 deepen (local mock state + JSON save).
 
     Uses the same frameless / ornate-frame chrome as other mini-programs by
     calling desktop_pet helpers after the host module is fully initialized.
@@ -66,7 +75,7 @@ class HakoniwaIslandDialog(QDialog):
         root.addWidget(dp.make_draggable_title(self, "箱庭島"))
 
         hint = QLabel(
-            "箱庭斜視 · 點選格子 → 建設／填海 · 下回合結算　"
+            "箱庭斜視 · 點選格子 → 建設／地形指令 · 下回合結算　"
             "（貼圖稍後替換；目前為色塊佔位）"
         )
         hint.setObjectName("calcResult")
@@ -93,10 +102,12 @@ class HakoniwaIslandDialog(QDialog):
         side.addWidget(self.sel_label)
 
         for key, text in (
-            ("farm", "建設農場（20）"),
-            ("factory", "建設工場（100）"),
+            ("farm", f"建設農場（{COST_FARM}）"),
+            ("factory", f"建設工場（{COST_FACTORY}）"),
             ("remove", "移除建築"),
-            ("landfill", f"填海造陸（{LANDFILL_COST}）"),
+            ("landfill", f"填海造陸（{COST_LANDFILL}）"),
+            ("level", f"整地（{COST_LEVEL}）"),
+            ("afforest", f"植林（{COST_AFFOREST}）"),
         ):
             btn = QPushButton(text)
             btn.setObjectName("calcAction")
@@ -175,9 +186,15 @@ class HakoniwaIslandDialog(QDialog):
         c = self.state.cell(i, j)
         t = TERRAIN[c.terrain]["label"]
         b = BUILDINGS[c.building]["label"] if c.building else "（無）"
-        extra = ""
-        if c.terrain == "sea" and self.state.can_landfill(i, j):
-            extra = "\n可填海（鄰接陸地）"
+        hints = []
+        if self.state.can_landfill(i, j):
+            step = "海→淺灘" if c.terrain == "sea" else "淺灘→荒地"
+            hints.append(f"可填海（{step}）")
+        if self.state.can_level(i, j):
+            hints.append("可整地")
+        if self.state.can_afforest(i, j):
+            hints.append("可植林")
+        extra = ("\n" + " · ".join(hints)) if hints else ""
         self.sel_label.setText(f"格子 ({i},{j})\n地形：{t}\n建築：{b}{extra}")
 
     def _on_cell_clicked(self, i: int, j: int) -> None:
@@ -203,6 +220,10 @@ class HakoniwaIslandDialog(QDialog):
             msg = self.state.remove_building(i, j)
         elif kind == "landfill":
             msg = self.state.landfill(i, j)
+        elif kind == "level":
+            msg = self.state.level_land(i, j)
+        elif kind == "afforest":
+            msg = self.state.afforest(i, j)
         else:
             msg = "未知指令"
         if msg != "ok":
