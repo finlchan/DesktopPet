@@ -37,6 +37,7 @@ from hakoniwa.model import (
     COST_MISSILE,
     COST_MISSILE_BASE,
     COST_MISSILE_CHEAP,
+    COST_MONUMENT,
     COST_SHIPYARD,
     DEFENSE_RADIUS,
     DEFENSE_SPAWN_FACTOR,
@@ -48,12 +49,14 @@ from hakoniwa.model import (
     FUNDS_PER_FACTORY,
     FUNDS_PER_FOOD_LOT,
     FUNDS_PER_TIMBER_LOT,
+    HAPPINESS_POP_PER_MONUMENT,
     MAX_GUEST_NAME,
     MAX_GUEST_TEXT,
     MONSTER_MIN_POP,
     MONSTER_MIN_TURN,
     MONSTER_REWARD,
     SAVE_VERSION,
+    SCORE_PER_MONUMENT,
     TIMBER_LOT,
     TOWN_TO_CITY_POP,
     TREE_GROWTH_PER_TURN,
@@ -61,6 +64,7 @@ from hakoniwa.model import (
     TREE_MIN,
     VILLAGE_TO_TOWN_POP,
     IslandState,
+    compute_island_score,
     food_export_funds,
     timber_funds,
 )
@@ -159,6 +163,9 @@ def test_catalog_costs():
     assert COST_DEFENSE == 1000
     assert COST_HARBOR == 800
     assert COST_SHIPYARD == 500
+    assert COST_MONUMENT == 9999
+    assert SCORE_PER_MONUMENT == 2000
+    assert HAPPINESS_POP_PER_MONUMENT == 5
     assert FOOD_EXPORT_LOT == 100
     assert FUNDS_PER_FOOD_LOT == 5
     assert food_export_funds(1) == 5
@@ -166,7 +173,7 @@ def test_catalog_costs():
     assert DEFENSE_RADIUS == 2
     assert 0 < DEFENSE_SPAWN_FACTOR < 1
     assert 0 < DEFENSE_STOMP_SAVE_CHANCE < 1
-    assert SAVE_VERSION >= 6
+    assert SAVE_VERSION >= 7
 
 
 def test_new_island_and_loop():
@@ -446,6 +453,103 @@ def test_harbor_shipyard_trade():
     loaded = IslandState.from_dict(blob)
     assert loaded.building_count("shipyard") == 1
     assert loaded.can_trade_export()
+
+
+def test_monument_and_island_score():
+    """紀念碑色塊：國威分數、安穩加成、抗踩踏、鄰格抑火災。"""
+    state = IslandState.new_game()
+    land = [(i, j) for i in range(20) for j in range(20) if state.is_land(i, j)]
+    assert land
+    for i, j in land:
+        if state.cell(i, j).terrain == "dirt":
+            assert state.level_land(i, j) == "ok"
+    grass = [
+        (i, j)
+        for i, j in land
+        if state.cell(i, j).terrain == "grass" and state.cell(i, j).building is None
+    ]
+    assert grass
+    mi, mj = grass[0]
+
+    base_score = state.island_score()
+    assert base_score == compute_island_score(
+        population=state.population,
+        funds=state.funds,
+        food=state.food,
+        land=state.land_count(),
+        monuments=0,
+        farms=0,
+        factories=0,
+        harbors=0,
+        shipyards=0,
+        defenses=0,
+        missile_bases=0,
+        villages=0,
+        towns=0,
+        cities=0,
+    )
+    assert state.happiness_bonus() == 0
+
+    # Too poor → cannot place.
+    state.funds = COST_MONUMENT - 1
+    assert state.place_building(mi, mj, "monument") != "ok"
+    state.funds = COST_MONUMENT + 50
+    before = state.funds
+    assert state.can_place_building(mi, mj, "monument")
+    assert state.place_building(mi, mj, "monument") == "ok"
+    assert state.cell(mi, mj).building == "monument"
+    assert state.funds == before - COST_MONUMENT
+    assert state.monument_count() == 1
+    assert state.happiness_bonus() == HAPPINESS_POP_PER_MONUMENT
+    scored = state.island_score()
+    assert scored >= base_score + SCORE_PER_MONUMENT - 50  # funds spent lowers soft score
+    assert scored > base_score
+
+    # Toolbar key present.
+    keys = {k for k, *_ in TOOL_SPECS}
+    assert "monument" in keys
+    ok, _ = tool_enabled(state, "monument", (mi, mj))
+    assert ok is False  # occupied
+
+    # Monster stomp cannot destroy monument.
+    m = state.spawn_monster(mi, mj)
+    assert m is not None
+    notes = state._stomp_cell(mi, mj, m)
+    assert state.cell(mi, mj).building == "monument"
+    assert any("紀念碑" in n and "屹立" in n for n in notes)
+
+    # Neighbor monument mitigates fire like 森; typhoon stays 森-only.
+    from hakoniwa.grid import neighbors as hex_neighbors
+
+    neigh = [
+        (ni, nj)
+        for ni, nj in hex_neighbors(mi, mj, state.size)
+        if state.is_land(ni, nj) and state.cell(ni, nj).building is None
+    ]
+    assert neigh, "need a land neighbor for fire-mitigation check"
+    fi, fj = neigh[0]
+    state.cell(fi, fj).terrain = "grass"
+    state.cell(fi, fj).building = "factory"
+    # Ensure no forest neighbors so only the monument counts for fire.
+    for ni, nj in hex_neighbors(fi, fj, state.size):
+        if state.cell(ni, nj).terrain == "forest":
+            state.cell(ni, nj).terrain = "grass"
+            state.cell(ni, nj).trees = 0
+    assert state._has_forest_neighbor(fi, fj) is True
+    assert state._has_forest_for_typhoon(fi, fj) is False
+
+    # Turn log includes 島分數.
+    state.food = max(state.food, 500)
+    notes = state.next_turn()
+    assert any("島分數" in n for n in notes)
+    assert any("島分數" in line for line in state.log)
+
+    # Round-trip.
+    blob = state.to_dict()
+    assert blob["version"] == SAVE_VERSION
+    loaded = IslandState.from_dict(blob)
+    assert loaded.monument_count() == 1
+    assert loaded.island_score() == state.island_score()
 
 
 def test_guestbook_local():
@@ -973,17 +1077,18 @@ def test_dialog_import_offscreen():
     # No selection → tools disabled.
     dlg._refresh_toolbar()
     assert all(not b.isEnabled() for b in dlg.tool_buttons.values())
-    # Status overlay: locked order 狀態→資金→糧食→人口→回合→格數; no connection mode.
+    # Status overlay: locked order 狀態→資金→糧食→人口→回合→格數→分數; no connection mode.
     st = dlg.stats.text()
     assert "資金" in st and "糧食" in st and "人口" in st
-    assert "回合" in st and "格數" in st
+    assert "回合" in st and "格數" in st and "分數" in st
     assert "狀態" in st
     assert "[本機]" not in st and "[連線]" not in st
     # Exact field order (indices increase left→right).
     i_status, i_funds = st.index("狀態"), st.index("資金")
     i_food, i_pop = st.index("糧食"), st.index("人口")
     i_turn, i_cells = st.index("回合"), st.index("格數")
-    assert i_status < i_funds < i_food < i_pop < i_turn < i_cells, st
+    i_score = st.index("分數")
+    assert i_status < i_funds < i_food < i_pop < i_turn < i_cells < i_score, st
     # Status HUD is a single horizontal line (no wrap / multi-line).
     assert dlg.stats.wordWrap() is False
     assert "\n" not in st
@@ -1377,6 +1482,7 @@ def main():
     test_monster_events()
     test_defense_and_missile_base()
     test_harbor_shipyard_trade()
+    test_monument_and_island_score()
     test_local_demos()
     test_save_load_roundtrip()
     test_remote_url_normalize()

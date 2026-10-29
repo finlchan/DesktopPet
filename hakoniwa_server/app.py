@@ -45,7 +45,7 @@ class PlaceBody(CellAction):
     kind: str = Field(
         ...,
         description=(
-            "farm | factory | defense | missile_base | harbor | shipyard"
+            "farm | factory | defense | missile_base | harbor | shipyard | monument"
         ),
     )
 
