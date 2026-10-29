@@ -37,7 +37,8 @@ echo Using: %PY_CMD%
 
 REM Bundle only the blank template config into the EXE - never root config.json.
 REM hakoniwa/ is lazy-imported from Mini programs; openpyxl/xlrd for Free Station IMPORT.
-%PY_CMD% -m PyInstaller --noconfirm --onefile --windowed --icon "logo.ico" --add-data "packaging\config.json;." --add-data "paypal_qr.jpg;." --add-data "logo.ico;." --add-data "logo.png;." --add-data "README.txt;." --hidden-import hakoniwa --hidden-import hakoniwa.dialog --hidden-import hakoniwa.view --hidden-import hakoniwa.model --hidden-import hakoniwa.grid --hidden-import hakoniwa.save --hidden-import hakoniwa.remote --collect-submodules hakoniwa --hidden-import openpyxl --hidden-import xlrd --collect-submodules openpyxl --name "DesktopPet" desktop_pet.py
+REM hakoniwa/assets (terrain tops + ocean backdrop) must ship with the EXE.
+%PY_CMD% -m PyInstaller --noconfirm --onefile --windowed --icon "logo.ico" --add-data "packaging\config.json;." --add-data "paypal_qr.jpg;." --add-data "logo.ico;." --add-data "logo.png;." --add-data "README.txt;." --add-data "hakoniwa\assets;hakoniwa/assets" --hidden-import hakoniwa --hidden-import hakoniwa.dialog --hidden-import hakoniwa.view --hidden-import hakoniwa.model --hidden-import hakoniwa.grid --hidden-import hakoniwa.tiles --hidden-import hakoniwa.save --hidden-import hakoniwa.remote --collect-submodules hakoniwa --hidden-import openpyxl --hidden-import xlrd --collect-submodules openpyxl --name "DesktopPet" desktop_pet.py
 if errorlevel 1 (
     echo Build failed.
     pause

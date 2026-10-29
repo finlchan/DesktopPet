@@ -11,6 +11,7 @@ not a flat top-down square grid rotated 45°.
 |---|---|
 | Projection | Logical 1:1 diamond tops → screen `H = W · sin(45°)` (`grid.OBLIQUE_Y_SCALE`) |
 | Lattice | v9 diagonal-strip stagger, 20×20, same-layer sea/dirt/grass |
+| Terrain | Flat top PNGs in `assets/tiles/` (dirt／grass／sea); ocean backdrop optional |
 | Forbidden | Orthographic-only / pure `rotate(45°)` (equal diamond W/H on screen) |
 | No | Under-tile thickness / skirts |
 
@@ -39,5 +40,6 @@ No permanent right-side build column. Server URL / 本機·連線 live under too
 4. Run `python -m hakoniwa.smoke_test` — must pass `test_oblique_foreshortening_invariant`.
 5. Keep v9 stagger, 20×20, same-layer tops, no under-tile skirts.
 6. Confirm HUD overlays still sit on the map (not outside columns).
+7. Confirm dirt／grass／sea cells show real textures (not solid color fills).
 
 CI/local smoke fails if the projection regresses to orthographic-only.

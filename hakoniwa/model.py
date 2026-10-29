@@ -77,15 +77,15 @@ QUAKE_BASE_CHANCE = 0.05
 FOREST_FIRE_FACTOR = 0.25     # any adjacent 森 → fire chance × this
 FOREST_TYPHOON_FACTOR = 0.35  # any adjacent 森 → typhoon chance × this
 
-# Terrain kinds (same-layer color placeholders until user art lands).
-# Opening map still uses dirt／grass per 箱庭斜視 prefs (中央 7 泥／草).
+# Terrain kinds — map paints flat top textures (dirt／grass／sea) via tiles.py;
+# ``color`` remains fallback / tint basis. Opening map: 中央 7 泥／草, rest 海.
 TERRAIN = {
     "sea": {"label": "海", "color": (42, 110, 168), "land": False},
     "shallow": {"label": "淺灘", "color": (72, 148, 176), "land": False},
     "dirt": {"label": "荒地", "color": (139, 90, 43), "land": True},
     "grass": {"label": "平地", "color": (74, 143, 60), "land": True},
     "forest": {"label": "森", "color": (36, 96, 48), "land": True},
-    # 居住地形（隨人口演進；色塊佔位）
+    # 居住地形（泥地貼圖＋色洗；建築仍色塊）
     "village": {"label": "村", "color": (186, 150, 96), "land": True},
     "town": {"label": "町", "color": (168, 118, 72), "land": True},
     "city": {"label": "都市", "color": (128, 96, 110), "land": True},

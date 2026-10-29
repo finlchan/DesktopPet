@@ -1018,6 +1018,42 @@ def test_server_api_if_available():
         assert listed_pine["comments"][0]["text"] == "松風好美"
 
 
+def test_terrain_top_assets():
+    """Bundled dirt／grass／sea flat tops must exist (no skirt assets required)."""
+    from hakoniwa.tiles import (
+        OCEAN_BACKGROUND,
+        TERRAIN_TILE_FILES,
+        TILES_DIR,
+        ATLAS,
+    )
+
+    for key in ("dirt", "grass", "sea"):
+        fname = TERRAIN_TILE_FILES[key]
+        path = TILES_DIR / fname
+        assert path.is_file(), f"missing terrain top {path}"
+        assert path.stat().st_size > 1000, path
+    # Ocean backdrop is preferred but optional (dark teal fallback).
+    if OCEAN_BACKGROUND.is_file():
+        assert OCEAN_BACKGROUND.stat().st_size > 1000
+
+    # Qt load path (offscreen) — primary tops must decode.
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    try:
+        from PySide6.QtWidgets import QApplication
+    except Exception as exc:  # pragma: no cover
+        print(f"terrain assets: skip Qt load ({exc})")
+        return
+    _app = QApplication.instance() or QApplication([])
+    assert ATLAS.has_primary_tops(), "dirt/grass/sea tops failed to load"
+    for key in ("dirt", "grass", "sea"):
+        pix = ATLAS.pixmap_for(key)
+        assert pix is not None and not pix.isNull()
+        assert pix.width() >= 64 and pix.height() >= 64
+    print("terrain tops: dirt/grass/sea OK")
+
+
 def test_oblique_preview_png_if_possible():
     """Write a small foreshortening proof PNG when Qt offscreen is available."""
     import json
@@ -1051,6 +1087,14 @@ def test_oblique_preview_png_if_possible():
     pix = widget.grab()
     map_path = out_dir / "oblique_map_offscreen.png"
     assert pix.save(str(map_path), "PNG"), map_path
+    # Textured grab should not be a flat single-color field.
+    img = pix.toImage()
+    samples = {
+        img.pixel(x, y)
+        for x in (80, 160, 320, 480, 560)
+        for y in (120, 240, 360)
+    }
+    assert len(samples) >= 8, f"map grab looks untextured ({len(samples)} colors)"
     print(f"oblique preview: wrote {map_path}")
 
 
@@ -1109,6 +1153,7 @@ def _write_foreshorten_proof_png(path: Path) -> None:
 def main():
     test_grid_geometry()
     test_oblique_foreshortening_invariant()
+    test_terrain_top_assets()
     test_catalog_costs()
     test_new_island_and_loop()
     test_guestbook_local()
