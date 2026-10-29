@@ -34,6 +34,7 @@ from .model import (
     COST_FARM,
     COST_LANDFILL,
     COST_LEVEL,
+    COST_MISSILE,
     GuestbookEntry,
     MAX_GUEST_NAME,
     MAX_GUEST_TEXT,
@@ -52,6 +53,8 @@ TOOL_SPECS: Tuple[Tuple[str, str, Optional[int], str], ...] = (
     ("landfill", "填海造陸", COST_LANDFILL, "4"),
     ("level", "整地", COST_LEVEL, "5"),
     ("afforest", "植林", COST_AFFOREST, "6"),
+    ("missile", "發射飛彈", COST_MISSILE, "7"),
+    ("wait", "觀望怪獸", None, "8"),
 )
 
 
@@ -63,12 +66,27 @@ def tool_enabled(
     Returns (enabled, reason). Reason is empty when enabled; otherwise a short
     tip for the button tooltip (can't afford / wrong terrain / no selection).
     """
+    # 觀望：島上有怪獸即可（不必選格）.
+    if kind == "wait":
+        if not state.has_monster():
+            return False, "島上沒有怪獸"
+        return True, ""
+
     if selected is None:
         return False, "請先選格"
     i, j = selected
     c = state.cell(i, j)
 
+    if kind == "missile":
+        if state.monster_at(i, j) is None:
+            return False, "此格沒有怪獸"
+        if state.funds < COST_MISSILE:
+            return False, f"資金不足（需 {COST_MISSILE}）"
+        return True, ""
+
     if kind == "farm":
+        if state.monster_at(i, j) is not None:
+            return False, "此格有怪獸"
         if c.terrain not in BUILDABLE:
             return False, "須在平地建設"
         if c.building is not None:
@@ -78,6 +96,8 @@ def tool_enabled(
         return True, ""
 
     if kind == "factory":
+        if state.monster_at(i, j) is not None:
+            return False, "此格有怪獸"
         if c.terrain not in BUILDABLE:
             return False, "須在平地建設"
         if c.building is not None:
@@ -100,6 +120,8 @@ def tool_enabled(
 
     if kind == "level":
         if not state.can_level(i, j):
+            if state.monster_at(i, j) is not None:
+                return False, "此格有怪獸"
             return False, "此格無需整地"
         if state.funds < COST_LEVEL:
             return False, f"資金不足（需 {COST_LEVEL}）"
@@ -107,6 +129,8 @@ def tool_enabled(
 
     if kind == "afforest":
         if not state.can_afforest(i, j):
+            if state.monster_at(i, j) is not None:
+                return False, "此格有怪獸"
             return False, "須空的平地"
         if state.funds < COST_AFFOREST:
             return False, f"資金不足（需 {COST_AFFOREST}）"
@@ -162,9 +186,9 @@ class HakoniwaIslandDialog(QDialog):
         root.addWidget(dp.make_draggable_title(self, "箱庭島"))
 
         hint = QLabel(
-            "箱庭斜視 · 點選格子 → 工具列建設／地形 · 下回合結算　"
-            "（色塊佔位）· 滾輪縮放 · 中／右鍵平移　"
-            "快捷鍵：1–6 工具 · T 下回合 · S 存檔 · Esc 取消選取 · 0 重置視圖"
+            "箱庭斜視 · 點選格子 → 工具列建設／地形／飛彈 · 下回合結算　"
+            "（色塊佔位；怪獸＝色塊方塊）· 滾輪縮放 · 中／右鍵平移　"
+            "快捷鍵：1–8 工具 · T 下回合 · S 存檔 · Esc 取消選取 · 0 重置視圖"
         )
         hint.setObjectName("calcResult")
         hint.setWordWrap(True)
@@ -533,11 +557,15 @@ class HakoniwaIslandDialog(QDialog):
     def _refresh_ui(self) -> None:
         s = self.state
         mode = "連線" if self._online else "本機"
-        # Dedicated status strip: funds / food / turn / land (+ pop).
+        # Dedicated status strip: funds / food / turn / land (+ pop / monster).
+        monster_bit = ""
+        if s.monsters:
+            m = s.monsters[0]
+            monster_bit = f"　｜　怪獸 {m.label()}({m.i},{m.j})"
         self.stats.setText(
             f"狀態　｜　資金 {s.funds}　｜　糧食 {s.food}　｜　"
             f"回合 {s.turn}　｜　陸地 {s.land_count()} 格　｜　"
-            f"人口 {s.population}　｜　[{mode}]"
+            f"人口 {s.population}{monster_bit}　｜　[{mode}]"
         )
         self.log_view.setPlainText("\n".join(s.log[-30:]))
         bar = self.log_view.verticalScrollBar()
@@ -561,6 +589,8 @@ class HakoniwaIslandDialog(QDialog):
             tip = f"{name}" + (f" · 費用 {cost}" if cost is not None else " · 免費")
             if reason:
                 tip += f"\n不可用：{reason}"
+            elif key == "wait" and self.state.has_monster():
+                tip += "\n本回合不攻擊；下回合怪獸會行動"
             elif self.selected is not None:
                 tip += f"\n選格 {self.selected[0]},{self.selected[1]}"
             tip += f"\n快捷鍵 {digit}"
@@ -568,13 +598,23 @@ class HakoniwaIslandDialog(QDialog):
 
     def _refresh_selection_label(self) -> None:
         if self.selected is None:
-            self.sel_label.setText("未選取格子")
+            if self.state.has_monster():
+                m = self.state.monsters[0]
+                self.sel_label.setText(
+                    f"未選取格子\n島上有{m.label()}色塊於 ({m.i},{m.j})"
+                )
+            else:
+                self.sel_label.setText("未選取格子")
             return
         i, j = self.selected
         c = self.state.cell(i, j)
         t = TERRAIN[c.terrain]["label"]
         b = BUILDINGS[c.building]["label"] if c.building else "（無）"
+        m = self.state.monster_at(i, j)
+        mline = f"\n怪獸：{m.label()}（色塊）" if m is not None else ""
         hints = []
+        if m is not None:
+            hints.append("可發射飛彈")
         if self.state.can_landfill(i, j):
             step = "海→淺灘" if c.terrain == "sea" else "淺灘→荒地"
             hints.append(f"可填海（{step}）")
@@ -583,7 +623,7 @@ class HakoniwaIslandDialog(QDialog):
         if self.state.can_afforest(i, j):
             hints.append("可植林")
         extra = ("\n" + " · ".join(hints)) if hints else ""
-        self.sel_label.setText(f"格子 ({i},{j})\n地形：{t}\n建築：{b}{extra}")
+        self.sel_label.setText(f"格子 ({i},{j})\n地形：{t}\n建築：{b}{mline}{extra}")
 
     def _on_cell_clicked(self, i: int, j: int) -> None:
         self.selected = (i, j)
@@ -605,10 +645,14 @@ class HakoniwaIslandDialog(QDialog):
         )
 
     def _do_action(self, kind: str) -> None:
-        sel = self._require_selection()
-        if sel is None:
-            return
-        i, j = sel
+        # 觀望不需選格；其餘指令要點選格子。
+        if kind == "wait":
+            i = j = 0
+        else:
+            sel = self._require_selection()
+            if sel is None:
+                return
+            i, j = sel
 
         if self._online and self.remote is not None:
             try:
@@ -624,6 +668,10 @@ class HakoniwaIslandDialog(QDialog):
                     out = self.remote.level(i, j)
                 elif kind == "afforest":
                     out = self.remote.afforest(i, j)
+                elif kind == "missile":
+                    out = self.remote.missile(i, j)
+                elif kind == "wait":
+                    out = self.remote.wait_monster()
                 else:
                     QMessageBox.information(self, "箱庭島", "未知指令")
                     return
@@ -649,6 +697,10 @@ class HakoniwaIslandDialog(QDialog):
             msg = self.state.level_land(i, j)
         elif kind == "afforest":
             msg = self.state.afforest(i, j)
+        elif kind == "missile":
+            msg = self.state.fire_missile(i, j)
+        elif kind == "wait":
+            msg = self.state.wait_monster()
         else:
             msg = "未知指令"
         if msg != "ok":

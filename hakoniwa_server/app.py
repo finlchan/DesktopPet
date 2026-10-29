@@ -132,6 +132,22 @@ def afforest(body: CellAction) -> ActionResult:
     return ActionResult(ok=True, island=island)
 
 
+@app.post("/api/v1/island/missile", response_model=ActionResult, dependencies=[Depends(require_api_key)])
+def fire_missile(body: CellAction) -> ActionResult:
+    msg, island = store.missile(body.i, body.j)
+    if msg != "ok":
+        return ActionResult(ok=False, error=msg, island=island)
+    return ActionResult(ok=True, island=island)
+
+
+@app.post("/api/v1/island/wait", response_model=ActionResult, dependencies=[Depends(require_api_key)])
+def wait_monster() -> ActionResult:
+    msg, island = store.wait_monster()
+    if msg != "ok":
+        return ActionResult(ok=False, error=msg, island=island)
+    return ActionResult(ok=True, island=island)
+
+
 @app.post("/api/v1/island/turn", response_model=ActionResult, dependencies=[Depends(require_api_key)])
 def advance_turn() -> ActionResult:
     notes, island = store.next_turn()

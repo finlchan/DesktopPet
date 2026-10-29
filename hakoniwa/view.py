@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Optional, Tuple
 
-from PySide6.QtCore import Qt, Signal, QPointF, QPoint
+from PySide6.QtCore import Qt, Signal, QPointF, QPoint, QRectF
 from PySide6.QtGui import (
     QColor,
     QPainter,
@@ -170,6 +170,15 @@ class HakoniwaMapWidget(QWidget):
                     painter.setBrush(QBrush(QColor(*bcol)))
                     painter.setPen(QPen(QColor(30, 30, 30, 200), 1.0))
                     painter.drawPolygon(bpoly)
+
+            # Monster: axis-aligned color square (distinct from building diamonds).
+            monster = self.state.monster_at(i, j)
+            if monster is not None:
+                side = self.cell * 0.42
+                rect = QRectF(cx - side / 2.0, cy - side / 2.0 - self.cell * 0.06, side, side)
+                painter.setBrush(QBrush(QColor(*monster.color())))
+                painter.setPen(QPen(QColor(20, 20, 20, 220), 1.4))
+                painter.drawRect(rect)
 
             if self.selected == (i, j):
                 painter.setBrush(Qt.BrushStyle.NoBrush)

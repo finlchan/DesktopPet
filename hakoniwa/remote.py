@@ -161,6 +161,12 @@ class HakoniwaRemote:
     def afforest(self, i: int, j: int) -> ActionOutcome:
         return self._action("/api/v1/island/afforest", {"i": i, "j": j})
 
+    def missile(self, i: int, j: int) -> ActionOutcome:
+        return self._action("/api/v1/island/missile", {"i": i, "j": j})
+
+    def wait_monster(self) -> ActionOutcome:
+        return self._action("/api/v1/island/wait", {})
+
     def next_turn(self) -> ActionOutcome:
         return self._action("/api/v1/island/turn", {})
 

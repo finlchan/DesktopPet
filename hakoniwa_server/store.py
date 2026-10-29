@@ -164,6 +164,20 @@ class IslandStore:
                 self._persist_home_unlocked()
             return msg, self._state.to_dict()
 
+    def missile(self, i: int, j: int) -> tuple[str, dict]:
+        with self._lock:
+            msg = self._state.fire_missile(i, j)
+            if msg == "ok":
+                self._persist_home_unlocked()
+            return msg, self._state.to_dict()
+
+    def wait_monster(self) -> tuple[str, dict]:
+        with self._lock:
+            msg = self._state.wait_monster()
+            if msg == "ok":
+                self._persist_home_unlocked()
+            return msg, self._state.to_dict()
+
     def next_turn(self) -> tuple[list[str], dict]:
         with self._lock:
             notes = self._state.next_turn()
