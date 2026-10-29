@@ -47,6 +47,7 @@ from .model import (
     COST_LEVEL,
     COST_MISSILE,
     COST_MISSILE_BASE,
+    COST_MONUMENT,
     COST_SHIPYARD,
     FOOD_EXPORT_LOT,
     FUNDS_PER_FOOD_LOT,
@@ -347,6 +348,7 @@ TOOL_SPECS: Tuple[Tuple[str, str, Optional[int], str], ...] = (
     ("harbor", "建設港灣", COST_HARBOR, "H"),
     ("shipyard", "建設造船所", COST_SHIPYARD, "Y"),
     ("export", "貿易輸出", None, "E"),
+    ("monument", "建設紀念碑", COST_MONUMENT, "M"),
 )
 
 
@@ -828,11 +830,11 @@ class HakoniwaIslandDialog(QDialog):
         if s.monsters:
             m = s.monsters[0]
             monster_bit = f" | 怪獸 {m.label()}({m.i},{m.j})"
-        # One line, locked order: 狀態 → 資金 → 糧食 → 人口 → 回合 → 格數.
+        # One line, locked order: 狀態 → 資金 → 糧食 → 人口 → 回合 → 格數；分數附於格數後.
         self.stats.setText(
             f"狀態 | 資金 {s.funds} | 糧食 {s.food} | "
             f"人口 {s.population} | 回合 {s.turn} | "
-            f"格數 {s.land_count()}{monster_bit}"
+            f"格數 {s.land_count()} | 分數 {s.island_score()}{monster_bit}"
         )
         self.log_view.setPlainText("\n".join(s.log[-30:]))
         bar = self.log_view.verticalScrollBar()
@@ -887,6 +889,8 @@ class HakoniwaIslandDialog(QDialog):
                 )
                 if ok:
                     tip += f"\n本批可得 +{food_export_funds(1)}；現有糧食 {self.state.food}"
+            elif key == "monument":
+                tip += "\n國威色塊：加島分數／安穩；抗怪獸踩踏；鄰格抑火災"
             elif self.selected is not None:
                 tip += f"\n選格 {self.selected[0]},{self.selected[1]}"
             tip += f"\n快捷鍵 {digit}"
@@ -925,6 +929,8 @@ class HakoniwaIslandDialog(QDialog):
             hints.append("可建港灣")
         if self.state.can_place_building(i, j, "shipyard"):
             hints.append("可建造船所")
+        if self.state.can_place_building(i, j, "monument"):
+            hints.append("可建紀念碑")
         tree_line = ""
         if c.terrain == "forest":
             trees = c.trees if c.trees > 0 else TREE_MIN
@@ -1260,7 +1266,8 @@ class TourismIslandDialog(QDialog):
         self.stats.setText(
             f"[{mode}觀光] {island.name}（{self._island_id}） | "
             f"資金 {island.funds} | 糧食 {island.food} | 人口 {island.population} | "
-            f"回合 {island.turn} | 格數 {island.land_count()}"
+            f"回合 {island.turn} | 格數 {island.land_count()} | "
+            f"分數 {island.island_score()}"
         )
         self.hud.log_view.setPlainText("觀光模式：建設與地形指令已鎖定。")
         root.addWidget(self.hud, stretch=1)

@@ -14,6 +14,7 @@ not a flat top-down square grid rotated 45°.
 | Terrain | Flat top PNGs in `assets/tiles/` (dirt／grass／sea；森＝草面＋綠洗); ocean backdrop optional |
 | Forest | 植林 50→森(100本)；每回合+100本(上限20000)；伐採免費瞬售 100本≈5資金 |
 | Harbor | 港灣 800／造船所 500（臨海平地色塊）；有其一可貿易輸出 100噸≈5資金 |
+| Monument | 紀念碑 9999（平地色塊）；加島分數／安穩；抗怪獸踩踏；鄰格抑火災如森 |
 | Forbidden | Orthographic-only / pure `rotate(45°)` (equal diamond W/H on screen) |
 | No | Under-tile thickness / skirts |
 
@@ -26,7 +27,7 @@ All numeric / function chrome sits **inside the map viewport** (`HakoniwaMapHud`
 
 | Overlay | Position | Notes |
 |---|---|---|
-| Status | Top center | **Single line**; order 狀態→資金→糧食→人口→回合→格數; no connection mode |
+| Status | Top center | **Single line**; order 狀態→資金→糧食→人口→回合→格數→分數; no connection mode |
 | Tile info | Top-left | Below status |
 | Action log | Bottom-right | ~70% transparent frame |
 | Guestbook | Bottom center | ~70% transparent frame |

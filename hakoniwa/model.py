@@ -5,7 +5,8 @@ forest tree growth + timber→funds, farm food + factory funds turn processing,
 optional population stub, visitor guestbook (name + text), color-block monster
 events (飛彈 stub), village/town/city terrain evolution + fire/typhoon/quake
 disaster stubs, 防衛設施／飛彈基地 color-block buildings (spawn/stomp/missile stubs),
-港灣／造船所／貿易輸出（臨海色塊；糧食→資金）.
+港灣／造船所／貿易輸出（臨海色塊；糧食→資金）,
+紀念碑色塊＋簡易島分數／安穩（國威；抗踩踏；抑火災如森）.
 Color-block placeholders only — user art later.
 """
 
@@ -40,6 +41,7 @@ COST_MISSILE_BASE = 300 # ミサイル基地（定本 300 億）
 COST_DEFENSE = 1000     # 防衛施設（定本 1000 億）
 COST_HARBOR = 800       # 港灣（變體／改造常見 800 億；須臨海）
 COST_SHIPYARD = 500     # 造船所（變體常見 500 億；須臨海）
+COST_MONUMENT = 9999    # 記念碑建造（定本 9999 億；國威／順位用）
 
 # Forest tree stock (catalog 木 100～20000；+100／回合；新植林 100).
 TREE_MIN = 100
@@ -61,9 +63,37 @@ DEFENSE_STOMP_SAVE_CHANCE = 0.65  # near defense: chance stomp skips building/te
 
 # Placeable building kinds on 平地（港灣／造船所另須臨海）.
 PLACEABLE_BUILDINGS = frozenset(
-    {"farm", "factory", "defense", "missile_base", "harbor", "shipyard"}
+    {
+        "farm",
+        "factory",
+        "defense",
+        "missile_base",
+        "harbor",
+        "shipyard",
+        "monument",
+    }
 )
 COASTAL_BUILDINGS = frozenset({"harbor", "shipyard"})
+# Catalog: 紀念碑抗怪獸踩踏、抑火災如森（鄰居減火）.
+MONSTER_PROOF_BUILDINGS = frozenset({"monument"})
+
+# Island score weights (local ranking stub; 順位／國威簡易統計).
+SCORE_PER_POP = 1
+SCORE_PER_LAND = 10
+SCORE_PER_MONUMENT = 2000
+SCORE_PER_FARM = 20
+SCORE_PER_FACTORY = 50
+SCORE_PER_HARBOR = 80
+SCORE_PER_SHIPYARD = 60
+SCORE_PER_DEFENSE = 40
+SCORE_PER_MISSILE_BASE = 30
+SCORE_PER_VILLAGE = 30
+SCORE_PER_TOWN = 80
+SCORE_PER_CITY = 150
+SCORE_FUNDS_DIV = 20
+SCORE_FOOD_DIV = 10
+# Soft happiness／安穩：每座紀念碑餵飽時人口成長加成（輕量）.
+HAPPINESS_POP_PER_MONUMENT = 5
 
 # Turn yields (simplified short loop; not server-accurate).
 FOOD_PER_FARM = 100     # ~100 人農場 → 100 噸／回合
@@ -122,6 +152,8 @@ BUILDINGS = {
     # 港灣／造船所色塊（臨海；美術後補）
     "harbor": {"label": "港灣", "color": (40, 140, 168), "cost": COST_HARBOR},
     "shipyard": {"label": "造船所", "color": (56, 72, 112), "cost": COST_SHIPYARD},
+    # 紀念碑色塊（定本國威；美術後補）
+    "monument": {"label": "紀念碑", "color": (168, 140, 72), "cost": COST_MONUMENT},
 }
 
 # Monsters as solid color-block placeholders (squares on map; art later).
@@ -140,7 +172,7 @@ Coord = Tuple[int, int]
 LAND_TERRAINS = frozenset(k for k, v in TERRAIN.items() if v["land"])
 SETTLEMENT_TERRAINS = frozenset({"village", "town", "city"})
 BUILDABLE = frozenset({"grass"})  # 平地 only（村／町／都市請先整地）
-SAVE_VERSION = 6
+SAVE_VERSION = 7
 
 
 def timber_funds(trees: int) -> int:
@@ -157,6 +189,42 @@ def food_export_funds(lots: int) -> int:
 
 def clamp_trees(trees: int) -> int:
     return max(0, min(TREE_MAX, int(trees)))
+
+
+def compute_island_score(
+    *,
+    population: int,
+    funds: int,
+    food: int,
+    land: int,
+    monuments: int,
+    farms: int,
+    factories: int,
+    harbors: int,
+    shipyards: int,
+    defenses: int,
+    missile_bases: int,
+    villages: int,
+    towns: int,
+    cities: int,
+) -> int:
+    """簡易島分數（順位／國威 stub；紀念碑權重大）."""
+    return (
+        max(0, int(population)) * SCORE_PER_POP
+        + max(0, int(land)) * SCORE_PER_LAND
+        + max(0, int(monuments)) * SCORE_PER_MONUMENT
+        + max(0, int(farms)) * SCORE_PER_FARM
+        + max(0, int(factories)) * SCORE_PER_FACTORY
+        + max(0, int(harbors)) * SCORE_PER_HARBOR
+        + max(0, int(shipyards)) * SCORE_PER_SHIPYARD
+        + max(0, int(defenses)) * SCORE_PER_DEFENSE
+        + max(0, int(missile_bases)) * SCORE_PER_MISSILE_BASE
+        + max(0, int(villages)) * SCORE_PER_VILLAGE
+        + max(0, int(towns)) * SCORE_PER_TOWN
+        + max(0, int(cities)) * SCORE_PER_CITY
+        + max(0, int(funds)) // SCORE_FUNDS_DIV
+        + max(0, int(food)) // SCORE_FOOD_DIV
+    )
 
 
 @dataclass
@@ -388,9 +456,38 @@ class IslandState:
     def has_shipyard(self) -> bool:
         return self.building_count("shipyard") > 0
 
+    def monument_count(self) -> int:
+        return self.building_count("monument")
+
+    def terrain_count(self, kind: str) -> int:
+        return sum(1 for row in self.cells for c in row if c.terrain == kind)
+
     def can_trade_export(self) -> bool:
         """貿易輸出：島上須有港灣或造船所。"""
         return self.has_harbor() or self.has_shipyard()
+
+    def island_score(self) -> int:
+        """簡易島分數（順位／國威 stub；紀念碑權重大）."""
+        return compute_island_score(
+            population=self.population,
+            funds=self.funds,
+            food=self.food,
+            land=self.land_count(),
+            monuments=self.monument_count(),
+            farms=self.building_count("farm"),
+            factories=self.building_count("factory"),
+            harbors=self.building_count("harbor"),
+            shipyards=self.building_count("shipyard"),
+            defenses=self.building_count("defense"),
+            missile_bases=self.building_count("missile_base"),
+            villages=self.terrain_count("village"),
+            towns=self.terrain_count("town"),
+            cities=self.terrain_count("city"),
+        )
+
+    def happiness_bonus(self) -> int:
+        """安穩 stub：紀念碑帶來的輕量人口成長加成。"""
+        return self.monument_count() * HAPPINESS_POP_PER_MONUMENT
 
     def missile_cost(self) -> int:
         """Cheaper 飛彈 when ≥1 飛彈基地 exists (local-first stub)."""
@@ -721,6 +818,14 @@ class IslandState:
             )
             return notes
 
+        # Catalog: 紀念碑抗怪獸踩踏（建物保留；格仍可被踏平為荒地以外的情況除外）.
+        if c.building in MONSTER_PROOF_BUILDINGS:
+            blabel = BUILDINGS[c.building]["label"]
+            notes.append(
+                f"{monster.label()}踩上{blabel} ({i},{j}) — 紀念碑屹立不搖"
+            )
+            return notes
+
         # Near defense: chance to shrug off stomp damage (simple nearby mitigation).
         if self.protected_by_defense(i, j) and random.random() < DEFENSE_STOMP_SAVE_CHANCE:
             notes.append(
@@ -769,7 +874,15 @@ class IslandState:
         return [f"怪獸出現！{m.label()} 於 ({m.i},{m.j})"]
 
     def _has_forest_neighbor(self, i: int, j: int) -> bool:
-        """Simple neighbor check: any adjacent 森 mitigates fire/typhoon."""
+        """Adjacent 森 or 紀念碑 mitigates fire (catalog)；森仍減颱風."""
+        return any(
+            self.cell(ni, nj).terrain == "forest"
+            or self.cell(ni, nj).building == "monument"
+            for ni, nj in neighbors(i, j, self.size)
+        )
+
+    def _has_forest_for_typhoon(self, i: int, j: int) -> bool:
+        """Typhoon mitigation stays 森-only (紀念碑只抑火災)."""
         return any(
             self.cell(ni, nj).terrain == "forest"
             for ni, nj in neighbors(i, j, self.size)
@@ -846,7 +959,7 @@ class IslandState:
         """Fire / typhoon / quake stubs; forest neighbors reduce fire & typhoon."""
         notes: List[str] = []
 
-        # Fire: 町／都市／工場 → 荒地（鄰森則不易發生）
+        # Fire: 町／都市／工場 → 荒地（鄰森／紀念碑則不易發生）
         for i in range(self.size):
             for j in range(self.size):
                 c = self.cell(i, j)
@@ -869,14 +982,14 @@ class IslandState:
                 label = "、".join(parts) if parts else "目標"
                 notes.append(f"火災！{label}→荒地 ({i},{j})")
 
-        # Typhoon: 農場 → 平地（清建築；鄰森則較耐）
+        # Typhoon: 農場 → 平地（清建築；鄰森則較耐；紀念碑不減颱風）
         for i in range(self.size):
             for j in range(self.size):
                 c = self.cell(i, j)
                 if c.building != "farm":
                     continue
                 chance = TYPHOON_BASE_CHANCE
-                if self._has_forest_neighbor(i, j):
+                if self._has_forest_for_typhoon(i, j):
                     chance *= FOREST_TYPHOON_FACTOR
                 if random.random() >= chance:
                     continue
@@ -942,12 +1055,20 @@ class IslandState:
             self.food -= food_need
             notes.append(f"人口 {self.population} 消耗糧食 −{food_need}")
             # Soft population stub: fed + farms/land → gentle growth.
+            # 紀念碑安穩：輕量人口加成（happiness stub）.
             growth = 0
-            if farms > 0 or self.land_count() >= 7:
-                growth = random.randint(0, 20) + farms * 5
+            happy = self.happiness_bonus()
+            if farms > 0 or self.land_count() >= 7 or happy > 0:
+                growth = random.randint(0, 20) + farms * 5 + happy
             self.population = min(20000, self.population + growth)
             if growth:
-                notes.append(f"人口 stub +{growth} → {self.population}")
+                if happy:
+                    notes.append(
+                        f"人口 stub +{growth}（含紀念碑安穩 +{happy}）"
+                        f" → {self.population}"
+                    )
+                else:
+                    notes.append(f"人口 stub +{growth} → {self.population}")
         else:
             starved = self.food
             self.food = 0
@@ -971,6 +1092,14 @@ class IslandState:
             notes.extend(self._advance_monsters())
         else:
             notes.extend(self._maybe_spawn_monster())
+
+        # Island score snapshot for status/log (順位／國威簡易統計).
+        score = self.island_score()
+        monuments = self.monument_count()
+        notes.append(
+            f"島分數 {score}"
+            + (f"（紀念碑×{monuments}）" if monuments else "")
+        )
 
         self.turn += 1
         for n in notes:
