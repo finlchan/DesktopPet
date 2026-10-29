@@ -19,7 +19,8 @@ Features
 5. The middle section shows "Document record"; click the ">>" button to open the submenu and browse/search files.
    The Document record submenu header has an "Open folder" button to open storage folder(s) in the file manager.
 6. Below Document record, "Mini programs"; click ">>" for Text records and Calculations
-   (Level calc / Slope calc / Free station), plus the Pomodoro timer and Translate.
+   (Level calc / Slope calc / Free station), plus Pomodoro, Translate, and 箱庭島
+   (local island scaffold: oblique diamond map, place/remove buildings, turn loop).
 7. Drag files, folders, or URLs onto the pet to add shortcuts (prompt for name/description).
 8. The bottom has a "Settings" button to edit all configurations.
 9. Window level can be set to Normal, Always on top, or Always on bottom.
