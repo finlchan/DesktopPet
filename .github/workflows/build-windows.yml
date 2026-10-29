@@ -43,7 +43,8 @@ jobs:
       - name: Build DesktopPet.exe with PyInstaller
         shell: cmd
         run: |
-          python -m PyInstaller --noconfirm --onefile --windowed --icon "logo.ico" --add-data "packaging\config.json;." --add-data "paypal_qr.jpg;." --add-data "logo.ico;." --add-data "logo.png;." --add-data "README.txt;." --hidden-import hakoniwa --hidden-import hakoniwa.dialog --hidden-import hakoniwa.view --hidden-import hakoniwa.model --hidden-import hakoniwa.grid --hidden-import hakoniwa.save --hidden-import hakoniwa.remote --collect-submodules hakoniwa --name "DesktopPet" desktop_pet.py
+          REM hakoniwa/ lazy Mini programs import; openpyxl/xlrd for Free Station IMPORT.
+          python -m PyInstaller --noconfirm --onefile --windowed --icon "logo.ico" --add-data "packaging\config.json;." --add-data "paypal_qr.jpg;." --add-data "logo.ico;." --add-data "logo.png;." --add-data "README.txt;." --hidden-import hakoniwa --hidden-import hakoniwa.dialog --hidden-import hakoniwa.view --hidden-import hakoniwa.model --hidden-import hakoniwa.grid --hidden-import hakoniwa.save --hidden-import hakoniwa.remote --collect-submodules hakoniwa --hidden-import openpyxl --hidden-import xlrd --collect-submodules openpyxl --name "DesktopPet" desktop_pet.py
 
       - name: Upload DesktopPet.exe artifact
         uses: actions/upload-artifact@v4
