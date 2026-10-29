@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import threading
 from pathlib import Path
-from typing import Optional
+from typing import List, Tuple
 
 from hakoniwa.model import IslandState
 
@@ -103,3 +103,14 @@ class IslandStore:
             notes = self._state.next_turn()
             self._persist_unlocked()
             return notes, self._state.to_dict()
+
+    def list_comments(self) -> List[dict]:
+        with self._lock:
+            return [c.to_dict() for c in self._state.list_comments()]
+
+    def add_comment(self, name: str, text: str) -> Tuple[str, List[dict]]:
+        with self._lock:
+            msg = self._state.add_comment(name, text)
+            if msg == "ok":
+                self._persist_unlocked()
+            return msg, [c.to_dict() for c in self._state.list_comments()]

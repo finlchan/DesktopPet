@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urljoin, urlparse
 
-from .model import IslandState
+from .model import GuestbookEntry, IslandState
 
 
 class HakoniwaRemoteError(Exception):
@@ -163,6 +163,36 @@ class HakoniwaRemote:
 
     def next_turn(self) -> ActionOutcome:
         return self._action("/api/v1/island/turn", {})
+
+    def list_comments(self) -> List[GuestbookEntry]:
+        data = self._request("GET", "/api/v1/island/comments")
+        if not isinstance(data, dict) or not isinstance(data.get("comments"), list):
+            raise HakoniwaRemoteError("留言板格式錯誤")
+        out: List[GuestbookEntry] = []
+        for item in data["comments"]:
+            if not isinstance(item, dict):
+                continue
+            entry = GuestbookEntry.from_dict(item)
+            if entry is not None:
+                out.append(entry)
+        return out
+
+    def post_comment(self, name: str, text: str) -> Tuple[bool, Optional[str], List[GuestbookEntry]]:
+        data = self._request(
+            "POST", "/api/v1/island/comments", {"name": name, "text": text}
+        )
+        if not isinstance(data, dict) or not isinstance(data.get("comments"), list):
+            raise HakoniwaRemoteError("留言板回傳格式錯誤")
+        comments: List[GuestbookEntry] = []
+        for item in data["comments"]:
+            if not isinstance(item, dict):
+                continue
+            entry = GuestbookEntry.from_dict(item)
+            if entry is not None:
+                comments.append(entry)
+        ok = bool(data.get("ok"))
+        err = str(data["error"]) if data.get("error") else None
+        return ok, err, comments
 
 
 def try_connect(
