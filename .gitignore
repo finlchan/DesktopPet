@@ -29,6 +29,13 @@ pics/
 private/
 personal/
 
+# Optional 箱庭島 user art drops (naming in hakoniwa/README.md); keep README only
+hakoniwa/assets/user/*.png
+hakoniwa/assets/user/*.jpg
+hakoniwa/assets/user/*.jpeg
+hakoniwa/assets/user/*.webp
+!hakoniwa/assets/user/README.md
+
 # Release staging folder (built by build.bat) — rebuild from packaging template only
 上載版/
 upload/

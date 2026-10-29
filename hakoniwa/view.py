@@ -1,9 +1,10 @@
-"""箱庭斜視 map widget — textured diamond tops (dirt／grass／sea) + color buildings.
+"""箱庭斜視 map widget — textured diamond tops (dirt／grass／sea) + overlays.
 
 Lattice is logical 1:1 diamonds with v9 stagger, then ~45° oblique foreshortening
 (Y *= sin(45°)) from ``hakoniwa.grid`` — NOT a flat top-down grid merely rotated
 45°. Terrain uses flat top textures only; no under-tile thickness/skirts.
-Buildings／monsters remain solid color placeholders.
+Buildings／monsters default to solid color placeholders; optional user PNGs from
+``Data/hakoniwa/user/`` or ``assets/user/`` replace them when present.
 
 After any map/view change, run smoke (oblique invariant) and visually compare
 against correct-hakoniwa-oblique-45.png; reject wrong-flat-rotated-grid.png.
@@ -211,25 +212,58 @@ class HakoniwaMapWidget(QWidget):
 
             self._paint_terrain_top(painter, cell.terrain, cx, cy, poly)
 
-            # Building: smaller inset diamond (solid placeholder block).
+            # Building: user PNG when dropped, else solid color diamond.
             if cell.building and cell.building in BUILDINGS:
-                bcol = BUILDINGS[cell.building]["color"]
-                if bcol:
-                    inset = self.cell * 0.55
-                    bverts = diamond_vertices(cx, cy - self.cell * 0.08, inset)
-                    bpoly = QPolygonF([QPointF(x, y) for x, y in bverts])
-                    painter.setBrush(QBrush(QColor(*bcol)))
+                inset = self.cell * 0.55
+                bcy = cy - self.cell * 0.08
+                bverts = diamond_vertices(cx, bcy, inset)
+                bpoly = QPolygonF([QPointF(x, y) for x, y in bverts])
+                bpix = self._atlas.building_pixmap(cell.building)
+                if bpix is not None and not bpix.isNull():
+                    bw, bh = cell_screen_size(inset)
+                    dest = QRectF(cx - bw / 2.0, bcy - bh / 2.0, bw, bh)
+                    path = QPainterPath()
+                    path.addPolygon(bpoly)
+                    painter.save()
+                    painter.setClipPath(path)
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    painter.drawPixmap(
+                        dest, bpix, QRectF(0, 0, bpix.width(), bpix.height())
+                    )
+                    painter.restore()
+                    painter.setBrush(Qt.BrushStyle.NoBrush)
                     painter.setPen(QPen(QColor(30, 30, 30, 200), 1.0))
                     painter.drawPolygon(bpoly)
+                else:
+                    bcol = BUILDINGS[cell.building]["color"]
+                    if bcol:
+                        painter.setBrush(QBrush(QColor(*bcol)))
+                        painter.setPen(QPen(QColor(30, 30, 30, 200), 1.0))
+                        painter.drawPolygon(bpoly)
 
-            # Monster: axis-aligned color square (distinct from building diamonds).
+            # Monster: user PNG when dropped, else axis-aligned color square.
             monster = self.state.monster_at(i, j)
             if monster is not None:
                 side = self.cell * 0.42
-                rect = QRectF(cx - side / 2.0, cy - side / 2.0 - self.cell * 0.06, side, side)
-                painter.setBrush(QBrush(QColor(*monster.color())))
-                painter.setPen(QPen(QColor(20, 20, 20, 220), 1.4))
-                painter.drawRect(rect)
+                rect = QRectF(
+                    cx - side / 2.0,
+                    cy - side / 2.0 - self.cell * 0.06,
+                    side,
+                    side,
+                )
+                mpix = self._atlas.monster_pixmap(monster.kind)
+                if mpix is not None and not mpix.isNull():
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    painter.drawPixmap(
+                        rect, mpix, QRectF(0, 0, mpix.width(), mpix.height())
+                    )
+                    painter.setBrush(Qt.BrushStyle.NoBrush)
+                    painter.setPen(QPen(QColor(20, 20, 20, 220), 1.4))
+                    painter.drawRect(rect)
+                else:
+                    painter.setBrush(QBrush(QColor(*monster.color())))
+                    painter.setPen(QPen(QColor(20, 20, 20, 220), 1.4))
+                    painter.drawRect(rect)
 
             if self.selected == (i, j):
                 painter.setBrush(Qt.BrushStyle.NoBrush)

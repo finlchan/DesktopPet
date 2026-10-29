@@ -78,6 +78,8 @@ from .model import (
 )
 from .remote import HakoniwaRemote, HakoniwaRemoteError, try_connect
 from .save import default_save_path, load_island, save_island
+from .tiles import ATLAS
+from .user_art import configure_user_art
 from .view import HakoniwaMapWidget
 
 # Overlay frames (action log / guestbook): 70% transparent ≈ 30% opaque.
@@ -558,6 +560,9 @@ class HakoniwaIslandDialog(QDialog):
         self.setStyleSheet(dp.CALC_DIALOG_STYLE + getattr(dp, "MINI_PROGRAM_STYLE", ""))
 
         self._save_path = self._resolve_save_path()
+        # Optional user PNGs: Data/hakoniwa/user/ (beside save) then assets/user/.
+        configure_user_art(self._save_path.parent.parent)
+        ATLAS.invalidate_user_cache()
         loaded = load_island(self._save_path)
         self.state = loaded if loaded is not None else IslandState.new_game()
         self.selected = None
