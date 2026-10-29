@@ -1,11 +1,16 @@
-"""箱庭島 window — FramelessCalcDialog chrome + map + turn / terrain / guestbook / 觀光."""
+"""箱庭島 window — FramelessCalcDialog chrome + map + turn / terrain / guestbook / 觀光.
+
+Local-play UX: named toolbar with costs + disable rules, status bar,
+pan/zoom map (via HakoniwaMapWidget), optional keyboard shortcuts.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -22,6 +27,7 @@ from PySide6.QtWidgets import (
 
 from .demos import island_summary, local_demo_islands
 from .model import (
+    BUILDABLE,
     BUILDINGS,
     COST_AFFOREST,
     COST_FACTORY,
@@ -37,6 +43,76 @@ from .model import (
 from .remote import HakoniwaRemote, HakoniwaRemoteError, try_connect
 from .save import default_save_path, load_island, save_island
 from .view import HakoniwaMapWidget
+
+# Toolbar: (action key, display name, cost or None, shortcut digit)
+TOOL_SPECS: Tuple[Tuple[str, str, Optional[int], str], ...] = (
+    ("farm", "建設農場", COST_FARM, "1"),
+    ("factory", "建設工場", COST_FACTORY, "2"),
+    ("remove", "移除建築", None, "3"),
+    ("landfill", "填海造陸", COST_LANDFILL, "4"),
+    ("level", "整地", COST_LEVEL, "5"),
+    ("afforest", "植林", COST_AFFOREST, "6"),
+)
+
+
+def tool_enabled(
+    state: IslandState, kind: str, selected: Optional[Tuple[int, int]]
+) -> Tuple[bool, str]:
+    """Whether a toolbar action can run on the current selection.
+
+    Returns (enabled, reason). Reason is empty when enabled; otherwise a short
+    tip for the button tooltip (can't afford / wrong terrain / no selection).
+    """
+    if selected is None:
+        return False, "請先選格"
+    i, j = selected
+    c = state.cell(i, j)
+
+    if kind == "farm":
+        if c.terrain not in BUILDABLE:
+            return False, "須在平地建設"
+        if c.building is not None:
+            return False, "此格已有建築"
+        if state.funds < COST_FARM:
+            return False, f"資金不足（需 {COST_FARM}）"
+        return True, ""
+
+    if kind == "factory":
+        if c.terrain not in BUILDABLE:
+            return False, "須在平地建設"
+        if c.building is not None:
+            return False, "此格已有建築"
+        if state.funds < COST_FACTORY:
+            return False, f"資金不足（需 {COST_FACTORY}）"
+        return True, ""
+
+    if kind == "remove":
+        if c.building is None:
+            return False, "此格沒有建築"
+        return True, ""
+
+    if kind == "landfill":
+        if not state.can_landfill(i, j):
+            return False, "須鄰陸的海／淺灘"
+        if state.funds < COST_LANDFILL:
+            return False, f"資金不足（需 {COST_LANDFILL}）"
+        return True, ""
+
+    if kind == "level":
+        if not state.can_level(i, j):
+            return False, "此格無需整地"
+        if state.funds < COST_LEVEL:
+            return False, f"資金不足（需 {COST_LEVEL}）"
+        return True, ""
+
+    if kind == "afforest":
+        if not state.can_afforest(i, j):
+            return False, "須空的平地"
+        if state.funds < COST_AFFOREST:
+            return False, f"資金不足（需 {COST_AFFOREST}）"
+        return True, ""
+
+    return False, "未知指令"
 
 
 def _dp():
@@ -86,8 +162,9 @@ class HakoniwaIslandDialog(QDialog):
         root.addWidget(dp.make_draggable_title(self, "箱庭島"))
 
         hint = QLabel(
-            "箱庭斜視 · 點選格子 → 建設／地形指令 · 下回合結算　"
-            "（貼圖稍後替換；目前為色塊佔位）"
+            "箱庭斜視 · 點選格子 → 工具列建設／地形 · 下回合結算　"
+            "（色塊佔位）· 滾輪縮放 · 中／右鍵平移　"
+            "快捷鍵：1–6 工具 · T 下回合 · S 存檔 · Esc 取消選取 · 0 重置視圖"
         )
         hint.setObjectName("calcResult")
         hint.setWordWrap(True)
@@ -119,8 +196,10 @@ class HakoniwaIslandDialog(QDialog):
         self.conn_status.setWordWrap(True)
         root.addWidget(self.conn_status)
 
+        # Status bar: funds / food / turn / land (plus pop + mode).
         self.stats = QLabel()
         self.stats.setObjectName("calcSectionTitle")
+        self.stats.setWordWrap(True)
         root.addWidget(self.stats)
 
         body = QHBoxLayout()
@@ -138,25 +217,30 @@ class HakoniwaIslandDialog(QDialog):
         self.sel_label.setWordWrap(True)
         side.addWidget(self.sel_label)
 
-        for key, text in (
-            ("farm", f"建設農場（{COST_FARM}）"),
-            ("factory", f"建設工場（{COST_FACTORY}）"),
-            ("remove", "移除建築"),
-            ("landfill", f"填海造陸（{COST_LANDFILL}）"),
-            ("level", f"整地（{COST_LEVEL}）"),
-            ("afforest", f"植林（{COST_AFFOREST}）"),
-        ):
+        tools_cap = QLabel("工具")
+        tools_cap.setObjectName("calcFieldCaption")
+        side.addWidget(tools_cap)
+
+        self.tool_buttons: Dict[str, QPushButton] = {}
+        for key, name, cost, digit in TOOL_SPECS:
+            if cost is None:
+                text = f"{digit}. {name}"
+            else:
+                text = f"{digit}. {name}（{cost}）"
             btn = QPushButton(text)
             btn.setObjectName("calcAction")
+            btn.setProperty("toolKey", key)
             btn.clicked.connect(lambda checked=False, k=key: self._do_action(k))
             side.addWidget(btn)
+            self.tool_buttons[key] = btn
 
         side.addSpacing(6)
 
-        turn_btn = QPushButton("下回合")
-        turn_btn.setObjectName("calcAction")
-        turn_btn.clicked.connect(self._next_turn)
-        side.addWidget(turn_btn)
+        self.turn_btn = QPushButton("T. 下回合")
+        self.turn_btn.setObjectName("calcAction")
+        self.turn_btn.setToolTip("結算本回合產糧／產資（快捷鍵 T）")
+        self.turn_btn.clicked.connect(self._next_turn)
+        side.addWidget(self.turn_btn)
 
         tour_btn = QPushButton("觀光")
         tour_btn.setObjectName("calcAction")
@@ -164,8 +248,9 @@ class HakoniwaIslandDialog(QDialog):
         tour_btn.clicked.connect(self._open_tourism)
         side.addWidget(tour_btn)
 
-        save_btn = QPushButton("存檔")
+        save_btn = QPushButton("S. 存檔")
         save_btn.setObjectName("calcAction")
+        save_btn.setToolTip("寫入本機 JSON（快捷鍵 S）")
         save_btn.clicked.connect(self._save)
         side.addWidget(save_btn)
 
@@ -174,22 +259,30 @@ class HakoniwaIslandDialog(QDialog):
         new_btn.clicked.connect(self._new_island)
         side.addWidget(new_btn)
 
+        reset_view_btn = QPushButton("0. 重置視圖")
+        reset_view_btn.setObjectName("calcAction")
+        reset_view_btn.setToolTip("縮放／平移回到預設（快捷鍵 0）")
+        reset_view_btn.clicked.connect(self.map.reset_view)
+        side.addWidget(reset_view_btn)
+
         side.addSpacing(4)
         log_cap = QLabel("日誌")
         log_cap.setObjectName("calcFieldCaption")
         side.addWidget(log_cap)
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
-        self.log_view.setMaximumWidth(260)
-        self.log_view.setMinimumHeight(160)
+        self.log_view.setMaximumWidth(280)
+        self.log_view.setMinimumHeight(140)
         side.addWidget(self.log_view, stretch=1)
 
         side_wrap = QWidget()
         side_wrap.setLayout(side)
-        side_wrap.setFixedWidth(270)
+        side_wrap.setFixedWidth(290)
         body.addWidget(side_wrap)
 
         root.addLayout(body, stretch=1)
+
+        self._install_shortcuts()
 
         # Visitor guestbook (島留言板) — local JSON or NAS /comments.
         gb_cap = QLabel("訪客留言板")
@@ -243,6 +336,81 @@ class HakoniwaIslandDialog(QDialog):
         else:
             self._set_offline("本機模式（JSON 存檔）")
         self._refresh_ui()
+
+    def _install_shortcuts(self) -> None:
+        """Optional keyboard shortcuts for local play (tools / turn / view).
+
+        Ignored while typing in guestbook / server URL fields.
+        """
+        for key, _name, _cost, digit in TOOL_SPECS:
+            sc = QShortcut(QKeySequence(digit), self)
+            sc.setContext(Qt.ShortcutContext.WindowShortcut)
+            sc.activated.connect(lambda k=key: self._shortcut_tool(k))
+
+        sc_turn = QShortcut(QKeySequence(Qt.Key.Key_T), self)
+        sc_turn.setContext(Qt.ShortcutContext.WindowShortcut)
+        sc_turn.activated.connect(self._shortcut_next_turn)
+
+        sc_save = QShortcut(QKeySequence(Qt.Key.Key_S), self)
+        sc_save.setContext(Qt.ShortcutContext.WindowShortcut)
+        sc_save.activated.connect(self._shortcut_save)
+
+        sc_esc = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
+        sc_esc.setContext(Qt.ShortcutContext.WindowShortcut)
+        sc_esc.activated.connect(self._clear_selection)
+
+        sc_reset = QShortcut(QKeySequence(Qt.Key.Key_0), self)
+        sc_reset.setContext(Qt.ShortcutContext.WindowShortcut)
+        sc_reset.activated.connect(self._shortcut_reset_view)
+
+        sc_zoom_in = QShortcut(QKeySequence(Qt.Key.Key_Plus), self)
+        sc_zoom_in.setContext(Qt.ShortcutContext.WindowShortcut)
+        sc_zoom_in.activated.connect(lambda: self._shortcut_zoom(1.12))
+        sc_zoom_eq = QShortcut(QKeySequence(Qt.Key.Key_Equal), self)
+        sc_zoom_eq.setContext(Qt.ShortcutContext.WindowShortcut)
+        sc_zoom_eq.activated.connect(lambda: self._shortcut_zoom(1.12))
+        sc_zoom_out = QShortcut(QKeySequence(Qt.Key.Key_Minus), self)
+        sc_zoom_out.setContext(Qt.ShortcutContext.WindowShortcut)
+        sc_zoom_out.activated.connect(lambda: self._shortcut_zoom(1.0 / 1.12))
+
+    def _typing_in_field(self) -> bool:
+        w = self.focusWidget()
+        return isinstance(w, (QLineEdit, QPlainTextEdit))
+
+    def _shortcut_tool(self, kind: str) -> None:
+        """Run tool from digit shortcut only if the button is currently enabled."""
+        if self._typing_in_field():
+            return
+        btn = self.tool_buttons.get(kind)
+        if btn is None or not btn.isEnabled():
+            return
+        self._do_action(kind)
+
+    def _shortcut_next_turn(self) -> None:
+        if self._typing_in_field():
+            return
+        self._next_turn()
+
+    def _shortcut_save(self) -> None:
+        if self._typing_in_field():
+            return
+        self._save()
+
+    def _shortcut_reset_view(self) -> None:
+        if self._typing_in_field():
+            return
+        self.map.reset_view()
+
+    def _shortcut_zoom(self, factor: float) -> None:
+        if self._typing_in_field():
+            return
+        self.map.zoom_by(factor)
+
+    def _clear_selection(self) -> None:
+        self.selected = None
+        self.map.clear_selection()
+        self._refresh_selection_label()
+        self._refresh_toolbar()
 
     def _resolve_save_path(self) -> Path:
         if self.cfg is not None and getattr(self.cfg, "config_path", None):
@@ -365,16 +533,38 @@ class HakoniwaIslandDialog(QDialog):
     def _refresh_ui(self) -> None:
         s = self.state
         mode = "連線" if self._online else "本機"
+        # Dedicated status strip: funds / food / turn / land (+ pop).
         self.stats.setText(
-            f"[{mode}] 資金 {s.funds}　糧食 {s.food}　人口 {s.population}　"
-            f"回合 {s.turn}　陸地 {s.land_count()} 格"
+            f"狀態　｜　資金 {s.funds}　｜　糧食 {s.food}　｜　"
+            f"回合 {s.turn}　｜　陸地 {s.land_count()} 格　｜　"
+            f"人口 {s.population}　｜　[{mode}]"
         )
         self.log_view.setPlainText("\n".join(s.log[-30:]))
         bar = self.log_view.verticalScrollBar()
         bar.setValue(bar.maximum())
         self.map.update()
         self._refresh_selection_label()
+        self._refresh_toolbar()
         self._show_guestbook(s.list_comments())
+
+    def _refresh_toolbar(self) -> None:
+        """Enable tools only when the selection can afford / accepts them."""
+        for key, name, cost, digit in TOOL_SPECS:
+            btn = self.tool_buttons[key]
+            if cost is None:
+                label = f"{digit}. {name}"
+            else:
+                label = f"{digit}. {name}（{cost}）"
+            btn.setText(label)
+            ok, reason = tool_enabled(self.state, key, self.selected)
+            btn.setEnabled(ok)
+            tip = f"{name}" + (f" · 費用 {cost}" if cost is not None else " · 免費")
+            if reason:
+                tip += f"\n不可用：{reason}"
+            elif self.selected is not None:
+                tip += f"\n選格 {self.selected[0]},{self.selected[1]}"
+            tip += f"\n快捷鍵 {digit}"
+            btn.setToolTip(tip)
 
     def _refresh_selection_label(self) -> None:
         if self.selected is None:
@@ -398,6 +588,7 @@ class HakoniwaIslandDialog(QDialog):
     def _on_cell_clicked(self, i: int, j: int) -> None:
         self.selected = (i, j)
         self._refresh_selection_label()
+        self._refresh_toolbar()
 
     def _require_selection(self):
         if self.selected is None:
@@ -684,6 +875,7 @@ class TourismIslandDialog(QDialog):
 
         hint = QLabel(
             "箱庭斜視 · 觀光模式（唯讀地圖）· 色塊佔位　"
+            "滾輪縮放 · 中／右鍵平移　"
             "可瀏覽格子與留言；建設／地形／回合已鎖定"
         )
         hint.setObjectName("calcResult")

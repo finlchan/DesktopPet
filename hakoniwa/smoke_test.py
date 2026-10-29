@@ -34,6 +34,7 @@ from hakoniwa.model import (
     IslandState,
 )
 from hakoniwa.demos import island_summary, local_demo_islands, make_demo_coral, make_demo_pine
+from hakoniwa.dialog import TOOL_SPECS, tool_enabled
 from hakoniwa.remote import HakoniwaRemoteError, normalize_base_url
 from hakoniwa.save import load_island, save_island
 
@@ -235,6 +236,60 @@ def test_local_demos():
     assert IslandState.from_dict(coral.to_dict()).island_id == "demo-coral"
 
 
+def test_tool_enabled_rules():
+    state = IslandState.new_game()
+    # No selection → all tools disabled.
+    for key, *_ in TOOL_SPECS:
+        ok, reason = tool_enabled(state, key, None)
+        assert ok is False
+        assert "選格" in reason
+
+    # Pick a grass cell if any; else level dirt.
+    land = [(i, j) for i in range(20) for j in range(20) if state.is_land(i, j)]
+    grass = next(
+        ((i, j) for i, j in land if state.cell(i, j).terrain == "grass"),
+        None,
+    )
+    if grass is None:
+        i, j = land[0]
+        assert state.level_land(i, j) == "ok"
+        grass = (i, j)
+    gi, gj = grass
+    ok, _ = tool_enabled(state, "farm", (gi, gj))
+    assert ok is True
+    ok, _ = tool_enabled(state, "factory", (gi, gj))
+    assert ok is True
+    ok, reason = tool_enabled(state, "remove", (gi, gj))
+    assert ok is False
+    assert "沒有建築" in reason
+    ok, reason = tool_enabled(state, "landfill", (gi, gj))
+    assert ok is False
+
+    # Broke: funds 0 → farm disabled for cost.
+    state.funds = 0
+    ok, reason = tool_enabled(state, "farm", (gi, gj))
+    assert ok is False
+    assert "資金" in reason
+
+    # Sea cell adjacent to land → landfill ok when funded.
+    state.funds = 1000
+    sea_adj = next(
+        (
+            (i, j)
+            for i in range(20)
+            for j in range(20)
+            if state.can_landfill(i, j) and state.cell(i, j).terrain == "sea"
+        ),
+        None,
+    )
+    assert sea_adj is not None
+    ok, _ = tool_enabled(state, "landfill", sea_adj)
+    assert ok is True
+    ok, reason = tool_enabled(state, "farm", sea_adj)
+    assert ok is False
+    assert "平地" in reason
+
+
 def test_dialog_import_offscreen():
     """Instantiate dialog under offscreen Qt if available."""
     import os
@@ -256,6 +311,42 @@ def test_dialog_import_offscreen():
     assert dlg.guestbook_view is not None
     assert dlg.guest_name is not None
     assert dlg.guest_text is not None
+    assert hasattr(dlg, "tool_buttons")
+    assert set(dlg.tool_buttons) == {k for k, *_ in TOOL_SPECS}
+    # No selection → tools disabled.
+    dlg._refresh_toolbar()
+    assert all(not b.isEnabled() for b in dlg.tool_buttons.values())
+    # Status bar carries the four core fields.
+    assert "資金" in dlg.stats.text()
+    assert "糧食" in dlg.stats.text()
+    assert "回合" in dlg.stats.text()
+    assert "陸地" in dlg.stats.text()
+
+    # Select a buildable grass cell → farm/factory enable.
+    land = [(i, j) for i in range(20) for j in range(20) if dlg.state.is_land(i, j)]
+    grass = next(
+        ((i, j) for i, j in land if dlg.state.cell(i, j).terrain == "grass"),
+        None,
+    )
+    if grass is None:
+        i, j = land[0]
+        dlg.state.level_land(i, j)
+        grass = (i, j)
+    dlg._on_cell_clicked(*grass)
+    assert dlg.tool_buttons["farm"].isEnabled()
+    assert dlg.tool_buttons["factory"].isEnabled()
+    assert not dlg.tool_buttons["remove"].isEnabled()
+    assert "農場" in dlg.tool_buttons["farm"].text()
+    assert str(COST_FARM) in dlg.tool_buttons["farm"].text()
+
+    # Map pan/zoom API.
+    old_cell = dlg.map.cell
+    dlg.map.zoom_by(1.5)
+    assert dlg.map.cell > old_cell
+    dlg.map.pan_by(12.0, -8.0)
+    dlg.map.reset_view()
+    assert abs(dlg.map.cell - old_cell) < 1e-6
+
     dlg.state.add_comment("Smoke", "panel ok")
     dlg._refresh_ui()
     assert "Smoke" in dlg.guestbook_view.toPlainText()
@@ -273,6 +364,7 @@ def test_dialog_import_offscreen():
     tour = TourismIslandDialog(island, remote=None, parent=dlg)
     assert "觀光" in tour.windowTitle()
     assert tour.guestbook_view is not None
+    assert hasattr(tour.map, "zoom_by")
     tour.state.add_comment("Tourist", "nice pines")
     tour._show_guestbook(tour.state.list_comments())
     assert "Tourist" in tour.guestbook_view.toPlainText()
@@ -406,6 +498,7 @@ def main():
     test_local_demos()
     test_save_load_roundtrip()
     test_remote_url_normalize()
+    test_tool_enabled_rules()
     test_dialog_import_offscreen()
     test_server_api_if_available()
     print("hakoniwa smoke_test: OK")
