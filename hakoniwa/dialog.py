@@ -34,10 +34,12 @@ from PySide6.QtWidgets import (
 
 from .demos import island_summary, local_demo_islands
 from .model import (
+    BANK_TRANSFER_LOT,
     BUILDABLE,
     BUILDINGS,
     COASTAL_BUILDINGS,
     COST_AFFOREST,
+    COST_BANK,
     COST_BREAKWATER,
     COST_DEFENSE,
     COST_EXCAVATE,
@@ -53,14 +55,20 @@ from .model import (
     COST_QUARRY,
     COST_RAISE,
     COST_SHIPYARD,
+    COST_SHRINE,
+    COST_SUPERMARKET,
+    FOOD_BUY_LOT,
     FOOD_EXPORT_LOT,
+    FUNDS_PER_FOOD_BUY,
     FUNDS_PER_FOOD_LOT,
+    FUNDS_SOFT_CAP,
     GuestbookEntry,
     MAX_GUEST_NAME,
     MAX_GUEST_TEXT,
     MOUNTAIN_ONLY_BUILDINGS,
     PLACEABLE_BUILDINGS,
     TREE_MIN,
+    food_buy_cost,
     food_export_funds,
     timber_funds,
     TERRAIN,
@@ -358,6 +366,12 @@ TOOL_SPECS: Tuple[Tuple[str, str, Optional[int], str], ...] = (
     ("shipyard", "建設造船所", COST_SHIPYARD, "Y"),
     ("export", "貿易輸出", None, "E"),
     ("monument", "建設紀念碑", COST_MONUMENT, "M"),
+    ("bank", "建設銀行", COST_BANK, "N"),
+    ("supermarket", "建設超市", COST_SUPERMARKET, "S"),
+    ("shrine", "建設神社", COST_SHRINE, "Z"),
+    ("deposit", "銀行存款", None, "D"),
+    ("withdraw", "銀行提款", None, "U"),
+    ("buy_food", "超市買糧", None, "P"),
 )
 
 
@@ -381,6 +395,29 @@ def tool_enabled(
             return False, "需要港灣或造船所"
         if state.food < FOOD_EXPORT_LOT:
             return False, f"糧食不足（一批需 {FOOD_EXPORT_LOT}）"
+        return True, ""
+
+    # 銀行存提：有銀行即可（不必選格）.
+    if kind == "deposit":
+        if not state.can_bank_transfer():
+            return False, "需要銀行"
+        if state.funds < BANK_TRANSFER_LOT:
+            return False, f"流動資金不足（一批需 {BANK_TRANSFER_LOT}）"
+        return True, ""
+    if kind == "withdraw":
+        if not state.can_bank_transfer():
+            return False, "需要銀行"
+        if state.bank_deposit < BANK_TRANSFER_LOT:
+            return False, f"存款不足（一批需 {BANK_TRANSFER_LOT}）"
+        return True, ""
+
+    # 超市買糧：有超市即可（不必選格）.
+    if kind == "buy_food":
+        if not state.can_buy_food():
+            return False, "需要超市"
+        cost = food_buy_cost(1)
+        if state.funds < cost:
+            return False, f"資金不足（一批需 {cost}）"
         return True, ""
 
     if selected is None:
@@ -861,8 +898,12 @@ class HakoniwaIslandDialog(QDialog):
             m = s.monsters[0]
             monster_bit = f" | 怪獸 {m.label()}({m.i},{m.j})"
         # One line, locked order: 狀態 → 資金 → 糧食 → 人口 → 回合 → 格數；分數附於格數後.
+        # 銀行存款附在資金欄內（不另開欄位，以免打亂順序）.
+        funds_bit = f"資金 {s.funds}"
+        if s.bank_deposit > 0:
+            funds_bit += f"（存{s.bank_deposit}）"
         self.stats.setText(
-            f"狀態 | 資金 {s.funds} | 糧食 {s.food} | "
+            f"狀態 | {funds_bit} | 糧食 {s.food} | "
             f"人口 {s.population} | 回合 {s.turn} | "
             f"格數 {s.land_count()} | 分數 {s.island_score()}{monster_bit}"
         )
@@ -921,6 +962,36 @@ class HakoniwaIslandDialog(QDialog):
                     tip += f"\n本批可得 +{food_export_funds(1)}；現有糧食 {self.state.food}"
             elif key == "monument":
                 tip += "\n國威色塊：加島分數／安穩；抗怪獸踩踏；鄰格抑火災"
+            elif key == "bank":
+                tip += (
+                    f"\n超流動上限 {FUNDS_SOFT_CAP} 時溢出進銀行緩衝；"
+                    "無銀行則捨棄"
+                )
+            elif key == "supermarket":
+                tip += (
+                    f"\n可買糧：{FOOD_BUY_LOT} 噸≈{FUNDS_PER_FOOD_BUY} 資金"
+                    "（略貴於貿易輸出）"
+                )
+            elif key == "shrine":
+                tip += "\n信仰色塊：大幅加島分數；餵飽時安穩人口加成"
+            elif key == "deposit":
+                tip += f"\n流動→銀行：一批 {BANK_TRANSFER_LOT}"
+                if ok:
+                    tip += f"\n現流動 {self.state.funds}／存 {self.state.bank_deposit}"
+            elif key == "withdraw":
+                tip += f"\n銀行→流動：一批 {BANK_TRANSFER_LOT}"
+                if ok:
+                    tip += f"\n現流動 {self.state.funds}／存 {self.state.bank_deposit}"
+            elif key == "buy_food":
+                tip += (
+                    f"\n資金→糧食：{FOOD_BUY_LOT} 噸≈"
+                    f"{FUNDS_PER_FOOD_BUY} 資金（不推進回合）"
+                )
+                if ok:
+                    tip += (
+                        f"\n本批 −{food_buy_cost(1)}；"
+                        f"現資金 {self.state.funds}／糧食 {self.state.food}"
+                    )
             elif key == "raise":
                 tip += "\n空荒地／平地→山（可再建採掘場；噴火亦會生山）"
             elif key == "quarry":
@@ -980,6 +1051,12 @@ class HakoniwaIslandDialog(QDialog):
             hints.append("可建防波堤")
         if self.state.can_place_building(i, j, "monument"):
             hints.append("可建紀念碑")
+        if self.state.can_place_building(i, j, "bank"):
+            hints.append("可建銀行")
+        if self.state.can_place_building(i, j, "supermarket"):
+            hints.append("可建超市")
+        if self.state.can_place_building(i, j, "shrine"):
+            hints.append("可建神社")
         tree_line = ""
         if c.terrain == "forest":
             trees = c.trees if c.trees > 0 else TREE_MIN
@@ -1009,8 +1086,8 @@ class HakoniwaIslandDialog(QDialog):
         )
 
     def _do_action(self, kind: str) -> None:
-        # 觀望／貿易輸出不需選格；其餘指令要點選格子。
-        if kind in ("wait", "export"):
+        # 觀望／貿易／銀行存提／超市買糧不需選格；其餘指令要點選格子。
+        if kind in ("wait", "export", "deposit", "withdraw", "buy_food"):
             i = j = 0
         else:
             sel = self._require_selection()
@@ -1042,6 +1119,12 @@ class HakoniwaIslandDialog(QDialog):
                     out = self.remote.wait_monster()
                 elif kind == "export":
                     out = self.remote.export_food(1)
+                elif kind == "deposit":
+                    out = self.remote.deposit_funds(BANK_TRANSFER_LOT)
+                elif kind == "withdraw":
+                    out = self.remote.withdraw_funds(BANK_TRANSFER_LOT)
+                elif kind == "buy_food":
+                    out = self.remote.buy_food(1)
                 else:
                     QMessageBox.information(self, "箱庭島", "未知指令")
                     return
@@ -1077,6 +1160,12 @@ class HakoniwaIslandDialog(QDialog):
             msg = self.state.wait_monster()
         elif kind == "export":
             msg = self.state.export_food(1)
+        elif kind == "deposit":
+            msg = self.state.deposit_funds(BANK_TRANSFER_LOT)
+        elif kind == "withdraw":
+            msg = self.state.withdraw_funds(BANK_TRANSFER_LOT)
+        elif kind == "buy_food":
+            msg = self.state.buy_food(1)
         else:
             msg = "未知指令"
         if msg != "ok":

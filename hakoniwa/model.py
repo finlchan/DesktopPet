@@ -8,7 +8,8 @@ fire/typhoon/quake/volcano/tsunami disaster stubs, 防衛設施／飛彈基地 c
 buildings (spawn/stomp/missile stubs), 港灣／造船所／貿易輸出（臨海色塊；糧食→資金）,
 紀念碑色塊＋簡易島分數／安穩（國威；抗踩踏；抑火災如森）,
 山岳地形＋採掘場色塊（僅山上；產資）,
-防波堤色塊（臨海；減海嘯）＋海底油田（掘削／探油；被動產資；枯竭）.
+防波堤色塊（臨海；減海嘯）＋海底油田（掘削／探油；被動產資；枯竭）,
+銀行／超市／神社色塊（變體：資金緩衝、買糧、分數／安穩加成）.
 Color-block placeholders only — user art later.
 """
 
@@ -48,6 +49,9 @@ COST_HARBOR = 800       # 港灣（變體／改造常見 800 億；須臨海）
 COST_SHIPYARD = 500     # 造船所（變體常見 500 億；須臨海）
 COST_BREAKWATER = 200   # 防波堤（變體／防災；臨海；減海嘯）
 COST_MONUMENT = 9999    # 記念碑建造（定本 9999 億；國威／順位用）
+COST_BANK = 500         # 銀行（變體／App：超上限存款緩衝）
+COST_SUPERMARKET = 300  # 超市（變體：資金買糧食）
+COST_SHRINE = 800       # 神社（變體：島分數／安穩加成）
 
 # Forest tree stock (catalog 木 100～20000；+100／回合；新植林 100).
 TREE_MIN = 100
@@ -61,6 +65,13 @@ FUNDS_PER_TIMBER_LOT = 5
 # 需島上有港灣或造船所；不推進回合.
 FOOD_EXPORT_LOT = 100
 FUNDS_PER_FOOD_LOT = 5
+
+# Soft funds cap (定本約 9999 億捨棄)；有銀行則溢出進存款緩衝.
+FUNDS_SOFT_CAP = 9999
+BANK_TRANSFER_LOT = 100  # 手動存／提一批
+# 超市買糧：比貿易輸出略貴（防無限套利；100 噸≈8 資金）.
+FOOD_BUY_LOT = 100
+FUNDS_PER_FOOD_BUY = 8
 
 # Defense / missile-base interaction stubs (hex radius; catalog 周圍 2).
 DEFENSE_RADIUS = 2
@@ -79,6 +90,9 @@ PLACEABLE_BUILDINGS = frozenset(
         "shipyard",
         "breakwater",
         "monument",
+        "bank",
+        "supermarket",
+        "shrine",
     }
 )
 COASTAL_BUILDINGS = frozenset({"harbor", "shipyard", "breakwater"})
@@ -103,13 +117,17 @@ SCORE_PER_BREAKWATER = 50
 SCORE_PER_OILFIELD = 120
 SCORE_PER_DEFENSE = 40
 SCORE_PER_MISSILE_BASE = 30
+SCORE_PER_BANK = 90
+SCORE_PER_SUPERMARKET = 40
+SCORE_PER_SHRINE = 800
 SCORE_PER_VILLAGE = 30
 SCORE_PER_TOWN = 80
 SCORE_PER_CITY = 150
 SCORE_FUNDS_DIV = 20
 SCORE_FOOD_DIV = 10
-# Soft happiness／安穩：每座紀念碑餵飽時人口成長加成（輕量）.
+# Soft happiness／安穩：每座紀念碑／神社餵飽時人口成長加成（輕量）.
 HAPPINESS_POP_PER_MONUMENT = 5
+HAPPINESS_POP_PER_SHRINE = 8
 
 # Turn yields (simplified short loop; not server-accurate).
 FOOD_PER_FARM = 100     # ~100 人農場 → 100 噸／回合
@@ -188,6 +206,10 @@ BUILDINGS = {
     "breakwater": {"label": "防波堤", "color": (128, 138, 152), "cost": COST_BREAKWATER},
     # 紀念碑色塊（定本國威；美術後補）
     "monument": {"label": "紀念碑", "color": (168, 140, 72), "cost": COST_MONUMENT},
+    # 變體民生／信仰色塊（銀行緩衝／超市買糧／神社分數；美術後補）
+    "bank": {"label": "銀行", "color": (72, 120, 168), "cost": COST_BANK},
+    "supermarket": {"label": "超市", "color": (200, 100, 80), "cost": COST_SUPERMARKET},
+    "shrine": {"label": "神社", "color": (180, 60, 70), "cost": COST_SHRINE},
 }
 
 # Monsters as solid color-block placeholders (squares on map; art later).
@@ -206,7 +228,7 @@ Coord = Tuple[int, int]
 LAND_TERRAINS = frozenset(k for k, v in TERRAIN.items() if v["land"])
 SETTLEMENT_TERRAINS = frozenset({"village", "town", "city"})
 BUILDABLE = frozenset({"grass"})  # 平地 only（村／町／都市請先整地；採掘場除外）
-SAVE_VERSION = 9
+SAVE_VERSION = 10
 
 
 def timber_funds(trees: int) -> int:
@@ -219,6 +241,11 @@ def timber_funds(trees: int) -> int:
 def food_export_funds(lots: int) -> int:
     """Funds gained for exporting ``lots`` food batches."""
     return max(0, int(lots)) * FUNDS_PER_FOOD_LOT
+
+
+def food_buy_cost(lots: int) -> int:
+    """Funds spent buying ``lots`` supermarket food batches."""
+    return max(0, int(lots)) * FUNDS_PER_FOOD_BUY
 
 
 def clamp_trees(trees: int) -> int:
@@ -279,8 +306,13 @@ def compute_island_score(
     villages: int,
     towns: int,
     cities: int,
+    banks: int = 0,
+    supermarkets: int = 0,
+    shrines: int = 0,
+    bank_deposit: int = 0,
 ) -> int:
-    """簡易島分數（順位／國威 stub；紀念碑權重大）."""
+    """簡易島分數（順位／國威 stub；紀念碑／神社權重大）."""
+    liquid = max(0, int(funds)) + max(0, int(bank_deposit))
     return (
         max(0, int(population)) * SCORE_PER_POP
         + max(0, int(land)) * SCORE_PER_LAND
@@ -295,10 +327,13 @@ def compute_island_score(
         + max(0, int(oilfields)) * SCORE_PER_OILFIELD
         + max(0, int(defenses)) * SCORE_PER_DEFENSE
         + max(0, int(missile_bases)) * SCORE_PER_MISSILE_BASE
+        + max(0, int(banks)) * SCORE_PER_BANK
+        + max(0, int(supermarkets)) * SCORE_PER_SUPERMARKET
+        + max(0, int(shrines)) * SCORE_PER_SHRINE
         + max(0, int(villages)) * SCORE_PER_VILLAGE
         + max(0, int(towns)) * SCORE_PER_TOWN
         + max(0, int(cities)) * SCORE_PER_CITY
-        + max(0, int(funds)) // SCORE_FUNDS_DIV
+        + liquid // SCORE_FUNDS_DIV
         + max(0, int(food)) // SCORE_FOOD_DIV
     )
 
@@ -450,6 +485,7 @@ class IslandState:
     funds: int = START_FUNDS
     food: int = START_FOOD
     population: int = START_POP
+    bank_deposit: int = 0  # 銀行緩衝（超 FUNDS_SOFT_CAP 溢出；無銀行則捨棄）
     name: str = "箱庭島"
     cells: List[List[Cell]] = field(default_factory=list)
     log: List[str] = field(default_factory=list)
@@ -552,6 +588,15 @@ class IslandState:
     def monument_count(self) -> int:
         return self.building_count("monument")
 
+    def has_bank(self) -> bool:
+        return self.building_count("bank") > 0
+
+    def has_supermarket(self) -> bool:
+        return self.building_count("supermarket") > 0
+
+    def shrine_count(self) -> int:
+        return self.building_count("shrine")
+
     def terrain_count(self, kind: str) -> int:
         return sum(1 for row in self.cells for c in row if c.terrain == kind)
 
@@ -559,8 +604,16 @@ class IslandState:
         """貿易輸出：島上須有港灣或造船所。"""
         return self.has_harbor() or self.has_shipyard()
 
+    def can_buy_food(self) -> bool:
+        """超市買糧：島上須有超市。"""
+        return self.has_supermarket()
+
+    def can_bank_transfer(self) -> bool:
+        """銀行存提：島上須有銀行。"""
+        return self.has_bank()
+
     def island_score(self) -> int:
-        """簡易島分數（順位／國威 stub；紀念碑權重大）."""
+        """簡易島分數（順位／國威 stub；紀念碑／神社權重大）."""
         return compute_island_score(
             population=self.population,
             funds=self.funds,
@@ -580,11 +633,18 @@ class IslandState:
             villages=self.terrain_count("village"),
             towns=self.terrain_count("town"),
             cities=self.terrain_count("city"),
+            banks=self.building_count("bank"),
+            supermarkets=self.building_count("supermarket"),
+            shrines=self.shrine_count(),
+            bank_deposit=self.bank_deposit,
         )
 
     def happiness_bonus(self) -> int:
-        """安穩 stub：紀念碑帶來的輕量人口成長加成。"""
-        return self.monument_count() * HAPPINESS_POP_PER_MONUMENT
+        """安穩 stub：紀念碑＋神社帶來的輕量人口成長加成。"""
+        return (
+            self.monument_count() * HAPPINESS_POP_PER_MONUMENT
+            + self.shrine_count() * HAPPINESS_POP_PER_SHRINE
+        )
 
     def missile_cost(self) -> int:
         """Cheaper 飛彈 when ≥1 飛彈基地 exists (local-first stub)."""
@@ -767,6 +827,83 @@ class IslandState:
             f"（經{route}，{lots} 批）"
         )
         return "ok"
+
+    def buy_food(self, lots: int = 1) -> str:
+        """超市買糧：資金→糧食（需超市；不推進回合）."""
+        if not self.can_buy_food():
+            return "需要超市才能買糧"
+        try:
+            lots = int(lots)
+        except (TypeError, ValueError):
+            lots = 1
+        if lots < 1:
+            return "購買批數須至少 1"
+        cost = food_buy_cost(lots)
+        if self.funds < cost:
+            return f"資金不足（買 {lots} 批需 {cost} 資金）"
+        gain = lots * FOOD_BUY_LOT
+        self.funds -= cost
+        self.food += gain
+        self._log(
+            f"回合 {self.turn}：超市買糧 {gain} 噸（−{cost} 資金，{lots} 批）"
+        )
+        return "ok"
+
+    def deposit_funds(self, amount: Optional[int] = None) -> str:
+        """銀行存款：流動資金→銀行緩衝（需銀行；預設一批 BANK_TRANSFER_LOT）."""
+        if not self.can_bank_transfer():
+            return "需要銀行才能存款"
+        if amount is None:
+            amount = BANK_TRANSFER_LOT
+        try:
+            amount = int(amount)
+        except (TypeError, ValueError):
+            amount = BANK_TRANSFER_LOT
+        if amount < 1:
+            return "存款額須至少 1"
+        if self.funds < amount:
+            return f"流動資金不足（存款需 {amount}）"
+        self.funds -= amount
+        self.bank_deposit += amount
+        self._log(
+            f"回合 {self.turn}：銀行存款 +{amount}（流動 {self.funds}／存 {self.bank_deposit}）"
+        )
+        return "ok"
+
+    def withdraw_funds(self, amount: Optional[int] = None) -> str:
+        """銀行提款：銀行緩衝→流動資金（需銀行；預設一批 BANK_TRANSFER_LOT）."""
+        if not self.can_bank_transfer():
+            return "需要銀行才能提款"
+        if amount is None:
+            amount = BANK_TRANSFER_LOT
+        try:
+            amount = int(amount)
+        except (TypeError, ValueError):
+            amount = BANK_TRANSFER_LOT
+        if amount < 1:
+            return "提款額須至少 1"
+        if self.bank_deposit < amount:
+            return f"銀行存款不足（提款需 {amount}，現存 {self.bank_deposit}）"
+        self.bank_deposit -= amount
+        self.funds += amount
+        self._log(
+            f"回合 {self.turn}：銀行提款 +{amount}（流動 {self.funds}／存 {self.bank_deposit}）"
+        )
+        return "ok"
+
+    def _apply_funds_cap(self) -> List[str]:
+        """流動資金軟上限：有銀行→溢出進存款；無銀行→捨棄（定本超額捨棄 stub）."""
+        notes: List[str] = []
+        if self.funds <= FUNDS_SOFT_CAP:
+            return notes
+        excess = self.funds - FUNDS_SOFT_CAP
+        self.funds = FUNDS_SOFT_CAP
+        if self.has_bank():
+            self.bank_deposit += excess
+            notes.append(f"銀行緩衝存款 +{excess}（流動上限 {FUNDS_SOFT_CAP}）")
+        else:
+            notes.append(f"資金超上限捨棄 −{excess}（無銀行；上限 {FUNDS_SOFT_CAP}）")
+        return notes
 
     def remove_building(self, i: int, j: int) -> str:
         c = self.cell(i, j)
@@ -1331,11 +1468,14 @@ class IslandState:
         # 海底油田：被動產資（無勞動）＋枯竭機率.
         notes.extend(self._oilfield_income_and_depletion())
 
+        # 流動資金軟上限：有銀行緩衝／無銀行捨棄.
+        notes.extend(self._apply_funds_cap())
+
         if self.food >= food_need:
             self.food -= food_need
             notes.append(f"人口 {self.population} 消耗糧食 −{food_need}")
             # Soft population stub: fed + farms/land → gentle growth.
-            # 紀念碑安穩：輕量人口加成（happiness stub）.
+            # 紀念碑／神社安穩：輕量人口加成（happiness stub）.
             growth = 0
             happy = self.happiness_bonus()
             if farms > 0 or self.land_count() >= 7 or happy > 0:
@@ -1344,7 +1484,7 @@ class IslandState:
             if growth:
                 if happy:
                     notes.append(
-                        f"人口 stub +{growth}（含紀念碑安穩 +{happy}）"
+                        f"人口 stub +{growth}（含紀念碑／神社安穩 +{happy}）"
                         f" → {self.population}"
                     )
                 else:
@@ -1376,9 +1516,15 @@ class IslandState:
         # Island score snapshot for status/log (順位／國威簡易統計).
         score = self.island_score()
         monuments = self.monument_count()
+        shrines = self.shrine_count()
+        score_bits = []
+        if monuments:
+            score_bits.append(f"紀念碑×{monuments}")
+        if shrines:
+            score_bits.append(f"神社×{shrines}")
         notes.append(
             f"島分數 {score}"
-            + (f"（紀念碑×{monuments}）" if monuments else "")
+            + (f"（{'／'.join(score_bits)}）" if score_bits else "")
         )
 
         self.turn += 1
@@ -1426,6 +1572,7 @@ class IslandState:
             "funds": self.funds,
             "food": self.food,
             "population": self.population,
+            "bank_deposit": int(self.bank_deposit),
             "cells": [[c.to_dict() for c in row] for row in self.cells],
             "log": list(self.log[-40:]),
             "comments": [c.to_dict() for c in self.comments],
@@ -1450,6 +1597,7 @@ class IslandState:
                     ]
                 )
         raw_id = data.get("id") or data.get("island_id") or "home"
+        raw_deposit = data.get("bank_deposit")
         state = cls(
             size=size,
             turn=int(data.get("turn") or 1),
@@ -1460,6 +1608,7 @@ class IslandState:
                 if data.get("population") is not None
                 else START_POP
             ),
+            bank_deposit=int(raw_deposit) if raw_deposit is not None else 0,
             name=str(data.get("name") or "箱庭島"),
             cells=parsed if ok else [],
             log=[str(x) for x in (data.get("log") or [])][-80:],

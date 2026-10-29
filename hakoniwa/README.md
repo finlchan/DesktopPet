@@ -19,6 +19,9 @@ not a flat top-down square grid rotated 45°.
 | Breakwater | 防波堤 200（臨海平地色塊）；鄰格減海嘯；自身不被海嘯摧毀 |
 | Oilfield | 掘削 200：陸→淺灘／淺灘→海／海→探油；油田被動產資；機率枯竭→海 |
 | Monument | 紀念碑 9999（平地色塊）；加島分數／安穩；抗怪獸踩踏；鄰格抑火災如森 |
+| Bank | 銀行 500（平地色塊）；流動資金上限 9999；溢出進存款緩衝；可手動存提 |
+| Supermarket | 超市 300（平地色塊）；資金買糧 100噸≈8資金（略貴於貿易輸出） |
+| Shrine | 神社 800（平地色塊）；大幅加島分數；餵飽時安穩人口加成 |
 | Forbidden | Orthographic-only / pure `rotate(45°)` (equal diamond W/H on screen) |
 | No | Under-tile thickness / skirts |
 

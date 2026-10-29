@@ -206,6 +206,27 @@ class IslandStore:
                 self._persist_home_unlocked()
             return msg, self._state.to_dict()
 
+    def buy_food(self, lots: int = 1) -> tuple[str, dict]:
+        with self._lock:
+            msg = self._state.buy_food(lots)
+            if msg == "ok":
+                self._persist_home_unlocked()
+            return msg, self._state.to_dict()
+
+    def deposit_funds(self, amount: int) -> tuple[str, dict]:
+        with self._lock:
+            msg = self._state.deposit_funds(amount)
+            if msg == "ok":
+                self._persist_home_unlocked()
+            return msg, self._state.to_dict()
+
+    def withdraw_funds(self, amount: int) -> tuple[str, dict]:
+        with self._lock:
+            msg = self._state.withdraw_funds(amount)
+            if msg == "ok":
+                self._persist_home_unlocked()
+            return msg, self._state.to_dict()
+
     def next_turn(self) -> tuple[list[str], dict]:
         with self._lock:
             notes = self._state.next_turn()

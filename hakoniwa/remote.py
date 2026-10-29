@@ -179,6 +179,15 @@ class HakoniwaRemote:
     def export_food(self, lots: int = 1) -> ActionOutcome:
         return self._action("/api/v1/island/export", {"lots": int(lots)})
 
+    def buy_food(self, lots: int = 1) -> ActionOutcome:
+        return self._action("/api/v1/island/buy-food", {"lots": int(lots)})
+
+    def deposit_funds(self, amount: int) -> ActionOutcome:
+        return self._action("/api/v1/island/deposit", {"amount": int(amount)})
+
+    def withdraw_funds(self, amount: int) -> ActionOutcome:
+        return self._action("/api/v1/island/withdraw", {"amount": int(amount)})
+
     def next_turn(self) -> ActionOutcome:
         return self._action("/api/v1/island/turn", {})
 
