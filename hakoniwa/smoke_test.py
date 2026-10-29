@@ -30,19 +30,23 @@ from hakoniwa.model import (
     COST_DEFENSE,
     COST_FACTORY,
     COST_FARM,
+    COST_HARBOR,
     COST_HARVEST,
     COST_LANDFILL,
     COST_LEVEL,
     COST_MISSILE,
     COST_MISSILE_BASE,
     COST_MISSILE_CHEAP,
+    COST_SHIPYARD,
     DEFENSE_RADIUS,
     DEFENSE_SPAWN_FACTOR,
     DEFENSE_STOMP_SAVE_CHANCE,
     FIRE_BASE_CHANCE,
+    FOOD_EXPORT_LOT,
     FOOD_PER_FARM,
     FOREST_FIRE_FACTOR,
     FUNDS_PER_FACTORY,
+    FUNDS_PER_FOOD_LOT,
     FUNDS_PER_TIMBER_LOT,
     MAX_GUEST_NAME,
     MAX_GUEST_TEXT,
@@ -57,6 +61,7 @@ from hakoniwa.model import (
     TREE_MIN,
     VILLAGE_TO_TOWN_POP,
     IslandState,
+    food_export_funds,
     timber_funds,
 )
 from hakoniwa.demos import island_summary, local_demo_islands, make_demo_coral, make_demo_pine
@@ -152,6 +157,12 @@ def test_catalog_costs():
     assert COST_MISSILE_CHEAP == 10
     assert COST_MISSILE_BASE == 300
     assert COST_DEFENSE == 1000
+    assert COST_HARBOR == 800
+    assert COST_SHIPYARD == 500
+    assert FOOD_EXPORT_LOT == 100
+    assert FUNDS_PER_FOOD_LOT == 5
+    assert food_export_funds(1) == 5
+    assert food_export_funds(3) == 15
     assert DEFENSE_RADIUS == 2
     assert 0 < DEFENSE_SPAWN_FACTOR < 1
     assert 0 < DEFENSE_STOMP_SAVE_CHANCE < 1
@@ -331,6 +342,110 @@ def test_forest_plant_grow_harvest():
 
     keys = {k for k, *_ in TOOL_SPECS}
     assert "harvest" in keys and "afforest" in keys
+
+
+def test_harbor_shipyard_trade():
+    """港灣／造船所須臨海；有其一可貿易輸出糧食→資金。"""
+    state = IslandState.new_game()
+    land = [(i, j) for i in range(20) for j in range(20) if state.is_land(i, j)]
+    assert land
+
+    # Ensure at least one coastal grass cell.
+    coastal = None
+    inlandish = None
+    for i, j in land:
+        c = state.cell(i, j)
+        if c.terrain == "dirt":
+            assert state.level_land(i, j) == "ok"
+        if state._adjacent_to_sea(i, j):
+            if coastal is None and state.cell(i, j).building is None:
+                coastal = (i, j)
+        else:
+            if inlandish is None and state.cell(i, j).building is None:
+                inlandish = (i, j)
+    # Opening map: all 7 land cells border sea on a small island — coastal must exist.
+    assert coastal is not None
+    ci, cj = coastal
+
+    # Export locked without harbor/shipyard.
+    assert state.can_trade_export() is False
+    assert state.export_food(1) != "ok"
+    ok, reason = tool_enabled(state, "export", None)
+    assert ok is False
+    assert "港灣" in reason or "造船" in reason
+
+    # Inland (if any) cannot host harbor.
+    if inlandish is not None:
+        ii, ij = inlandish
+        assert state.can_place_building(ii, ij, "harbor") is False
+        assert state.place_building(ii, ij, "harbor") != "ok"
+
+    # Harbor on coastal grass.
+    state.funds = max(state.funds, COST_HARBOR + COST_SHIPYARD + 50)
+    before = state.funds
+    assert state.can_place_building(ci, cj, "harbor")
+    assert state.place_building(ci, cj, "harbor") == "ok"
+    assert state.cell(ci, cj).building == "harbor"
+    assert state.funds == before - COST_HARBOR
+    assert state.has_harbor()
+    assert state.can_trade_export()
+
+    ok, _ = tool_enabled(state, "export", None)
+    # Need enough food for one lot.
+    state.food = max(state.food, FOOD_EXPORT_LOT)
+    ok, _ = tool_enabled(state, "export", None)
+    assert ok is True
+
+    food_before = state.food
+    funds_before = state.funds
+    turn_before = state.turn
+    assert state.export_food(1) == "ok"
+    assert state.food == food_before - FOOD_EXPORT_LOT
+    assert state.funds == funds_before + FUNDS_PER_FOOD_LOT
+    assert state.turn == turn_before  # does not advance turn
+
+    # Too many lots → fail.
+    state.food = FOOD_EXPORT_LOT - 1
+    assert state.export_food(1) != "ok"
+
+    # Shipyard alone also unlocks export (clear harbor, place shipyard elsewhere).
+    state.cell(ci, cj).building = None
+    assert state.has_harbor() is False
+    other = next(
+        (
+            (i, j)
+            for i, j in land
+            if (i, j) != (ci, cj)
+            and state.cell(i, j).terrain == "grass"
+            and state.cell(i, j).building is None
+            and state._adjacent_to_sea(i, j)
+        ),
+        None,
+    )
+    if other is None:
+        # Reuse coastal after clearing.
+        other = coastal
+        state.cell(*other).building = None
+        state.cell(*other).terrain = "grass"
+    oi, oj = other
+    state.funds = max(state.funds, COST_SHIPYARD)
+    assert state.place_building(oi, oj, "shipyard") == "ok"
+    assert state.has_shipyard()
+    assert state.can_trade_export()
+    state.food = FOOD_EXPORT_LOT * 2
+    funds_before = state.funds
+    assert state.export_food(2) == "ok"
+    assert state.funds == funds_before + food_export_funds(2)
+
+    # Toolbar keys present.
+    keys = {k for k, *_ in TOOL_SPECS}
+    assert "harbor" in keys and "shipyard" in keys and "export" in keys
+
+    # Round-trip save.
+    blob = state.to_dict()
+    loaded = IslandState.from_dict(blob)
+    assert loaded.building_count("shipyard") == 1
+    assert loaded.can_trade_export()
 
 
 def test_guestbook_local():
@@ -763,12 +878,14 @@ def test_defense_and_missile_base():
 
 def test_tool_enabled_rules():
     state = IslandState.new_game()
-    # No selection → cell tools disabled; wait needs a monster.
+    # No selection → cell tools disabled; wait needs a monster; export needs port.
     for key, *_ in TOOL_SPECS:
         ok, reason = tool_enabled(state, key, None)
         assert ok is False
         if key == "wait":
             assert "怪獸" in reason
+        elif key == "export":
+            assert "港灣" in reason or "造船" in reason
         else:
             assert "選格" in reason
 
@@ -1259,6 +1376,7 @@ def main():
     test_settlements_and_disasters()
     test_monster_events()
     test_defense_and_missile_base()
+    test_harbor_shipyard_trade()
     test_local_demos()
     test_save_load_roundtrip()
     test_remote_url_normalize()

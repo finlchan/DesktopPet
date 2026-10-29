@@ -4,7 +4,8 @@ v1 deepen: catalog place costs, terrain commands (整地／填海／植林／伐
 forest tree growth + timber→funds, farm food + factory funds turn processing,
 optional population stub, visitor guestbook (name + text), color-block monster
 events (飛彈 stub), village/town/city terrain evolution + fire/typhoon/quake
-disaster stubs, 防衛設施／飛彈基地 color-block buildings (spawn/stomp/missile stubs).
+disaster stubs, 防衛設施／飛彈基地 color-block buildings (spawn/stomp/missile stubs),
+港灣／造船所／貿易輸出（臨海色塊；糧食→資金）.
 Color-block placeholders only — user art later.
 """
 
@@ -37,6 +38,8 @@ COST_MISSILE = 20       # ミサイル発射 stub（定本 20 億／發；無基
 COST_MISSILE_CHEAP = 10 # 有飛彈基地時較便宜
 COST_MISSILE_BASE = 300 # ミサイル基地（定本 300 億）
 COST_DEFENSE = 1000     # 防衛施設（定本 1000 億）
+COST_HARBOR = 800       # 港灣（變體／改造常見 800 億；須臨海）
+COST_SHIPYARD = 500     # 造船所（變體常見 500 億；須臨海）
 
 # Forest tree stock (catalog 木 100～20000；+100／回合；新植林 100).
 TREE_MIN = 100
@@ -46,13 +49,21 @@ TREE_GROWTH_PER_TURN = 100
 TIMBER_LOT = 100
 FUNDS_PER_TIMBER_LOT = 5
 
+# Food export (定本 10000 噸≈10 億；本機短局縮為 100 噸≈5 資金).
+# 需島上有港灣或造船所；不推進回合.
+FOOD_EXPORT_LOT = 100
+FUNDS_PER_FOOD_LOT = 5
+
 # Defense / missile-base interaction stubs (hex radius; catalog 周圍 2).
 DEFENSE_RADIUS = 2
 DEFENSE_SPAWN_FACTOR = 0.25   # spawn chance × this when any land near a defense
 DEFENSE_STOMP_SAVE_CHANCE = 0.65  # near defense: chance stomp skips building/terrain wipe
 
-# Placeable building kinds on 平地.
-PLACEABLE_BUILDINGS = frozenset({"farm", "factory", "defense", "missile_base"})
+# Placeable building kinds on 平地（港灣／造船所另須臨海）.
+PLACEABLE_BUILDINGS = frozenset(
+    {"farm", "factory", "defense", "missile_base", "harbor", "shipyard"}
+)
+COASTAL_BUILDINGS = frozenset({"harbor", "shipyard"})
 
 # Turn yields (simplified short loop; not server-accurate).
 FOOD_PER_FARM = 100     # ~100 人農場 → 100 噸／回合
@@ -108,6 +119,9 @@ BUILDINGS = {
     # 軍事色塊佔位（定本費用；美術後補）
     "defense": {"label": "防衛設施", "color": (48, 88, 160), "cost": COST_DEFENSE},
     "missile_base": {"label": "飛彈基地", "color": (160, 72, 48), "cost": COST_MISSILE_BASE},
+    # 港灣／造船所色塊（臨海；美術後補）
+    "harbor": {"label": "港灣", "color": (40, 140, 168), "cost": COST_HARBOR},
+    "shipyard": {"label": "造船所", "color": (56, 72, 112), "cost": COST_SHIPYARD},
 }
 
 # Monsters as solid color-block placeholders (squares on map; art later).
@@ -134,6 +148,11 @@ def timber_funds(trees: int) -> int:
     if trees <= 0:
         return 0
     return (int(trees) // TIMBER_LOT) * FUNDS_PER_TIMBER_LOT
+
+
+def food_export_funds(lots: int) -> int:
+    """Funds gained for exporting ``lots`` food batches."""
+    return max(0, int(lots)) * FUNDS_PER_FOOD_LOT
 
 
 def clamp_trees(trees: int) -> int:
@@ -329,6 +348,13 @@ class IslandState:
     def _adjacent_to_land(self, i: int, j: int) -> bool:
         return any(self.is_land(ni, nj) for ni, nj in neighbors(i, j, self.size))
 
+    def _adjacent_to_sea(self, i: int, j: int) -> bool:
+        """True if any neighbor is 海 or 淺灘 (coastal land for 港灣／造船所)."""
+        for ni, nj in neighbors(i, j, self.size):
+            if self.cell(ni, nj).terrain in ("sea", "shallow"):
+                return True
+        return False
+
     def cells_within(self, i: int, j: int, radius: int) -> List[Coord]:
         """Hex BFS: all in-bounds cells within ``radius`` steps (includes self)."""
         if radius < 0:
@@ -355,6 +381,16 @@ class IslandState:
 
     def has_missile_base(self) -> bool:
         return self.building_count("missile_base") > 0
+
+    def has_harbor(self) -> bool:
+        return self.building_count("harbor") > 0
+
+    def has_shipyard(self) -> bool:
+        return self.building_count("shipyard") > 0
+
+    def can_trade_export(self) -> bool:
+        """貿易輸出：島上須有港灣或造船所。"""
+        return self.has_harbor() or self.has_shipyard()
 
     def missile_cost(self) -> int:
         """Cheaper 飛彈 when ≥1 飛彈基地 exists (local-first stub)."""
@@ -410,6 +446,19 @@ class IslandState:
         c = self.cell(i, j)
         return c.terrain == "forest"
 
+    def can_place_building(self, i: int, j: int, kind: str) -> bool:
+        """Whether ``kind`` can be placed at (i,j) ignoring funds."""
+        if kind not in PLACEABLE_BUILDINGS:
+            return False
+        if self.monster_at(i, j) is not None:
+            return False
+        c = self.cell(i, j)
+        if c.terrain not in BUILDABLE or c.building is not None:
+            return False
+        if kind in COASTAL_BUILDINGS and not self._adjacent_to_sea(i, j):
+            return False
+        return True
+
     def place_building(self, i: int, j: int, kind: str) -> str:
         if kind not in PLACEABLE_BUILDINGS:
             return "未知建築"
@@ -420,6 +469,9 @@ class IslandState:
             return "只能在平地上建設（請先整地）"
         if c.building is not None:
             return "此格已有建築（請先移除或整地）"
+        if kind in COASTAL_BUILDINGS and not self._adjacent_to_sea(i, j):
+            label = BUILDINGS[kind]["label"]
+            return f"{label}須建在臨海的平地（鄰接海／淺灘）"
         cost = int(BUILDINGS[kind]["cost"])
         if self.funds < cost:
             return f"資金不足（需要 {cost}）"
@@ -427,6 +479,34 @@ class IslandState:
         c.building = kind
         label = BUILDINGS[kind]["label"]
         self._log(f"回合 {self.turn}：在 ({i},{j}) 建設{label}（−{cost} 資金）")
+        return "ok"
+
+    def export_food(self, lots: int = 1) -> str:
+        """貿易輸出：糧食→資金（需港灣或造船所；不推進回合）."""
+        if not self.can_trade_export():
+            return "需要港灣或造船所才能貿易輸出"
+        try:
+            lots = int(lots)
+        except (TypeError, ValueError):
+            lots = 1
+        if lots < 1:
+            return "輸出批數須至少 1"
+        need = lots * FOOD_EXPORT_LOT
+        if self.food < need:
+            return f"糧食不足（輸出 {lots} 批需 {need} 噸）"
+        gain = food_export_funds(lots)
+        self.food -= need
+        self.funds += gain
+        via = []
+        if self.has_harbor():
+            via.append("港灣")
+        if self.has_shipyard():
+            via.append("造船所")
+        route = "／".join(via) if via else "貿易"
+        self._log(
+            f"回合 {self.turn}：貿易輸出 {need} 噸糧食→+{gain} 資金"
+            f"（經{route}，{lots} 批）"
+        )
         return "ok"
 
     def remove_building(self, i: int, j: int) -> str:
