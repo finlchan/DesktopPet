@@ -29,6 +29,8 @@ from hakoniwa.model import (
     COST_LEVEL,
     FOOD_PER_FARM,
     FUNDS_PER_FACTORY,
+    MAX_GUEST_NAME,
+    MAX_GUEST_TEXT,
     IslandState,
 )
 from hakoniwa.remote import HakoniwaRemoteError, normalize_base_url
@@ -159,6 +161,22 @@ def test_new_island_and_loop():
     assert state.food > 0
 
 
+def test_guestbook_local():
+    state = IslandState.new_game()
+    assert state.list_comments() == []
+    assert state.add_comment("", "hi") != "ok"
+    assert state.add_comment("Ada", "") != "ok"
+    assert state.add_comment("x" * (MAX_GUEST_NAME + 1), "hi") != "ok"
+    assert state.add_comment("Ada", "y" * (MAX_GUEST_TEXT + 1)) != "ok"
+    assert state.add_comment("Ada", "你好箱庭島") == "ok"
+    assert state.add_comment("Bob", "second") == "ok"
+    comments = state.list_comments()
+    assert len(comments) == 2
+    assert comments[0].name == "Ada" and comments[0].text == "你好箱庭島"
+    assert comments[1].name == "Bob"
+    assert any("訪客留言" in line for line in state.log)
+
+
 def test_save_load_roundtrip():
     state = IslandState.new_game()
     # Level + factory on plains.
@@ -172,16 +190,20 @@ def test_save_load_roundtrip():
         else:
             continue
         break
+    assert state.add_comment("Visitor", "nice island") == "ok"
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "island.json"
         save_island(state, path)
         raw = json.loads(path.read_text(encoding="utf-8"))
         assert raw["version"] == 2
+        assert len(raw["comments"]) == 1
         loaded = load_island(path)
         assert loaded is not None
         assert loaded.funds == state.funds
         assert loaded.building_count("factory") == 1
         assert loaded.land_count() == 7
+        assert len(loaded.list_comments()) == 1
+        assert loaded.list_comments()[0].text == "nice island"
 
 
 def test_remote_url_normalize():
@@ -211,6 +233,12 @@ def test_dialog_import_offscreen():
     assert dlg.state.land_count() == 7
     assert dlg._online is False
     assert "本機" in dlg.conn_status.text()
+    assert dlg.guestbook_view is not None
+    assert dlg.guest_name is not None
+    assert dlg.guest_text is not None
+    dlg.state.add_comment("Smoke", "panel ok")
+    dlg._refresh_ui()
+    assert "Smoke" in dlg.guestbook_view.toPlainText()
     dlg.close()
     del app
 
@@ -286,11 +314,27 @@ def test_server_api_if_available():
         assert removed["ok"] is True
         assert removed["island"]["cells"][i][j]["building"] is None
 
+        listed = client.get("/api/v1/island/comments").json()
+        assert listed["comments"] == []
+        posted = client.post(
+            "/api/v1/island/comments",
+            json={"name": "NasGuest", "text": "hello from API"},
+        ).json()
+        assert posted["ok"] is True
+        assert len(posted["comments"]) == 1
+        assert posted["comments"][0]["name"] == "NasGuest"
+        listed2 = client.get("/api/v1/island/comments").json()
+        assert len(listed2["comments"]) == 1
+        # Island snapshot also carries guestbook.
+        snap = client.get("/api/v1/island").json()
+        assert len(snap.get("comments") or []) == 1
+
 
 def main():
     test_grid_geometry()
     test_catalog_costs()
     test_new_island_and_loop()
+    test_guestbook_local()
     test_save_load_roundtrip()
     test_remote_url_normalize()
     test_dialog_import_offscreen()

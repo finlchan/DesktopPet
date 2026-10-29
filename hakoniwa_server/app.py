@@ -132,3 +132,31 @@ def afforest(body: CellAction) -> ActionResult:
 def advance_turn() -> ActionResult:
     notes, island = store.next_turn()
     return ActionResult(ok=True, notes=notes, island=island)
+
+
+class CommentBody(BaseModel):
+    name: str = Field(..., min_length=1, description="visitor display name")
+    text: str = Field(..., min_length=1, description="guestbook message")
+
+
+class CommentsResult(BaseModel):
+    ok: bool
+    error: Optional[str] = None
+    comments: List[Dict[str, Any]]
+
+
+@app.get("/api/v1/island/comments", dependencies=[Depends(require_api_key)])
+def get_comments() -> Dict[str, Any]:
+    return {"comments": store.list_comments()}
+
+
+@app.post(
+    "/api/v1/island/comments",
+    response_model=CommentsResult,
+    dependencies=[Depends(require_api_key)],
+)
+def post_comment(body: CommentBody) -> CommentsResult:
+    msg, comments = store.add_comment(body.name, body.text)
+    if msg != "ok":
+        return CommentsResult(ok=False, error=msg, comments=comments)
+    return CommentsResult(ok=True, comments=comments)
