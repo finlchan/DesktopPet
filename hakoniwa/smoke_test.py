@@ -15,10 +15,14 @@ if str(ROOT) not in sys.path:
 
 from hakoniwa.grid import (
     GRID_SIZE,
+    OBLIQUE_ELEVATION_DEG,
+    OBLIQUE_Y_SCALE,
     cell_center,
+    cell_screen_size,
     center_cluster,
     diamond_vertices,
     neighbors,
+    oblique_projection_params,
     point_in_diamond,
 )
 from hakoniwa.model import (
@@ -61,20 +65,65 @@ def test_grid_geometry():
     ci, cj = land[0]
     assert len(neighbors(ci, cj)) == 6
 
-    # T-junction: W of (1,0) equals mid of E–S on (0,0) for 1:1 cell.
+    # T-junction: W of (1,0) equals mid of E–S on (0,0) for logical 1:1 + oblique.
     cell = 64.0
+    w, h = cell_screen_size(cell)
     c00 = cell_center(0, 0, cell)
     c10 = cell_center(1, 0, cell)
-    e = (c00[0] + cell / 2, c00[1])
-    s = (c00[0], c00[1] + cell / 2)
+    e = (c00[0] + w / 2, c00[1])
+    s = (c00[0], c00[1] + h / 2)
     mid_es = ((e[0] + s[0]) / 2, (e[1] + s[1]) / 2)
-    w10 = (c10[0] - cell / 2, c10[1])
+    w10 = (c10[0] - w / 2, c10[1])
     assert abs(mid_es[0] - w10[0]) < 1e-6 and abs(mid_es[1] - w10[1]) < 1e-6
 
     verts = diamond_vertices(0, 0, cell)
     assert len(verts) == 4
     assert point_in_diamond(0, 0, 0, 0, cell)
     assert not point_in_diamond(cell, 0, 0, 0, cell)
+
+
+def test_oblique_foreshortening_invariant():
+    """箱庭斜視 must foreshorten depth — reject flat rotate(45°) orthographic.
+
+    Correct: screen diamond H/W == sin(45°) ≈ 0.707 (oblique affine).
+    Wrong regression: H/W == 1.0 (top-down squares rotated 45° only).
+    """
+    import math
+
+    params = oblique_projection_params()
+    assert params["kind"] == "oblique_affine"
+    assert params["elevation_deg"] == OBLIQUE_ELEVATION_DEG == 45.0
+    assert params["forbidden"] == "orthographic_rotate_only"
+    assert abs(float(params["y_scale"]) - math.sin(math.radians(45.0))) < 1e-12
+    assert abs(OBLIQUE_Y_SCALE - math.sin(math.radians(45.0))) < 1e-12
+    # Hard floor: must not be orthographic (y_scale == 1).
+    assert OBLIQUE_Y_SCALE < 0.95, OBLIQUE_Y_SCALE
+    assert OBLIQUE_Y_SCALE > 0.5, OBLIQUE_Y_SCALE
+
+    cell = 64.0
+    w, h = cell_screen_size(cell)
+    assert abs(w - cell) < 1e-9
+    assert abs(h / w - OBLIQUE_Y_SCALE) < 1e-9
+
+    n, e, s, west = diamond_vertices(0.0, 0.0, cell)
+    width = e[0] - west[0]
+    height = s[1] - n[1]
+    ratio = height / width
+    assert abs(ratio - OBLIQUE_Y_SCALE) < 1e-6, (ratio, OBLIQUE_Y_SCALE)
+    # Regression guard vs wrong-flat-rotated-grid (equal diagonals).
+    assert abs(ratio - 1.0) > 0.1, ratio
+
+    # Lattice Y basis must also be foreshortened (not only the polygon).
+    # Even→even along j: step is v = (W/2, −H/2).
+    c00 = cell_center(0, 0, cell)
+    c01 = cell_center(0, 1, cell)
+    assert abs((c01[0] - c00[0]) - w / 2.0) < 1e-6
+    assert abs((c01[1] - c00[1]) - (-h / 2.0)) < 1e-6
+    # Map height span must be shorter than width span (foreshortened island disc).
+    from hakoniwa.grid import map_bounds
+
+    min_x, min_y, max_x, max_y = map_bounds(GRID_SIZE, cell)
+    assert (max_y - min_y) < (max_x - min_x) * 0.95
 
 
 def test_catalog_costs():
@@ -547,7 +596,10 @@ def test_defense_and_missile_base():
         (
             (x, y)
             for x, y in state.cells_within(di, dj, DEFENSE_RADIUS)
-            if (x, y) != (di, dj) and state.is_land(x, y)
+            if (x, y) != (di, dj)
+            and state.is_land(x, y)
+            # Do not overwrite the missile base — needed for round-trip asserts.
+            and state.cell(x, y).building != "missile_base"
         ),
         None,
     )
@@ -898,8 +950,97 @@ def test_server_api_if_available():
         assert listed_pine["comments"][0]["text"] == "松風好美"
 
 
+def test_oblique_preview_png_if_possible():
+    """Write a small foreshortening proof PNG when Qt offscreen is available."""
+    import json
+    import os
+
+    out_dir = Path(__file__).resolve().parents[1] / "hakoniwa" / "testdata"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    params_path = out_dir / "oblique_projection.json"
+    params_path.write_text(
+        json.dumps(oblique_projection_params(), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    # Always emit a pure-Python comparison strip (no Qt required).
+    _write_foreshorten_proof_png(out_dir / "oblique_foreshorten_proof.png")
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    try:
+        from PySide6.QtWidgets import QApplication
+        from hakoniwa.view import HakoniwaMapWidget
+    except Exception as exc:  # pragma: no cover - optional GUI
+        print(f"oblique preview: skip map grab ({exc})")
+        return
+
+    app = QApplication.instance() or QApplication([])
+    state = IslandState.new_game()
+    widget = HakoniwaMapWidget(state)
+    widget.resize(640, 480)
+    widget.show()
+    app.processEvents()
+    pix = widget.grab()
+    map_path = out_dir / "oblique_map_offscreen.png"
+    assert pix.save(str(map_path), "PNG"), map_path
+    print(f"oblique preview: wrote {map_path}")
+
+
+def _write_foreshorten_proof_png(path: Path) -> None:
+    """PNG proving foreshortened diamond ≠ pure rotate (equal W/H).
+
+    Left: wrong orthographic rotate (H/W=1). Right: 箱庭斜視 (H/W=sin45).
+    Minimal uncompressed RGB PNG, no third-party deps.
+    """
+    import struct
+    import zlib
+
+    width, height = 320, 160
+    rows = []
+    for y in range(height):
+        row = bytearray()
+        for x in range(width):
+            # Split canvas: left = wrong, right = correct.
+            if x < width // 2:
+                cx, cy = 80.0, 80.0
+                hw, hh = 48.0, 48.0  # flat rotate (bad)
+                bg = (40, 48, 56)
+                fill = (70, 130, 200)
+            else:
+                cx, cy = 240.0, 80.0
+                hw, hh = 48.0, 48.0 * OBLIQUE_Y_SCALE  # foreshortened (good)
+                bg = (28, 48, 72)
+                fill = (64, 160, 210)
+            # Point-in-diamond via Manhattan in scaled axes.
+            dx = abs(x - cx) / hw
+            dy = abs(y - cy) / hh
+            if dx + dy <= 1.0:
+                row.extend(fill)
+            else:
+                row.extend(bg)
+        rows.append(b"\x00" + bytes(row))
+    raw = b"".join(rows)
+    compressed = zlib.compress(raw, 9)
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + tag
+            + data
+            + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+        )
+
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", compressed) + chunk(
+        b"IEND", b""
+    )
+    path.write_bytes(png)
+    print(f"oblique proof: wrote {path} (params y_scale={OBLIQUE_Y_SCALE:.6f})")
+
+
 def main():
     test_grid_geometry()
+    test_oblique_foreshortening_invariant()
     test_catalog_costs()
     test_new_island_and_loop()
     test_guestbook_local()
@@ -911,6 +1052,7 @@ def main():
     test_remote_url_normalize()
     test_tool_enabled_rules()
     test_dialog_import_offscreen()
+    test_oblique_preview_png_if_possible()
     test_server_api_if_available()
     print("hakoniwa smoke_test: OK")
 
