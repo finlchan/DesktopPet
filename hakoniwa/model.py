@@ -9,7 +9,8 @@ buildings (spawn/stomp/missile stubs), 港灣／造船所／貿易輸出（臨�
 紀念碑色塊＋簡易島分數／安穩（國威；抗踩踏；抑火災如森）,
 山岳地形＋採掘場色塊（僅山上；產資）,
 防波堤色塊（臨海；減海嘯）＋海底油田（掘削／探油；被動產資；枯竭）,
-銀行／超市／神社色塊（變體：資金緩衝、買糧、分數／安穩加成）.
+銀行／超市／神社色塊（變體：資金緩衝、買糧、分數／安穩加成）,
+公園色塊＋誘致活動（都市計畫：安穩／生村加成；定本誘致 1000）.
 Color-block placeholders only — user art later.
 """
 
@@ -52,6 +53,8 @@ COST_MONUMENT = 9999    # 記念碑建造（定本 9999 億；國威／順位用
 COST_BANK = 500         # 銀行（變體／App：超上限存款緩衝）
 COST_SUPERMARKET = 300  # 超市（變體：資金買糧食）
 COST_SHRINE = 800       # 神社（變體：島分數／安穩加成）
+COST_PARK = 250         # 公園（變體／都市計畫：安穩＋誘發村落）
+COST_ATTRACT = 1000     # 誘致活動（定本 1000 億；當回合人口更易增）
 
 # Forest tree stock (catalog 木 100～20000；+100／回合；新植林 100).
 TREE_MIN = 100
@@ -93,6 +96,7 @@ PLACEABLE_BUILDINGS = frozenset(
         "bank",
         "supermarket",
         "shrine",
+        "park",
     }
 )
 COASTAL_BUILDINGS = frozenset({"harbor", "shipyard", "breakwater"})
@@ -120,14 +124,20 @@ SCORE_PER_MISSILE_BASE = 30
 SCORE_PER_BANK = 90
 SCORE_PER_SUPERMARKET = 40
 SCORE_PER_SHRINE = 800
+SCORE_PER_PARK = 150
 SCORE_PER_VILLAGE = 30
 SCORE_PER_TOWN = 80
 SCORE_PER_CITY = 150
 SCORE_FUNDS_DIV = 20
 SCORE_FOOD_DIV = 10
-# Soft happiness／安穩：每座紀念碑／神社餵飽時人口成長加成（輕量）.
+# Soft happiness／安穩：每座紀念碑／神社／公園餵飽時人口成長加成（輕量）.
 HAPPINESS_POP_PER_MONUMENT = 5
 HAPPINESS_POP_PER_SHRINE = 8
+HAPPINESS_POP_PER_PARK = 6
+# 公園鄰格提高平地→村機率（都市計畫 stub）.
+PARK_SETTLEMENT_SPAWN_BONUS = 0.15
+# 誘致活動：下一次 next_turn 餵飽時額外人頭.
+ATTRACT_POP_BONUS = 40
 
 # Turn yields (simplified short loop; not server-accurate).
 FOOD_PER_FARM = 100     # ~100 人農場 → 100 噸／回合
@@ -210,6 +220,8 @@ BUILDINGS = {
     "bank": {"label": "銀行", "color": (72, 120, 168), "cost": COST_BANK},
     "supermarket": {"label": "超市", "color": (200, 100, 80), "cost": COST_SUPERMARKET},
     "shrine": {"label": "神社", "color": (180, 60, 70), "cost": COST_SHRINE},
+    # 都市計畫色塊（公園：安穩／生村；美術後補）
+    "park": {"label": "公園", "color": (72, 168, 96), "cost": COST_PARK},
 }
 
 # Monsters as solid color-block placeholders (squares on map; art later).
@@ -228,7 +240,7 @@ Coord = Tuple[int, int]
 LAND_TERRAINS = frozenset(k for k, v in TERRAIN.items() if v["land"])
 SETTLEMENT_TERRAINS = frozenset({"village", "town", "city"})
 BUILDABLE = frozenset({"grass"})  # 平地 only（村／町／都市請先整地；採掘場除外）
-SAVE_VERSION = 10
+SAVE_VERSION = 11
 
 
 def timber_funds(trees: int) -> int:
@@ -309,9 +321,10 @@ def compute_island_score(
     banks: int = 0,
     supermarkets: int = 0,
     shrines: int = 0,
+    parks: int = 0,
     bank_deposit: int = 0,
 ) -> int:
-    """簡易島分數（順位／國威 stub；紀念碑／神社權重大）."""
+    """簡易島分數（順位／國威 stub；紀念碑／神社／公園權重大）."""
     liquid = max(0, int(funds)) + max(0, int(bank_deposit))
     return (
         max(0, int(population)) * SCORE_PER_POP
@@ -330,6 +343,7 @@ def compute_island_score(
         + max(0, int(banks)) * SCORE_PER_BANK
         + max(0, int(supermarkets)) * SCORE_PER_SUPERMARKET
         + max(0, int(shrines)) * SCORE_PER_SHRINE
+        + max(0, int(parks)) * SCORE_PER_PARK
         + max(0, int(villages)) * SCORE_PER_VILLAGE
         + max(0, int(towns)) * SCORE_PER_TOWN
         + max(0, int(cities)) * SCORE_PER_CITY
@@ -486,6 +500,7 @@ class IslandState:
     food: int = START_FOOD
     population: int = START_POP
     bank_deposit: int = 0  # 銀行緩衝（超 FUNDS_SOFT_CAP 溢出；無銀行則捨棄）
+    attract_pending: bool = False  # 誘致活動：下一次 next_turn 額外人口
     name: str = "箱庭島"
     cells: List[List[Cell]] = field(default_factory=list)
     log: List[str] = field(default_factory=list)
@@ -597,6 +612,9 @@ class IslandState:
     def shrine_count(self) -> int:
         return self.building_count("shrine")
 
+    def park_count(self) -> int:
+        return self.building_count("park")
+
     def terrain_count(self, kind: str) -> int:
         return sum(1 for row in self.cells for c in row if c.terrain == kind)
 
@@ -636,14 +654,16 @@ class IslandState:
             banks=self.building_count("bank"),
             supermarkets=self.building_count("supermarket"),
             shrines=self.shrine_count(),
+            parks=self.park_count(),
             bank_deposit=self.bank_deposit,
         )
 
     def happiness_bonus(self) -> int:
-        """安穩 stub：紀念碑＋神社帶來的輕量人口成長加成。"""
+        """安穩 stub：紀念碑＋神社＋公園帶來的輕量人口成長加成。"""
         return (
             self.monument_count() * HAPPINESS_POP_PER_MONUMENT
             + self.shrine_count() * HAPPINESS_POP_PER_SHRINE
+            + self.park_count() * HAPPINESS_POP_PER_PARK
         )
 
     def missile_cost(self) -> int:
@@ -888,6 +908,20 @@ class IslandState:
         self.funds += amount
         self._log(
             f"回合 {self.turn}：銀行提款 +{amount}（流動 {self.funds}／存 {self.bank_deposit}）"
+        )
+        return "ok"
+
+    def attract_population(self) -> str:
+        """誘致活動：定本 1000；標記下一次 next_turn 人口更易增（不推進回合）."""
+        if self.attract_pending:
+            return "本島已安排誘致活動（請先推進回合）"
+        if self.funds < COST_ATTRACT:
+            return f"資金不足（誘致活動需要 {COST_ATTRACT}）"
+        self.funds -= COST_ATTRACT
+        self.attract_pending = True
+        self._log(
+            f"回合 {self.turn}：誘致活動（−{COST_ATTRACT} 資金）"
+            f" — 下回合餵飽時人口更易增加"
         )
         return "ok"
 
@@ -1212,19 +1246,26 @@ class IslandState:
         )
 
     def _near_farm_or_settlement(self, i: int, j: int) -> bool:
-        """Empty 平地 near 農場 or 村／町／都市 can grow a village."""
+        """Empty 平地 near 農場／公園 or 村／町／都市 can grow a village."""
         for ni, nj in neighbors(i, j, self.size):
             c = self.cell(ni, nj)
-            if c.building == "farm":
+            if c.building in ("farm", "park"):
                 return True
             if c.terrain in SETTLEMENT_TERRAINS:
                 return True
         return False
 
+    def _near_park(self, i: int, j: int) -> bool:
+        """True if any neighbor has a 公園 (都市計畫生村加成)."""
+        return any(
+            self.cell(ni, nj).building == "park"
+            for ni, nj in neighbors(i, j, self.size)
+        )
+
     def _evolve_settlements(self) -> List[str]:
-        """村／町／都市 terrain evolution on plain land near farms (simplified)."""
+        """村／町／都市 terrain evolution on plain land near farms/parks (simplified)."""
         notes: List[str] = []
-        # Spawn: empty 平地 adjacent to farm/settlement → 村 (~20%/turn).
+        # Spawn: empty 平地 adjacent to farm/park/settlement → 村 (~20%/turn；近公園更高).
         spawn_sites: List[Coord] = []
         for i in range(self.size):
             for j in range(self.size):
@@ -1236,7 +1277,10 @@ class IslandState:
                 if self._near_farm_or_settlement(i, j):
                     spawn_sites.append((i, j))
         for i, j in spawn_sites:
-            if random.random() >= SETTLEMENT_SPAWN_CHANCE:
+            chance = SETTLEMENT_SPAWN_CHANCE
+            if self._near_park(i, j):
+                chance = min(1.0, chance + PARK_SETTLEMENT_SPAWN_BONUS)
+            if random.random() >= chance:
                 continue
             self.cell(i, j).terrain = "village"
             notes.append(f"平地出現村落 ({i},{j})")
@@ -1471,20 +1515,32 @@ class IslandState:
         # 流動資金軟上限：有銀行緩衝／無銀行捨棄.
         notes.extend(self._apply_funds_cap())
 
+        # 誘致活動：本回合消耗標記；僅餵飽時生效.
+        attract_bonus = 0
+        if self.attract_pending:
+            attract_bonus = ATTRACT_POP_BONUS
+            self.attract_pending = False
+            notes.append(f"誘致活動生效（人口加成 +{attract_bonus}）")
+
         if self.food >= food_need:
             self.food -= food_need
             notes.append(f"人口 {self.population} 消耗糧食 −{food_need}")
             # Soft population stub: fed + farms/land → gentle growth.
-            # 紀念碑／神社安穩：輕量人口加成（happiness stub）.
+            # 紀念碑／神社／公園安穩＋誘致：輕量人口加成.
             growth = 0
             happy = self.happiness_bonus()
-            if farms > 0 or self.land_count() >= 7 or happy > 0:
-                growth = random.randint(0, 20) + farms * 5 + happy
+            if farms > 0 or self.land_count() >= 7 or happy > 0 or attract_bonus > 0:
+                growth = random.randint(0, 20) + farms * 5 + happy + attract_bonus
             self.population = min(20000, self.population + growth)
             if growth:
+                bits = []
                 if happy:
+                    bits.append(f"安穩 +{happy}")
+                if attract_bonus:
+                    bits.append(f"誘致 +{attract_bonus}")
+                if bits:
                     notes.append(
-                        f"人口 stub +{growth}（含紀念碑／神社安穩 +{happy}）"
+                        f"人口 stub +{growth}（含{'／'.join(bits)}）"
                         f" → {self.population}"
                     )
                 else:
@@ -1497,6 +1553,8 @@ class IslandState:
             notes.append(
                 f"糧食不足（僅 {starved}）！人口 −{loss} → {self.population}"
             )
+            if attract_bonus:
+                notes.append("誘致活動因糧食不足未能增人")
 
         # Forest growth (catalog +100本／回合，上限 TREE_MAX).
         notes.extend(self._grow_forests())
@@ -1517,11 +1575,14 @@ class IslandState:
         score = self.island_score()
         monuments = self.monument_count()
         shrines = self.shrine_count()
+        parks = self.park_count()
         score_bits = []
         if monuments:
             score_bits.append(f"紀念碑×{monuments}")
         if shrines:
             score_bits.append(f"神社×{shrines}")
+        if parks:
+            score_bits.append(f"公園×{parks}")
         notes.append(
             f"島分數 {score}"
             + (f"（{'／'.join(score_bits)}）" if score_bits else "")
@@ -1573,6 +1634,7 @@ class IslandState:
             "food": self.food,
             "population": self.population,
             "bank_deposit": int(self.bank_deposit),
+            "attract_pending": bool(self.attract_pending),
             "cells": [[c.to_dict() for c in row] for row in self.cells],
             "log": list(self.log[-40:]),
             "comments": [c.to_dict() for c in self.comments],
@@ -1598,6 +1660,7 @@ class IslandState:
                 )
         raw_id = data.get("id") or data.get("island_id") or "home"
         raw_deposit = data.get("bank_deposit")
+        raw_attract = data.get("attract_pending")
         state = cls(
             size=size,
             turn=int(data.get("turn") or 1),
@@ -1609,6 +1672,7 @@ class IslandState:
                 else START_POP
             ),
             bank_deposit=int(raw_deposit) if raw_deposit is not None else 0,
+            attract_pending=bool(raw_attract) if raw_attract is not None else False,
             name=str(data.get("name") or "箱庭島"),
             cells=parsed if ok else [],
             log=[str(x) for x in (data.get("log") or [])][-80:],

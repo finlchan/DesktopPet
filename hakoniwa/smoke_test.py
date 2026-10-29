@@ -26,9 +26,11 @@ from hakoniwa.grid import (
     point_in_diamond,
 )
 from hakoniwa.model import (
+    ATTRACT_POP_BONUS,
     BANK_TRANSFER_LOT,
     BREAKWATER_TSUNAMI_FACTOR,
     COST_AFFOREST,
+    COST_ATTRACT,
     COST_BANK,
     COST_BREAKWATER,
     COST_DEFENSE,
@@ -43,6 +45,7 @@ from hakoniwa.model import (
     COST_MISSILE_BASE,
     COST_MISSILE_CHEAP,
     COST_MONUMENT,
+    COST_PARK,
     COST_QUARRY,
     COST_RAISE,
     COST_SHIPYARD,
@@ -64,6 +67,7 @@ from hakoniwa.model import (
     FUNDS_PER_TIMBER_LOT,
     FUNDS_SOFT_CAP,
     HAPPINESS_POP_PER_MONUMENT,
+    HAPPINESS_POP_PER_PARK,
     HAPPINESS_POP_PER_SHRINE,
     LABOR_PER_FACTORY,
     LABOR_PER_FARM,
@@ -75,11 +79,13 @@ from hakoniwa.model import (
     MONSTER_REWARD,
     OIL_DEPLETION_CHANCE,
     OIL_DISCOVER_CHANCE,
+    PARK_SETTLEMENT_SPAWN_BONUS,
     SAVE_VERSION,
     SCORE_PER_BANK,
     SCORE_PER_BREAKWATER,
     SCORE_PER_MONUMENT,
     SCORE_PER_OILFIELD,
+    SCORE_PER_PARK,
     SCORE_PER_QUARRY,
     SCORE_PER_SHRINE,
     SCORE_PER_SUPERMARKET,
@@ -203,6 +209,8 @@ def test_catalog_costs():
     assert COST_BANK == 500
     assert COST_SUPERMARKET == 300
     assert COST_SHRINE == 800
+    assert COST_PARK == 250
+    assert COST_ATTRACT == 1000
     assert SCORE_PER_MONUMENT == 2000
     assert SCORE_PER_QUARRY == 70
     assert SCORE_PER_BREAKWATER == 50
@@ -210,8 +218,12 @@ def test_catalog_costs():
     assert SCORE_PER_BANK == 90
     assert SCORE_PER_SUPERMARKET == 40
     assert SCORE_PER_SHRINE == 800
+    assert SCORE_PER_PARK == 150
     assert HAPPINESS_POP_PER_MONUMENT == 5
     assert HAPPINESS_POP_PER_SHRINE == 8
+    assert HAPPINESS_POP_PER_PARK == 6
+    assert ATTRACT_POP_BONUS == 40
+    assert 0 < PARK_SETTLEMENT_SPAWN_BONUS < 1
     assert FUNDS_SOFT_CAP == 9999
     assert BANK_TRANSFER_LOT == 100
     assert FOOD_EXPORT_LOT == 100
@@ -220,7 +232,7 @@ def test_catalog_costs():
     assert FUNDS_PER_FOOD_BUY == 8
     assert FUNDS_PER_QUARRY == 8
     assert FUNDS_PER_OILFIELD == 50
-    assert SAVE_VERSION == 10
+    assert SAVE_VERSION == 11
     assert 0 < OIL_DISCOVER_CHANCE <= 1
     assert 0 < OIL_DEPLETION_CHANCE < 1
     assert TSUNAMI_BASE_CHANCE > 0
@@ -1211,6 +1223,103 @@ def test_bank_supermarket_shrine():
     assert loaded.island_score() == state.island_score()
 
 
+def test_park_and_attract():
+    """公園色塊（安穩／生村）＋誘致活動（定本 1000；下回合人口加成）."""
+    import random
+
+    import hakoniwa.model as model_mod
+
+    state = IslandState.new_game()
+    land = [(i, j) for i in range(20) for j in range(20) if state.is_land(i, j)]
+    for i, j in land:
+        if state.cell(i, j).terrain == "dirt":
+            assert state.level_land(i, j) == "ok"
+    grass = [
+        (i, j)
+        for i, j in land
+        if state.cell(i, j).terrain == "grass" and state.cell(i, j).building is None
+    ]
+    assert len(grass) >= 2
+    pi, pj = grass[0]
+
+    # Place park.
+    state.funds = max(state.funds, COST_PARK + COST_ATTRACT + 50)
+    before = state.funds
+    assert state.place_building(pi, pj, "park") == "ok"
+    assert state.cell(pi, pj).building == "park"
+    assert state.funds == before - COST_PARK
+    assert state.park_count() == 1
+    assert state.happiness_bonus() == HAPPINESS_POP_PER_PARK
+    assert state.island_score() >= SCORE_PER_PARK
+
+    # Park neighbors count as settlement magnets.
+    neigh = [
+        (ni, nj)
+        for ni, nj in neighbors(pi, pj, state.size)
+        if state.cell(ni, nj).terrain == "grass" and state.cell(ni, nj).building is None
+    ]
+    assert neigh
+    si, sj = neigh[0]
+    assert state._near_farm_or_settlement(si, sj)
+    assert state._near_park(si, sj)
+
+    # Forced spawn near park (chance 1.0).
+    old_chance = model_mod.SETTLEMENT_SPAWN_CHANCE
+    model_mod.SETTLEMENT_SPAWN_CHANCE = 1.0
+    try:
+        notes = state._evolve_settlements()
+    finally:
+        model_mod.SETTLEMENT_SPAWN_CHANCE = old_chance
+    assert state.cell(si, sj).terrain == "village" or any("村落" in n for n in notes)
+
+    # Attract: too poor / then success / double-book blocked.
+    state.funds = COST_ATTRACT - 1
+    assert state.attract_population() != "ok"
+    state.funds = COST_ATTRACT + 20
+    funds_before = state.funds
+    pop_before = state.population
+    assert state.attract_population() == "ok"
+    assert state.funds == funds_before - COST_ATTRACT
+    assert state.attract_pending is True
+    assert state.attract_population() != "ok"  # already pending
+
+    keys = {k for k, *_ in TOOL_SPECS}
+    assert "park" in keys and "attract" in keys
+    ok, _ = tool_enabled(state, "attract", None)
+    assert ok is False  # pending
+    ok, _ = tool_enabled(state, "park", (pi, pj))
+    assert ok is False  # occupied
+
+    # next_turn consumes attract and grows population when fed.
+    state.food = max(state.food, 500)
+    random.seed(0)
+    notes = state.next_turn()
+    assert state.attract_pending is False
+    assert any("誘致" in n for n in notes)
+    assert state.population >= pop_before + ATTRACT_POP_BONUS
+    assert any("公園" in n for n in notes) or state.park_count() == 1
+
+    # Save round-trip (attract_pending false after turn).
+    blob = state.to_dict()
+    assert blob["version"] == SAVE_VERSION
+    assert "attract_pending" in blob
+    loaded = IslandState.from_dict(blob)
+    assert loaded.park_count() == 1
+    assert loaded.attract_pending is False
+    assert loaded.happiness_bonus() == HAPPINESS_POP_PER_PARK
+
+    # Pending flag survives save before turn.
+    state2 = IslandState.new_game()
+    state2.funds = COST_ATTRACT + 10
+    assert state2.attract_population() == "ok"
+    loaded2 = IslandState.from_dict(state2.to_dict())
+    assert loaded2.attract_pending is True
+
+    # Demo coral seeds a park.
+    coral = make_demo_coral()
+    assert coral.park_count() >= 1
+
+
 def test_settlements_and_disasters():
     """Village/town/city evolution + fire/typhoon/quake stubs (local-first)."""
     import random
@@ -1576,9 +1685,13 @@ def test_defense_and_missile_base():
 def test_tool_enabled_rules():
     state = IslandState.new_game()
     # No selection → cell tools disabled; wait needs a monster; export needs port;
-    # bank/supermarket actions need their buildings.
+    # bank/supermarket actions need their buildings; 誘致不需選格但要資金.
     for key, *_ in TOOL_SPECS:
         ok, reason = tool_enabled(state, key, None)
+        if key == "attract":
+            # new_game funds == COST_ATTRACT → enabled without selection.
+            assert ok is True
+            continue
         assert ok is False
         if key == "wait":
             assert "怪獸" in reason
@@ -1590,6 +1703,11 @@ def test_tool_enabled_rules():
             assert "超市" in reason
         else:
             assert "選格" in reason
+    # Poor island → attract locked.
+    state.funds = COST_ATTRACT - 1
+    ok, reason = tool_enabled(state, "attract", None)
+    assert ok is False and "資金" in reason
+    state.funds = max(state.funds, COST_ATTRACT)
 
     # Pick a grass cell if any; else level dirt.
     land = [(i, j) for i in range(20) for j in range(20) if state.is_land(i, j)]
@@ -1677,9 +1795,13 @@ def test_dialog_import_offscreen():
     assert dlg.server_url.parent() is dlg.hud.settings_body
     assert dlg.conn_status.parent() is dlg.hud.settings_body
     assert not dlg.hud.tools_drawer.isVisible()
-    # No selection → tools disabled.
+    # No selection → cell tools disabled；誘致不需選格（資金足夠時可點）.
     dlg._refresh_toolbar()
-    assert all(not b.isEnabled() for b in dlg.tool_buttons.values())
+    for key, btn in dlg.tool_buttons.items():
+        if key == "attract" and dlg.state.funds >= COST_ATTRACT and not dlg.state.attract_pending:
+            assert btn.isEnabled()
+        else:
+            assert not btn.isEnabled(), key
     # Status overlay: locked order 狀態→資金→糧食→人口→回合→格數→分數; no connection mode.
     st = dlg.stats.text()
     assert "資金" in st and "糧食" in st and "人口" in st
@@ -2089,6 +2211,7 @@ def main():
     test_mountain_quarry_labor()
     test_breakwater_oilfield_tsunami()
     test_bank_supermarket_shrine()
+    test_park_and_attract()
     test_local_demos()
     test_save_load_roundtrip()
     test_remote_url_normalize()

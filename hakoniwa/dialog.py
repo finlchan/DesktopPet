@@ -39,6 +39,7 @@ from .model import (
     BUILDINGS,
     COASTAL_BUILDINGS,
     COST_AFFOREST,
+    COST_ATTRACT,
     COST_BANK,
     COST_BREAKWATER,
     COST_DEFENSE,
@@ -52,6 +53,7 @@ from .model import (
     COST_MISSILE,
     COST_MISSILE_BASE,
     COST_MONUMENT,
+    COST_PARK,
     COST_QUARRY,
     COST_RAISE,
     COST_SHIPYARD,
@@ -369,6 +371,8 @@ TOOL_SPECS: Tuple[Tuple[str, str, Optional[int], str], ...] = (
     ("bank", "建設銀行", COST_BANK, "N"),
     ("supermarket", "建設超市", COST_SUPERMARKET, "S"),
     ("shrine", "建設神社", COST_SHRINE, "Z"),
+    ("park", "建設公園", COST_PARK, "K"),
+    ("attract", "誘致活動", COST_ATTRACT, "A"),
     ("deposit", "銀行存款", None, "D"),
     ("withdraw", "銀行提款", None, "U"),
     ("buy_food", "超市買糧", None, "P"),
@@ -418,6 +422,14 @@ def tool_enabled(
         cost = food_buy_cost(1)
         if state.funds < cost:
             return False, f"資金不足（一批需 {cost}）"
+        return True, ""
+
+    # 誘致活動：不必選格；已安排則等下回合.
+    if kind == "attract":
+        if state.attract_pending:
+            return False, "已安排誘致（請先推進回合）"
+        if state.funds < COST_ATTRACT:
+            return False, f"資金不足（需 {COST_ATTRACT}）"
         return True, ""
 
     if selected is None:
@@ -974,6 +986,15 @@ class HakoniwaIslandDialog(QDialog):
                 )
             elif key == "shrine":
                 tip += "\n信仰色塊：大幅加島分數；餵飽時安穩人口加成"
+            elif key == "park":
+                tip += "\n都市計畫色塊：加島分數／安穩；鄰格提高生村機率"
+            elif key == "attract":
+                tip += (
+                    f"\n定本誘致：−{COST_ATTRACT}；下回合餵飽時額外人口"
+                    "（不推進回合）"
+                )
+                if self.state.attract_pending:
+                    tip += "\n已安排：請先推進回合"
             elif key == "deposit":
                 tip += f"\n流動→銀行：一批 {BANK_TRANSFER_LOT}"
                 if ok:
@@ -1057,6 +1078,8 @@ class HakoniwaIslandDialog(QDialog):
             hints.append("可建超市")
         if self.state.can_place_building(i, j, "shrine"):
             hints.append("可建神社")
+        if self.state.can_place_building(i, j, "park"):
+            hints.append("可建公園")
         tree_line = ""
         if c.terrain == "forest":
             trees = c.trees if c.trees > 0 else TREE_MIN
@@ -1086,8 +1109,8 @@ class HakoniwaIslandDialog(QDialog):
         )
 
     def _do_action(self, kind: str) -> None:
-        # 觀望／貿易／銀行存提／超市買糧不需選格；其餘指令要點選格子。
-        if kind in ("wait", "export", "deposit", "withdraw", "buy_food"):
+        # 觀望／貿易／銀行存提／超市買糧／誘致不需選格；其餘指令要點選格子。
+        if kind in ("wait", "export", "deposit", "withdraw", "buy_food", "attract"):
             i = j = 0
         else:
             sel = self._require_selection()
@@ -1125,6 +1148,8 @@ class HakoniwaIslandDialog(QDialog):
                     out = self.remote.withdraw_funds(BANK_TRANSFER_LOT)
                 elif kind == "buy_food":
                     out = self.remote.buy_food(1)
+                elif kind == "attract":
+                    out = self.remote.attract_population()
                 else:
                     QMessageBox.information(self, "箱庭島", "未知指令")
                     return
@@ -1166,6 +1191,8 @@ class HakoniwaIslandDialog(QDialog):
             msg = self.state.withdraw_funds(BANK_TRANSFER_LOT)
         elif kind == "buy_food":
             msg = self.state.buy_food(1)
+        elif kind == "attract":
+            msg = self.state.attract_population()
         else:
             msg = "未知指令"
         if msg != "ok":

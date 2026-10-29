@@ -47,7 +47,7 @@ class PlaceBody(CellAction):
         description=(
             "farm | factory | quarry | defense | missile_base | "
             "harbor | shipyard | breakwater | monument | "
-            "bank | supermarket | shrine"
+            "bank | supermarket | shrine | park"
         ),
     )
 
@@ -218,6 +218,14 @@ def deposit_funds(body: BankTransferBody) -> ActionResult:
 @app.post("/api/v1/island/withdraw", response_model=ActionResult, dependencies=[Depends(require_api_key)])
 def withdraw_funds(body: BankTransferBody) -> ActionResult:
     msg, island = store.withdraw_funds(body.amount)
+    if msg != "ok":
+        return ActionResult(ok=False, error=msg, island=island)
+    return ActionResult(ok=True, island=island)
+
+
+@app.post("/api/v1/island/attract", response_model=ActionResult, dependencies=[Depends(require_api_key)])
+def attract_population() -> ActionResult:
+    msg, island = store.attract_population()
     if msg != "ok":
         return ActionResult(ok=False, error=msg, island=island)
     return ActionResult(ok=True, island=island)

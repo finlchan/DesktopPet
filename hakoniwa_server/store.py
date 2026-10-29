@@ -227,6 +227,13 @@ class IslandStore:
                 self._persist_home_unlocked()
             return msg, self._state.to_dict()
 
+    def attract_population(self) -> tuple[str, dict]:
+        with self._lock:
+            msg = self._state.attract_population()
+            if msg == "ok":
+                self._persist_home_unlocked()
+            return msg, self._state.to_dict()
+
     def next_turn(self) -> tuple[list[str], dict]:
         with self._lock:
             notes = self._state.next_turn()

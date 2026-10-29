@@ -22,6 +22,8 @@ not a flat top-down square grid rotated 45°.
 | Bank | 銀行 500（平地色塊）；流動資金上限 9999；溢出進存款緩衝；可手動存提 |
 | Supermarket | 超市 300（平地色塊）；資金買糧 100噸≈8資金（略貴於貿易輸出） |
 | Shrine | 神社 800（平地色塊）；大幅加島分數；餵飽時安穩人口加成 |
+| Park | 公園 250（平地色塊）；島分數／安穩；鄰格提高生村機率 |
+| Attract | 誘致活動 1000（定本；不耗回合）；下回合餵飽時額外人口 |
 | Forbidden | Orthographic-only / pure `rotate(45°)` (equal diamond W/H on screen) |
 | No | Under-tile thickness / skirts |
 
