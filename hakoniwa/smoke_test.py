@@ -27,10 +27,15 @@ from hakoniwa.model import (
     COST_FARM,
     COST_LANDFILL,
     COST_LEVEL,
+    COST_MISSILE,
     FOOD_PER_FARM,
     FUNDS_PER_FACTORY,
     MAX_GUEST_NAME,
     MAX_GUEST_TEXT,
+    MONSTER_MIN_POP,
+    MONSTER_MIN_TURN,
+    MONSTER_REWARD,
+    SAVE_VERSION,
     IslandState,
 )
 from hakoniwa.demos import island_summary, local_demo_islands, make_demo_coral, make_demo_pine
@@ -68,6 +73,7 @@ def test_catalog_costs():
     assert COST_LANDFILL == 150
     assert COST_LEVEL == 5
     assert COST_AFFOREST == 50
+    assert COST_MISSILE == 20
 
 
 def test_new_island_and_loop():
@@ -197,8 +203,9 @@ def test_save_load_roundtrip():
         path = Path(tmp) / "island.json"
         save_island(state, path)
         raw = json.loads(path.read_text(encoding="utf-8"))
-        assert raw["version"] == 2
+        assert raw["version"] == SAVE_VERSION
         assert len(raw["comments"]) == 1
+        assert "monsters" in raw
         loaded = load_island(path)
         assert loaded is not None
         assert loaded.funds == state.funds
@@ -236,13 +243,76 @@ def test_local_demos():
     assert IslandState.from_dict(coral.to_dict()).island_id == "demo-coral"
 
 
+def test_monster_events():
+    """Color-block monster spawn / missile / wait (local-first)."""
+    state = IslandState.new_game()
+    assert state.monsters == []
+    assert state.has_monster() is False
+
+    # Forced spawn on land.
+    land = [(i, j) for i in range(20) for j in range(20) if state.is_land(i, j)]
+    i, j = land[0]
+    m = state.spawn_monster(i, j)
+    assert m is not None
+    assert state.has_monster()
+    assert state.monster_at(i, j) is m
+    assert any("怪獸出現" in line for line in state.log)
+
+    # Cannot build / level under monster.
+    assert state.place_building(i, j, "farm") != "ok"
+    ok, reason = tool_enabled(state, "farm", (i, j))
+    assert ok is False and "怪獸" in reason
+    ok, reason = tool_enabled(state, "missile", (i, j))
+    assert ok is True
+    ok, reason = tool_enabled(state, "wait", None)
+    assert ok is True
+
+    # Wait logs without removing monster.
+    funds_before = state.funds
+    assert state.wait_monster() == "ok"
+    assert state.has_monster()
+    assert state.funds == funds_before
+    assert any("觀望" in line for line in state.log)
+
+    # Missile kills color-block monster and pays reward stub.
+    funds_before = state.funds
+    assert state.fire_missile(i, j) == "ok"
+    assert not state.has_monster()
+    assert state.funds == funds_before - COST_MISSILE + MONSTER_REWARD
+    assert any("擊破" in line for line in state.log)
+
+    # Thresholds: no spawn chance below pop/turn gates.
+    state.population = MONSTER_MIN_POP - 1
+    state.turn = MONSTER_MIN_TURN
+    assert state._monster_spawn_chance() == 0.0
+    state.population = MONSTER_MIN_POP
+    state.turn = MONSTER_MIN_TURN - 1
+    assert state._monster_spawn_chance() == 0.0
+    state.turn = MONSTER_MIN_TURN
+    assert state._monster_spawn_chance() > 0.0
+
+    # Round-trip monsters in save JSON.
+    m2 = state.spawn_monster()
+    assert m2 is not None
+    data = state.to_dict()
+    assert data["version"] == SAVE_VERSION
+    assert len(data["monsters"]) == 1
+    loaded = IslandState.from_dict(data)
+    assert loaded.has_monster()
+    assert loaded.monsters[0].kind == m2.kind
+    assert (loaded.monsters[0].i, loaded.monsters[0].j) == (m2.i, m2.j)
+
+
 def test_tool_enabled_rules():
     state = IslandState.new_game()
-    # No selection → all tools disabled.
+    # No selection → cell tools disabled; wait needs a monster.
     for key, *_ in TOOL_SPECS:
         ok, reason = tool_enabled(state, key, None)
         assert ok is False
-        assert "選格" in reason
+        if key == "wait":
+            assert "怪獸" in reason
+        else:
+            assert "選格" in reason
 
     # Pick a grass cell if any; else level dirt.
     land = [(i, j) for i in range(20) for j in range(20) if state.is_land(i, j)]
@@ -404,7 +474,8 @@ def test_server_api_if_available():
 
         island = client.get("/api/v1/island").json()
         assert island["size"] == 20
-        assert island["version"] == 2
+        assert island["version"] == SAVE_VERSION
+        assert island.get("monsters") == []
 
         # Find a grass cell (or level dirt) then place farm.
         cells = island["cells"]
@@ -444,6 +515,32 @@ def test_server_api_if_available():
         ).json()
         assert removed["ok"] is True
         assert removed["island"]["cells"][i][j]["building"] is None
+
+        # Monster missile / wait endpoints (seed via PUT).
+        snap = client.get("/api/v1/island").json()
+        land_ij = next(
+            (
+                (ri, rj)
+                for ri, row in enumerate(snap["cells"])
+                for rj, c in enumerate(row)
+                if c["terrain"] in ("dirt", "grass", "forest")
+            ),
+            None,
+        )
+        assert land_ij is not None
+        mi, mj = land_ij
+        snap["monsters"] = [{"kind": "inora", "i": mi, "j": mj, "hp": 1}]
+        put = client.put("/api/v1/island", json=snap)
+        assert put.status_code == 200
+        assert len(put.json().get("monsters") or []) == 1
+        waited = client.post("/api/v1/island/wait").json()
+        assert waited["ok"] is True
+        assert len(waited["island"]["monsters"]) == 1
+        shot = client.post(
+            "/api/v1/island/missile", json={"i": mi, "j": mj}
+        ).json()
+        assert shot["ok"] is True
+        assert shot["island"]["monsters"] == []
 
         listed = client.get("/api/v1/island/comments").json()
         assert listed["comments"] == []
@@ -495,6 +592,7 @@ def main():
     test_catalog_costs()
     test_new_island_and_loop()
     test_guestbook_local()
+    test_monster_events()
     test_local_demos()
     test_save_load_roundtrip()
     test_remote_url_normalize()

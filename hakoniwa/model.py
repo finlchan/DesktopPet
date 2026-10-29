@@ -2,7 +2,7 @@
 
 v1 deepen: catalog place costs, terrain commands (整地／填海／植林),
 farm food + factory funds turn processing, optional population stub,
-visitor guestbook (name + text).
+visitor guestbook (name + text), color-block monster events (飛彈 stub).
 Color-block placeholders only — user art later.
 """
 
@@ -30,6 +30,7 @@ COST_FACTORY = 100      # 工場建設
 COST_LANDFILL = 150     # 埋め立て：海→淺灘 or 淺灘→荒地
 COST_LEVEL = 5          # 整地：荒地→平地（亦可清建築）
 COST_AFFOREST = 50      # 植林：平地→森
+COST_MISSILE = 20       # ミサイル発射 stub（定本 20 億／發；本機免基地）
 
 # Turn yields (simplified short loop; not server-accurate).
 FOOD_PER_FARM = 100     # ~100 人農場 → 100 噸／回合
@@ -40,6 +41,15 @@ MIN_FOOD_NEED = 20      # 小島 soft floor
 START_FUNDS = 1000
 START_FOOD = 500
 START_POP = 100
+
+# Monster event thresholds (local short loop — catalog ~人口 10 萬 scaled down).
+MONSTER_MIN_POP = 150
+MONSTER_MIN_TURN = 3
+MONSTER_BASE_CHANCE = 0.12
+MONSTER_CHANCE_PER_LAND = 0.01
+MONSTER_MAX_CHANCE = 0.45
+MONSTER_REWARD = 30     # 殘骸換資金 stub
+MAX_MONSTERS = 1        # v1: one color-block 怪獸 at a time
 
 # Terrain kinds (same-layer color placeholders until user art lands).
 # Opening map still uses dirt／grass per 箱庭斜視 prefs (中央 7 泥／草).
@@ -58,12 +68,22 @@ BUILDINGS = {
     "factory": {"label": "工場", "color": (120, 120, 130), "cost": COST_FACTORY},
 }
 
+# Monsters as solid color-block placeholders (squares on map; art later).
+MONSTERS = {
+    "inora": {
+        "label": "伊諾拉",
+        "color": (70, 200, 90),  # 綠怪色塊
+        "hp": 1,
+    },
+}
+
 # Back-compat aliases used by older scaffold call sites / tests.
 LANDFILL_COST = COST_LANDFILL
 
 Coord = Tuple[int, int]
 LAND_TERRAINS = frozenset(k for k, v in TERRAIN.items() if v["land"])
 BUILDABLE = frozenset({"grass"})  # 平地 only
+SAVE_VERSION = 3
 
 
 @dataclass
@@ -121,6 +141,44 @@ class GuestbookEntry:
         )
 
 
+@dataclass
+class Monster:
+    """Color-block 怪獸 placeholder on a land cell (user art later)."""
+
+    kind: str = "inora"
+    i: int = 0
+    j: int = 0
+    hp: int = 1
+
+    def label(self) -> str:
+        meta = MONSTERS.get(self.kind) or MONSTERS["inora"]
+        return str(meta["label"])
+
+    def color(self) -> Tuple[int, int, int]:
+        meta = MONSTERS.get(self.kind) or MONSTERS["inora"]
+        return tuple(meta["color"])  # type: ignore[return-value]
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"kind": self.kind, "i": self.i, "j": self.j, "hp": self.hp}
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> Optional["Monster"]:
+        if not isinstance(data, dict):
+            return None
+        kind = str(data.get("kind") or "inora").strip()
+        if kind not in MONSTERS:
+            kind = "inora"
+        try:
+            i = int(data.get("i"))
+            j = int(data.get("j"))
+            hp = int(data.get("hp") if data.get("hp") is not None else MONSTERS[kind]["hp"])
+        except (TypeError, ValueError):
+            return None
+        if hp <= 0:
+            return None
+        return cls(kind=kind, i=i, j=j, hp=hp)
+
+
 def _utc_now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
@@ -136,6 +194,22 @@ def _parse_comments(raw: Any) -> List[GuestbookEntry]:
     return out[-MAX_GUEST_COMMENTS:]
 
 
+def _parse_monsters(raw: Any, size: int) -> List[Monster]:
+    if not isinstance(raw, list):
+        return []
+    out: List[Monster] = []
+    for item in raw:
+        m = Monster.from_dict(item if isinstance(item, dict) else {})
+        if m is None:
+            continue
+        if not (0 <= m.i < size and 0 <= m.j < size):
+            continue
+        out.append(m)
+        if len(out) >= MAX_MONSTERS:
+            break
+    return out
+
+
 @dataclass
 class IslandState:
     size: int = GRID_SIZE
@@ -147,6 +221,7 @@ class IslandState:
     cells: List[List[Cell]] = field(default_factory=list)
     log: List[str] = field(default_factory=list)
     comments: List[GuestbookEntry] = field(default_factory=list)
+    monsters: List[Monster] = field(default_factory=list)
     island_id: str = "home"  # multi-island catalog id (home | demo-* | …)
 
     def __post_init__(self) -> None:
@@ -184,6 +259,15 @@ class IslandState:
     def _adjacent_to_land(self, i: int, j: int) -> bool:
         return any(self.is_land(ni, nj) for ni, nj in neighbors(i, j, self.size))
 
+    def has_monster(self) -> bool:
+        return bool(self.monsters)
+
+    def monster_at(self, i: int, j: int) -> Optional[Monster]:
+        for m in self.monsters:
+            if m.i == i and m.j == j:
+                return m
+        return None
+
     def can_landfill(self, i: int, j: int) -> bool:
         """填海：海→淺灘 or 淺灘→荒地；須鄰陸。"""
         c = self.cell(i, j)
@@ -193,6 +277,8 @@ class IslandState:
 
     def can_level(self, i: int, j: int) -> bool:
         """整地：荒地→平地、清建築、或森→平地（伐採佔位）。"""
+        if self.monster_at(i, j) is not None:
+            return False
         c = self.cell(i, j)
         if c.terrain not in LAND_TERRAINS:
             return False
@@ -204,12 +290,16 @@ class IslandState:
 
     def can_afforest(self, i: int, j: int) -> bool:
         """植林：空平地→森。"""
+        if self.monster_at(i, j) is not None:
+            return False
         c = self.cell(i, j)
         return c.terrain == "grass" and c.building is None
 
     def place_building(self, i: int, j: int, kind: str) -> str:
         if kind not in ("farm", "factory"):
             return "未知建築"
+        if self.monster_at(i, j) is not None:
+            return "此格有怪獸，無法建設"
         c = self.cell(i, j)
         if c.terrain not in BUILDABLE:
             return "只能在平地上建設（請先整地）"
@@ -255,6 +345,8 @@ class IslandState:
     def level_land(self, i: int, j: int) -> str:
         """整地 placeholder：荒地／森→平地；並清除建築。"""
         if not self.can_level(i, j):
+            if self.monster_at(i, j) is not None:
+                return "此格有怪獸，無法整地（請先發射飛彈）"
             return "此格無需整地（須為荒地、森、或有建築的陸地）"
         if self.funds < COST_LEVEL:
             return f"資金不足（整地需要 {COST_LEVEL}）"
@@ -279,6 +371,8 @@ class IslandState:
     def afforest(self, i: int, j: int) -> str:
         """植林 placeholder：平地→森。"""
         if not self.can_afforest(i, j):
+            if self.monster_at(i, j) is not None:
+                return "此格有怪獸，無法植林"
             return "只能在空的平地上植林"
         if self.funds < COST_AFFOREST:
             return f"資金不足（植林需要 {COST_AFFOREST}）"
@@ -287,8 +381,124 @@ class IslandState:
         self._log(f"回合 {self.turn}：植林 ({i},{j})（−{COST_AFFOREST} 資金）")
         return "ok"
 
+    def fire_missile(self, i: int, j: int) -> str:
+        """飛彈 stub：對選格發射（本機免基地）；命中怪獸則擊破。"""
+        if self.funds < COST_MISSILE:
+            return f"資金不足（飛彈需要 {COST_MISSILE}）"
+        self.funds -= COST_MISSILE
+        m = self.monster_at(i, j)
+        if m is None:
+            self._log(
+                f"回合 {self.turn}：飛彈落空於 ({i},{j})（−{COST_MISSILE} 資金）"
+            )
+            return "ok"
+        m.hp -= 1
+        if m.hp <= 0:
+            self.monsters = [x for x in self.monsters if x is not m]
+            self.funds += MONSTER_REWARD
+            self._log(
+                f"回合 {self.turn}：飛彈擊破 ({i},{j}) 的{m.label()}"
+                f"（−{COST_MISSILE}／殘骸 +{MONSTER_REWARD} 資金）"
+            )
+        else:
+            self._log(
+                f"回合 {self.turn}：飛彈命中 ({i},{j}) 的{m.label()}"
+                f"（HP→{m.hp}，−{COST_MISSILE} 資金）"
+            )
+        return "ok"
+
+    def wait_monster(self) -> str:
+        """觀望／待機：本回合不攻擊怪獸（怪獸下回合會行動）。"""
+        if not self.monsters:
+            return "島上沒有怪獸"
+        labels = "、".join(
+            f"{m.label()}({m.i},{m.j})" for m in self.monsters
+        )
+        self._log(f"回合 {self.turn}：對怪獸觀望（{labels}）— 未發射飛彈")
+        return "ok"
+
+    def spawn_monster(
+        self,
+        i: Optional[int] = None,
+        j: Optional[int] = None,
+        kind: str = "inora",
+    ) -> Optional[Monster]:
+        """Place a color-block monster on land (tests / forced events)."""
+        if len(self.monsters) >= MAX_MONSTERS:
+            return None
+        if kind not in MONSTERS:
+            kind = "inora"
+        if i is None or j is None:
+            land = [
+                (x, y)
+                for x in range(self.size)
+                for y in range(self.size)
+                if self.is_land(x, y) and self.monster_at(x, y) is None
+            ]
+            if not land:
+                return None
+            i, j = random.choice(land)
+        if not self.is_land(i, j) or self.monster_at(i, j) is not None:
+            return None
+        meta = MONSTERS[kind]
+        m = Monster(kind=kind, i=i, j=j, hp=int(meta["hp"]))
+        self.monsters.append(m)
+        self._log(
+            f"回合 {self.turn}：怪獸出現！{m.label()} 色塊於 ({i},{j})"
+        )
+        return m
+
+    def _monster_spawn_chance(self) -> float:
+        if self.population < MONSTER_MIN_POP or self.turn < MONSTER_MIN_TURN:
+            return 0.0
+        if len(self.monsters) >= MAX_MONSTERS:
+            return 0.0
+        chance = MONSTER_BASE_CHANCE + self.land_count() * MONSTER_CHANCE_PER_LAND
+        return min(MONSTER_MAX_CHANCE, chance)
+
+    def _stomp_cell(self, i: int, j: int, monster: Monster) -> List[str]:
+        """Monster steps onto a land cell: clear building, land → 荒地."""
+        notes: List[str] = []
+        c = self.cell(i, j)
+        if c.building is not None:
+            blabel = BUILDINGS[c.building]["label"]
+            c.building = None
+            notes.append(f"{monster.label()}踩毀{blabel} ({i},{j})")
+        if c.terrain in LAND_TERRAINS and c.terrain != "dirt":
+            prev = TERRAIN[c.terrain]["label"]
+            c.terrain = "dirt"
+            notes.append(f"{monster.label()}踏平 {prev}→荒地 ({i},{j})")
+        elif not notes:
+            notes.append(f"{monster.label()}停留於 ({i},{j})")
+        return notes
+
+    def _advance_monsters(self) -> List[str]:
+        """Existing monsters move to a random land neighbor (or stay) and stomp."""
+        notes: List[str] = []
+        for m in list(self.monsters):
+            opts = [
+                (ni, nj)
+                for ni, nj in neighbors(m.i, m.j, self.size)
+                if self.is_land(ni, nj) and self.monster_at(ni, nj) is None
+            ]
+            if opts and random.random() < 0.75:
+                ni, nj = random.choice(opts)
+                m.i, m.j = ni, nj
+            notes.extend(self._stomp_cell(m.i, m.j, m))
+        return notes
+
+    def _maybe_spawn_monster(self) -> List[str]:
+        chance = self._monster_spawn_chance()
+        if chance <= 0 or random.random() >= chance:
+            return []
+        m = self.spawn_monster()
+        if m is None:
+            return []
+        # spawn_monster already logged; surface a short note for the turn dialog.
+        return [f"怪獸出現！{m.label()} 於 ({m.i},{m.j})"]
+
     def next_turn(self) -> List[str]:
-        """Advance one turn: farm food, factory funds, food need, pop stub."""
+        """Advance one turn: economy, then monster act / spawn chance."""
         notes: List[str] = []
         farms = self.building_count("farm")
         factories = self.building_count("factory")
@@ -336,8 +546,17 @@ class IslandState:
                 f"糧食不足（僅 {starved}）！人口 −{loss} → {self.population}"
             )
 
+        # Monster phase: existing monsters act; otherwise chance to appear.
+        if self.monsters:
+            notes.extend(self._advance_monsters())
+        else:
+            notes.extend(self._maybe_spawn_monster())
+
         self.turn += 1
         for n in notes:
+            # spawn_monster already wrote its own log line; avoid duplicate.
+            if n.startswith("怪獸出現"):
+                continue
             self._log(f"回合 {self.turn - 1}→{self.turn}：{n}")
         return notes
 
@@ -370,7 +589,7 @@ class IslandState:
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "version": 2,
+            "version": SAVE_VERSION,
             "id": self.island_id,
             "name": self.name,
             "size": self.size,
@@ -381,6 +600,7 @@ class IslandState:
             "cells": [[c.to_dict() for c in row] for row in self.cells],
             "log": list(self.log[-40:]),
             "comments": [c.to_dict() for c in self.comments],
+            "monsters": [m.to_dict() for m in self.monsters],
         }
 
     @classmethod
@@ -415,8 +635,13 @@ class IslandState:
             cells=parsed if ok else [],
             log=[str(x) for x in (data.get("log") or [])][-80:],
             comments=_parse_comments(data.get("comments")),
+            monsters=_parse_monsters(data.get("monsters"), size),
             island_id=str(raw_id).strip() or "home",
         )
+        # Drop monsters that somehow landed on non-land (corrupt save).
+        state.monsters = [
+            m for m in state.monsters if state.is_land(m.i, m.j)
+        ]
         return state
 
     @classmethod
