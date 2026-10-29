@@ -30,9 +30,10 @@ TERRAIN_TILE_FILES: Dict[str, str] = {
 }
 
 # Optional colour wash after texture (settlements / forest stay readable).
+# Forest uses grass top + deeper green wash (flat top only; no skirts).
 TERRAIN_TINT: Dict[str, tuple] = {
     "shallow": (90, 180, 200, 70),
-    "forest": (20, 70, 30, 90),
+    "forest": (12, 58, 24, 120),
     "village": (200, 170, 100, 55),
     "town": (180, 120, 70, 70),
     "city": (140, 100, 120, 80),

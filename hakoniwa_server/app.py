@@ -134,6 +134,14 @@ def afforest(body: CellAction) -> ActionResult:
     return ActionResult(ok=True, island=island)
 
 
+@app.post("/api/v1/island/harvest", response_model=ActionResult, dependencies=[Depends(require_api_key)])
+def harvest(body: CellAction) -> ActionResult:
+    msg, island = store.harvest(body.i, body.j)
+    if msg != "ok":
+        return ActionResult(ok=False, error=msg, island=island)
+    return ActionResult(ok=True, island=island)
+
+
 @app.post("/api/v1/island/missile", response_model=ActionResult, dependencies=[Depends(require_api_key)])
 def fire_missile(body: CellAction) -> ActionResult:
     msg, island = store.missile(body.i, body.j)
