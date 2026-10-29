@@ -37,7 +37,7 @@ echo Using: %PY_CMD%
 
 REM Bundle only the blank template config into the EXE - never root config.json.
 REM hakoniwa/ is lazy-imported from the Mini programs menu — collect it explicitly.
-%PY_CMD% -m PyInstaller --noconfirm --onefile --windowed --icon "logo.ico" --add-data "packaging\config.json;." --add-data "paypal_qr.jpg;." --add-data "logo.ico;." --add-data "logo.png;." --add-data "README.txt;." --hidden-import hakoniwa --hidden-import hakoniwa.dialog --hidden-import hakoniwa.view --hidden-import hakoniwa.model --hidden-import hakoniwa.grid --hidden-import hakoniwa.save --collect-submodules hakoniwa --name "DesktopPet" desktop_pet.py
+%PY_CMD% -m PyInstaller --noconfirm --onefile --windowed --icon "logo.ico" --add-data "packaging\config.json;." --add-data "paypal_qr.jpg;." --add-data "logo.ico;." --add-data "logo.png;." --add-data "README.txt;." --hidden-import hakoniwa --hidden-import hakoniwa.dialog --hidden-import hakoniwa.view --hidden-import hakoniwa.model --hidden-import hakoniwa.grid --hidden-import hakoniwa.save --hidden-import hakoniwa.remote --collect-submodules hakoniwa --name "DesktopPet" desktop_pet.py
 if errorlevel 1 (
     echo Build failed.
     pause

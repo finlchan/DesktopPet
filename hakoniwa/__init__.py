@@ -1,6 +1,7 @@
 """箱庭島 — Desktop Pet mini-program (箱庭斜視 + simplified v1 loop).
 
 Public entry: HakoniwaIslandDialog (lazy-imported from .dialog).
+Optional NAS client: hakoniwa.remote.HakoniwaRemote.
 """
 
 from .model import IslandState, BUILDINGS, TERRAIN

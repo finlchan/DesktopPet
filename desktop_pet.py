@@ -113,6 +113,11 @@ DEFAULT_CONFIG = {
     # Free Station dialog: stored backsight records for auto-fill.
     # Shape: {name, easting, northing, rl}. Optional; older configs omit it.
     "free_station_stations": [],
+    # 箱庭島: optional NAS server URL (empty = local JSON only).
+    "hakoniwa": {
+        "server_url": "",
+        "api_key": "",
+    },
 }
 
 

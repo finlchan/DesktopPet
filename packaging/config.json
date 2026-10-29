@@ -31,5 +31,9 @@
     "sort_by": "mtime",
     "files": {}
   },
-  "text_records": []
+  "text_records": [],
+  "hakoniwa": {
+    "server_url": "",
+    "api_key": ""
+  }
 }

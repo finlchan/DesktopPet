@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPushButton,
     QPlainTextEdit,
@@ -26,6 +27,7 @@ from .model import (
     TERRAIN,
     IslandState,
 )
+from .remote import HakoniwaRemote, HakoniwaRemoteError, try_connect
 from .save import default_save_path, load_island, save_island
 from .view import HakoniwaMapWidget
 
@@ -38,7 +40,7 @@ def _dp():
 
 
 class HakoniwaIslandDialog(QDialog):
-    """Playable 箱庭島 v1 deepen (local mock state + JSON save).
+    """Playable 箱庭島 v1 (optional NAS sync + local JSON fallback).
 
     Uses the same frameless / ornate-frame chrome as other mini-programs by
     calling desktop_pet helpers after the host module is fully initialized.
@@ -48,6 +50,8 @@ class HakoniwaIslandDialog(QDialog):
         dp = _dp()
         super().__init__(parent)
         self.cfg = config_manager
+        self.remote: HakoniwaRemote | None = None
+        self._online = False
 
         # Match FramelessCalcDialog shell.
         self.setWindowFlags(
@@ -61,8 +65,8 @@ class HakoniwaIslandDialog(QDialog):
         self._drag_grips = []
 
         self.setWindowTitle("箱庭島")
-        self.setMinimumSize(720, 560)
-        self.resize(860, 640)
+        self.setMinimumSize(720, 600)
+        self.resize(880, 680)
         self.setStyleSheet(dp.CALC_DIALOG_STYLE + getattr(dp, "MINI_PROGRAM_STYLE", ""))
 
         self._save_path = self._resolve_save_path()
@@ -81,6 +85,32 @@ class HakoniwaIslandDialog(QDialog):
         hint.setObjectName("calcResult")
         hint.setWordWrap(True)
         root.addWidget(hint)
+
+        # Optional NAS server URL (empty = local JSON only).
+        sync_row = QHBoxLayout()
+        sync_row.setSpacing(6)
+        url_cap = QLabel("伺服器")
+        url_cap.setObjectName("calcFieldCaption")
+        sync_row.addWidget(url_cap)
+        self.server_url = QLineEdit()
+        self.server_url.setPlaceholderText("留空＝本機；例 http://192.168.1.10:8787")
+        self.server_url.setText(self._load_server_url())
+        self.server_url.setMinimumWidth(280)
+        sync_row.addWidget(self.server_url, stretch=1)
+        connect_btn = QPushButton("連線")
+        connect_btn.setObjectName("calcAction")
+        connect_btn.clicked.connect(self._connect_server)
+        sync_row.addWidget(connect_btn)
+        local_btn = QPushButton("本機")
+        local_btn.setObjectName("calcAction")
+        local_btn.clicked.connect(self._use_local)
+        sync_row.addWidget(local_btn)
+        root.addLayout(sync_row)
+
+        self.conn_status = QLabel()
+        self.conn_status.setObjectName("calcResult")
+        self.conn_status.setWordWrap(True)
+        root.addWidget(self.conn_status)
 
         self.stats = QLabel()
         self.stats.setObjectName("calcSectionTitle")
@@ -150,15 +180,16 @@ class HakoniwaIslandDialog(QDialog):
 
         close_row = QHBoxLayout()
         close_row.addStretch()
-        online_note = QLabel("之後需連線；目前為本機暫存")
-        online_note.setObjectName("calcResult")
-        close_row.addWidget(online_note)
-        close_row.addStretch()
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.accept)
         close_row.addWidget(close_btn)
         root.addLayout(close_row)
 
+        # Auto-connect if URL already saved; otherwise stay local.
+        if self.server_url.text().strip():
+            self._connect_server(silent_ok=True)
+        else:
+            self._set_offline("本機模式（JSON 存檔）")
         self._refresh_ui()
 
     def _resolve_save_path(self) -> Path:
@@ -166,10 +197,73 @@ class HakoniwaIslandDialog(QDialog):
             return default_save_path(Path(self.cfg.config_path).parent)
         return default_save_path(Path.cwd())
 
+    def _load_server_url(self) -> str:
+        if self.cfg is None:
+            return ""
+        return str(self.cfg.get("hakoniwa", "server_url") or "")
+
+    def _load_api_key(self) -> str:
+        if self.cfg is None:
+            return ""
+        return str(self.cfg.get("hakoniwa", "api_key") or "")
+
+    def _persist_server_url(self) -> None:
+        if self.cfg is None:
+            return
+        self.cfg.set(["hakoniwa", "server_url"], self.server_url.text().strip(), save=True)
+
+    def _set_offline(self, reason: str) -> None:
+        self.remote = None
+        self._online = False
+        self.conn_status.setText(reason)
+
+    def _apply_island(self, state: IslandState) -> None:
+        self.state = state
+        self.map.set_state(self.state)
+
+    def _cache_local(self) -> None:
+        """Always keep a local JSON mirror so disconnect falls back cleanly."""
+        try:
+            save_island(self.state, self._save_path)
+        except OSError:
+            pass
+
+    def _connect_server(self, silent_ok: bool = False) -> None:
+        url = self.server_url.text().strip()
+        self._persist_server_url()
+        if not url:
+            self._set_offline("本機模式（JSON 存檔）— 伺服器欄位為空")
+            return
+        client, island, err = try_connect(url, api_key=self._load_api_key())
+        if err or client is None or island is None:
+            self._set_offline(f"連線失敗，改用本機：{err or '未知錯誤'}")
+            QMessageBox.warning(
+                self,
+                "箱庭島",
+                f"無法連線伺服器，將繼續使用本機存檔。\n\n{err or ''}",
+            )
+            return
+        self.remote = client
+        self._online = True
+        self._apply_island(island)
+        self._cache_local()
+        self.conn_status.setText(f"已連線：{client.base_url}")
+        if not silent_ok:
+            QMessageBox.information(self, "箱庭島", f"已同步島狀態\n{client.base_url}")
+        self._refresh_ui()
+
+    def _use_local(self) -> None:
+        self._set_offline("本機模式（JSON 存檔）")
+        loaded = load_island(self._save_path)
+        if loaded is not None:
+            self._apply_island(loaded)
+        self._refresh_ui()
+
     def _refresh_ui(self) -> None:
         s = self.state
+        mode = "連線" if self._online else "本機"
         self.stats.setText(
-            f"資金 {s.funds}　糧食 {s.food}　人口 {s.population}　"
+            f"[{mode}] 資金 {s.funds}　糧食 {s.food}　人口 {s.population}　"
             f"回合 {s.turn}　陸地 {s.land_count()} 格"
         )
         self.log_view.setPlainText("\n".join(s.log[-30:]))
@@ -207,11 +301,47 @@ class HakoniwaIslandDialog(QDialog):
             return None
         return self.selected
 
+    def _drop_to_local_on_error(self, err: Exception) -> None:
+        self._set_offline(f"連線中斷，改用本機：{err}")
+        QMessageBox.warning(
+            self,
+            "箱庭島",
+            f"伺服器操作失敗，已切回本機模式。\n\n{err}",
+        )
+
     def _do_action(self, kind: str) -> None:
         sel = self._require_selection()
         if sel is None:
             return
         i, j = sel
+
+        if self._online and self.remote is not None:
+            try:
+                if kind == "farm":
+                    out = self.remote.place(i, j, "farm")
+                elif kind == "factory":
+                    out = self.remote.place(i, j, "factory")
+                elif kind == "remove":
+                    out = self.remote.remove(i, j)
+                elif kind == "landfill":
+                    out = self.remote.landfill(i, j)
+                elif kind == "level":
+                    out = self.remote.level(i, j)
+                elif kind == "afforest":
+                    out = self.remote.afforest(i, j)
+                else:
+                    QMessageBox.information(self, "箱庭島", "未知指令")
+                    return
+                self._apply_island(out.island)
+                self._cache_local()
+                if not out.ok:
+                    QMessageBox.information(self, "箱庭島", out.error or "操作失敗")
+                self._refresh_ui()
+                return
+            except HakoniwaRemoteError as e:
+                self._drop_to_local_on_error(e)
+                # Fall through to local action below.
+
         if kind == "farm":
             msg = self.state.place_building(i, j, "farm")
         elif kind == "factory":
@@ -231,12 +361,36 @@ class HakoniwaIslandDialog(QDialog):
         self._refresh_ui()
 
     def _next_turn(self) -> None:
+        if self._online and self.remote is not None:
+            try:
+                out = self.remote.next_turn()
+                self._apply_island(out.island)
+                self._cache_local()
+                self._refresh_ui()
+                QMessageBox.information(
+                    self, "回合結果", "\n".join(out.notes or ["（無）"])
+                )
+                return
+            except HakoniwaRemoteError as e:
+                self._drop_to_local_on_error(e)
+
         notes = self.state.next_turn()
         self._refresh_ui()
         QMessageBox.information(self, "回合結果", "\n".join(notes))
 
     def _save(self) -> None:
         path = save_island(self.state, self._save_path)
+        if self._online and self.remote is not None:
+            try:
+                self._apply_island(self.remote.put_island(self.state))
+                self.state._log(f"已同步至伺服器並本機：{path}")
+                self._refresh_ui()
+                QMessageBox.information(
+                    self, "箱庭島", f"已同步伺服器，並存本機\n{path}"
+                )
+                return
+            except HakoniwaRemoteError as e:
+                self._drop_to_local_on_error(e)
         self.state._log(f"已存檔：{path}")
         self._refresh_ui()
         QMessageBox.information(self, "箱庭島", f"已存檔到\n{path}")
@@ -249,6 +403,15 @@ class HakoniwaIslandDialog(QDialog):
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
+        if self._online and self.remote is not None:
+            try:
+                self._apply_island(self.remote.reset())
+                self._cache_local()
+                self.selected = None
+                self._refresh_ui()
+                return
+            except HakoniwaRemoteError as e:
+                self._drop_to_local_on_error(e)
         self.state = IslandState.new_game()
         self.map.set_state(self.state)
         self.selected = None
