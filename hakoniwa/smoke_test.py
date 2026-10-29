@@ -742,14 +742,34 @@ def test_dialog_import_offscreen():
     assert dlg.guest_text is not None
     assert hasattr(dlg, "tool_buttons")
     assert set(dlg.tool_buttons) == {k for k, *_ in TOOL_SPECS}
+    # HUD overlays live inside the map viewport (not outside columns).
+    from hakoniwa.dialog import HakoniwaMapHud
+
+    assert isinstance(dlg.hud, HakoniwaMapHud)
+    assert dlg.stats.parent() is dlg.hud
+    assert dlg.sel_label.parent() is dlg.hud
+    assert dlg.log_view.parent() is dlg.hud
+    assert dlg.guestbook_view.parent() is dlg.hud.guestbook_frame
+    assert dlg.map.parent() is dlg.hud
+    assert dlg.server_url.parent() is dlg.hud.settings_body
+    assert dlg.conn_status.parent() is dlg.hud.settings_body
+    assert not dlg.hud.tools_drawer.isVisible()
     # No selection → tools disabled.
     dlg._refresh_toolbar()
     assert all(not b.isEnabled() for b in dlg.tool_buttons.values())
-    # Status bar carries the four core fields.
+    # Status overlay carries the four core fields; connection mode is NOT here.
     assert "資金" in dlg.stats.text()
     assert "糧食" in dlg.stats.text()
     assert "回合" in dlg.stats.text()
     assert "陸地" in dlg.stats.text()
+    assert "[本機]" not in dlg.stats.text()
+    assert "[連線]" not in dlg.stats.text()
+    # Opening tools drawer exposes build toolbar + server settings.
+    # Use isHidden() — isVisible() is false while the dialog itself is not shown.
+    dlg.hud.tools_btn.setChecked(True)
+    assert not dlg.hud.tools_drawer.isHidden()
+    dlg.hud.tools_btn.setChecked(False)
+    assert dlg.hud.tools_drawer.isHidden()
 
     # Select a buildable grass cell → farm/factory enable.
     land = [(i, j) for i in range(20) for j in range(20) if dlg.state.is_land(i, j)]
@@ -784,6 +804,9 @@ def test_dialog_import_offscreen():
     dlg._refresh_ui()
     assert "Smoke" in dlg.guestbook_view.toPlainText()
 
+    # Offscreen proof: overlays sit on the map viewport.
+    _write_ui_overlay_proof(dlg)
+
     catalog = dlg._tourism_catalog()
     assert len(catalog) >= 2
     assert any(r.get("id") == "demo-coral" for r in catalog)
@@ -798,6 +821,8 @@ def test_dialog_import_offscreen():
     assert "觀光" in tour.windowTitle()
     assert tour.guestbook_view is not None
     assert hasattr(tour.map, "zoom_by")
+    assert tour.guestbook_view.parent() is tour.hud.guestbook_frame
+    assert not tour.hud.tools_btn.isVisible()
     tour.state.add_comment("Tourist", "nice pines")
     tour._show_guestbook(tour.state.list_comments())
     assert "Tourist" in tour.guestbook_view.toPlainText()
@@ -805,6 +830,35 @@ def test_dialog_import_offscreen():
 
     dlg.close()
     del app
+
+
+def _write_ui_overlay_proof(dlg) -> None:
+    """Grab map HUD proving status/tile/log/guestbook/tools live on the map."""
+    from PySide6.QtWidgets import QApplication
+
+    out_dir = Path(__file__).resolve().parents[1] / "hakoniwa" / "testdata"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    dlg.resize(960, 780)
+    dlg.show()
+    dlg.hud.tools_btn.setChecked(False)
+    dlg._refresh_ui()
+    app = QApplication.instance()
+    if app is not None:
+        app.processEvents()
+    closed = dlg.hud.grab()
+    closed_path = out_dir / "ui_overlay_map_hud.png"
+    assert closed.save(str(closed_path), "PNG"), closed_path
+    print(f"ui overlay proof: wrote {closed_path}")
+
+    dlg.hud.tools_btn.setChecked(True)
+    if app is not None:
+        app.processEvents()
+    open_pix = dlg.hud.grab()
+    open_path = out_dir / "ui_overlay_tools_open.png"
+    assert open_pix.save(str(open_path), "PNG"), open_path
+    print(f"ui overlay proof: wrote {open_path}")
+    dlg.hud.tools_btn.setChecked(False)
 
 
 def test_server_api_if_available():

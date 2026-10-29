@@ -17,6 +17,20 @@ not a flat top-down square grid rotated 45°.
 Constants and helpers live in `grid.py` (`oblique_projection_params()`,
 `cell_screen_size()`, `diamond_vertices()`).
 
+## In-map HUD overlays
+
+All numeric / function chrome sits **inside the map viewport** (`HakoniwaMapHud`):
+
+| Overlay | Position | Notes |
+|---|---|---|
+| Status (funds / food / turn / land / pop) | Top center | Connection mode is **not** here |
+| Tile info | Top-left | Below status |
+| Action log | Bottom-right | ~70% transparent frame |
+| Guestbook | Bottom center | ~70% transparent frame |
+| Tools / settings | Bottom-left button → drawer | Build toolbar + server connection |
+
+No permanent right-side build column. Server URL / 本機·連線 live under tools → settings.
+
 ## Checklist after any map/view change
 
 1. Open the island map (or render the offscreen preview).
@@ -24,5 +38,6 @@ Constants and helpers live in `grid.py` (`oblique_projection_params()`,
 3. If the map looks like flat diamonds with H/W ≈ 1 (rotated squares), **fix immediately**.
 4. Run `python -m hakoniwa.smoke_test` — must pass `test_oblique_foreshortening_invariant`.
 5. Keep v9 stagger, 20×20, same-layer tops, no under-tile skirts.
+6. Confirm HUD overlays still sit on the map (not outside columns).
 
 CI/local smoke fails if the projection regresses to orthographic-only.

@@ -2,6 +2,10 @@
 
 Local-play UX: named toolbar with costs + disable rules, status bar,
 pan/zoom map (via HakoniwaMapWidget), optional keyboard shortcuts.
+
+Numeric / function chrome lives as **overlays inside the map viewport**
+(status, tile info, action log, tools drawer, guestbook) — not as outside
+columns or strips. Action log + guestbook frames are ~70% transparent.
 """
 
 from __future__ import annotations
@@ -9,10 +13,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtCore import Qt, QEvent
+from PySide6.QtGui import QKeySequence, QShortcut, QResizeEvent
 from PySide6.QtWidgets import (
     QDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -21,6 +26,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QPlainTextEdit,
+    QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -47,6 +54,266 @@ from .model import (
 from .remote import HakoniwaRemote, HakoniwaRemoteError, try_connect
 from .save import default_save_path, load_island, save_island
 from .view import HakoniwaMapWidget
+
+# Overlay frames (action log / guestbook): 70% transparent ≈ 30% opaque.
+_OVERLAY_BG = "rgba(12, 28, 18, 77)"
+_OVERLAY_BORDER = "rgba(150, 200, 150, 130)"
+
+# In-map HUD styles (status / tile / log / guestbook / tools).
+HAKONIWA_HUD_STYLE = f"""
+QLabel#hakoniwaHudStatus {{
+    background-color: rgba(18, 42, 26, 210);
+    color: #e4f5e4;
+    border: 1px solid rgba(90, 150, 90, 200);
+    border-radius: 3px;
+    padding: 4px 10px;
+}}
+QLabel#hakoniwaHudTile {{
+    background-color: rgba(16, 40, 28, 170);
+    color: #d0ecd0;
+    border: 1px solid rgba(70, 170, 100, 170);
+    border-radius: 3px;
+    padding: 4px 8px;
+}}
+QPlainTextEdit#hakoniwaHudLog,
+QPlainTextEdit#hakoniwaHudGuestbook {{
+    background-color: {_OVERLAY_BG};
+    color: #e8f5e8;
+    border: 1px solid {_OVERLAY_BORDER};
+    border-radius: 4px;
+    padding: 4px;
+    selection-background-color: #3d5a80;
+}}
+QFrame#hakoniwaHudGuestbookFrame {{
+    background-color: {_OVERLAY_BG};
+    border: 1px solid {_OVERLAY_BORDER};
+    border-radius: 4px;
+}}
+QFrame#hakoniwaToolsDrawer {{
+    background-color: rgba(24, 36, 28, 230);
+    border: 1px solid rgba(180, 120, 50, 200);
+    border-radius: 4px;
+}}
+QPushButton#hakoniwaToolsBtn {{
+    background-color: rgba(176, 96, 36, 230);
+    color: #fff8f0;
+    border: 1px solid rgba(220, 140, 60, 230);
+    border-radius: 4px;
+    padding: 6px 14px;
+    font-weight: bold;
+}}
+QPushButton#hakoniwaToolsBtn:hover {{
+    background-color: rgba(200, 120, 48, 240);
+}}
+QPushButton#hakoniwaToolsBtn:checked {{
+    background-color: rgba(140, 72, 24, 240);
+}}
+QLabel#hakoniwaHudCaption {{
+    color: #c8e0c8;
+    background: transparent;
+    border: none;
+    padding: 0;
+}}
+QLineEdit#hakoniwaHudInput {{
+    background-color: rgba(30, 40, 30, 180);
+    color: #f0f0f0;
+    border: 1px solid rgba(120, 160, 120, 160);
+    border-radius: 3px;
+    padding: 2px 4px;
+}}
+"""
+
+
+class HakoniwaMapHud(QWidget):
+    """Hosts the map and positions HUD overlays inside the map viewport.
+
+    Layout (user-locked annotation):
+      - status bar → top center
+      - tile info → top-left (below status)
+      - tools button → bottom-left (opens tools/settings drawer)
+      - guestbook → bottom center (~70% transparent)
+      - action log → bottom-right (~70% transparent)
+    """
+
+    def __init__(self, map_widget: HakoniwaMapWidget, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet(HAKONIWA_HUD_STYLE)
+        self.map = map_widget
+        self.map.setParent(self)
+        self.map.lower()
+
+        self.stats = QLabel(self)
+        self.stats.setObjectName("hakoniwaHudStatus")
+        self.stats.setWordWrap(True)
+        self.stats.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.sel_label = QLabel("未選取格子", self)
+        self.sel_label.setObjectName("hakoniwaHudTile")
+        self.sel_label.setWordWrap(True)
+
+        self.log_view = QPlainTextEdit(self)
+        self.log_view.setObjectName("hakoniwaHudLog")
+        self.log_view.setReadOnly(True)
+        self.log_view.setPlaceholderText("行動日誌")
+
+        self.tools_btn = QPushButton("工具／設定", self)
+        self.tools_btn.setObjectName("hakoniwaToolsBtn")
+        self.tools_btn.setCheckable(True)
+        self.tools_btn.setToolTip("開啟建設工具與伺服器設定")
+        self.tools_btn.toggled.connect(self._on_tools_toggled)
+
+        self.tools_drawer = QFrame(self)
+        self.tools_drawer.setObjectName("hakoniwaToolsDrawer")
+        self.tools_drawer.setVisible(False)
+        drawer_outer = QVBoxLayout(self.tools_drawer)
+        drawer_outer.setContentsMargins(6, 6, 6, 6)
+        drawer_outer.setSpacing(4)
+        drawer_scroll = QScrollArea()
+        drawer_scroll.setWidgetResizable(True)
+        drawer_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        drawer_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        drawer_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        self.tools_body = QWidget()
+        self.tools_layout = QVBoxLayout(self.tools_body)
+        self.tools_layout.setContentsMargins(2, 2, 2, 2)
+        self.tools_layout.setSpacing(4)
+        drawer_scroll.setWidget(self.tools_body)
+        drawer_outer.addWidget(drawer_scroll, stretch=1)
+        # Settings (server connection) pinned under the scrollable tool list.
+        self.settings_body = QWidget()
+        self.settings_layout = QVBoxLayout(self.settings_body)
+        self.settings_layout.setContentsMargins(2, 4, 2, 2)
+        self.settings_layout.setSpacing(4)
+        drawer_outer.addWidget(self.settings_body)
+
+        # Guestbook cluster (view + form) in one translucent frame.
+        self.guestbook_frame = QFrame(self)
+        self.guestbook_frame.setObjectName("hakoniwaHudGuestbookFrame")
+        gb_col = QVBoxLayout(self.guestbook_frame)
+        gb_col.setContentsMargins(6, 4, 6, 4)
+        gb_col.setSpacing(3)
+        gb_cap = QLabel("訪客留言板")
+        gb_cap.setObjectName("hakoniwaHudCaption")
+        gb_col.addWidget(gb_cap)
+        self.guestbook_view = QPlainTextEdit()
+        self.guestbook_view.setObjectName("hakoniwaHudGuestbook")
+        self.guestbook_view.setReadOnly(True)
+        self.guestbook_view.setPlaceholderText("尚無留言 — 留下第一則吧")
+        self.guestbook_view.setMaximumHeight(72)
+        gb_col.addWidget(self.guestbook_view)
+        self.guestbook_form = QHBoxLayout()
+        self.guestbook_form.setSpacing(4)
+        gb_col.addLayout(self.guestbook_form)
+
+        self.setMinimumSize(480, 480)
+        self.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+
+    def _on_tools_toggled(self, checked: bool) -> None:
+        self.tools_drawer.setVisible(checked)
+        self._layout_overlays()
+        if checked:
+            self.tools_drawer.raise_()
+            self.tools_btn.raise_()
+
+    def toggle_tools(self) -> None:
+        self.tools_btn.toggle()
+
+    def close_tools(self) -> None:
+        if self.tools_btn.isChecked():
+            self.tools_btn.setChecked(False)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._layout_overlays()
+
+    def eventFilter(self, watched, event):  # noqa: N802
+        # Keep overlays above the map if something re-raises the map.
+        if watched is self.map and event.type() == QEvent.Type.Show:
+            self._raise_overlays()
+        return super().eventFilter(watched, event)
+
+    def _raise_overlays(self) -> None:
+        for w in (
+            self.stats,
+            self.sel_label,
+            self.log_view,
+            self.guestbook_frame,
+            self.tools_drawer,
+            self.tools_btn,
+        ):
+            if w.isVisible():
+                w.raise_()
+
+    def _layout_overlays(self) -> None:
+        w = max(self.width(), 1)
+        h = max(self.height(), 1)
+        self.map.setGeometry(0, 0, w, h)
+        self.map.lower()
+
+        margin = 8
+        # Status — top center
+        self.stats.adjustSize()
+        status_h = max(self.stats.sizeHint().height() + 8, 28)
+        status_w = min(max(self.stats.sizeHint().width() + 24, 320), w - 2 * margin)
+        self.stats.setGeometry((w - status_w) // 2, margin, status_w, status_h)
+
+        # Tile info — top-left below status
+        self.sel_label.adjustSize()
+        tile_w = min(220, max(140, w // 4))
+        tile_h = max(self.sel_label.sizeHint().height() + 8, 56)
+        self.sel_label.setGeometry(
+            margin, margin + status_h + 6, tile_w, tile_h
+        )
+
+        # Tools button — bottom-left (hidden in tourism / read-only)
+        btn_x = margin
+        if self.tools_btn.isVisible():
+            self.tools_btn.adjustSize()
+            btn_w = max(self.tools_btn.sizeHint().width() + 8, 100)
+            btn_h = max(self.tools_btn.sizeHint().height(), 28)
+            btn_y = h - margin - btn_h
+            self.tools_btn.setGeometry(btn_x, btn_y, btn_w, btn_h)
+        else:
+            btn_w = 0
+            btn_h = 0
+            btn_y = h - margin
+
+        # Tools drawer — above the button, left side
+        drawer_w = min(280, max(200, w // 3))
+        drawer_h = min(h - 2 * margin - btn_h - 8, max(220, int(h * 0.62)))
+        if self.tools_drawer.isVisible():
+            self.tools_drawer.setGeometry(
+                margin,
+                max(margin, btn_y - 6 - drawer_h),
+                drawer_w,
+                drawer_h,
+            )
+
+        # Action log — bottom-right (~70% transparent frame)
+        log_w = min(260, max(160, w // 3))
+        log_h = min(160, max(90, h // 4))
+        self.log_view.setGeometry(
+            w - margin - log_w, h - margin - log_h, log_w, log_h
+        )
+
+        # Guestbook — bottom center, between tools and log
+        gb_left = btn_x + (btn_w + 8 if btn_w else 0)
+        gb_right = w - margin - log_w - 8
+        gb_w = max(180, gb_right - gb_left)
+        gb_h = min(130, max(96, h // 5))
+        if gb_w < 160:
+            gb_w = min(240, w - 2 * margin - btn_w - 8)
+            gb_left = btn_x + (btn_w + 8 if btn_w else 0)
+        self.guestbook_frame.setGeometry(
+            gb_left, h - margin - gb_h, gb_w, gb_h
+        )
+
+        self._raise_overlays()
+
 
 # Toolbar: (action key, display name, cost or None, shortcut digit/letter)
 TOOL_SPECS: Tuple[Tuple[str, str, Optional[int], str], ...] = (
@@ -178,68 +445,33 @@ class HakoniwaIslandDialog(QDialog):
         self.selected = None
 
         root = dp.install_ornate_calc_frame(self)
-        root.setSpacing(6)
+        root.setSpacing(4)
         root.addWidget(dp.make_draggable_title(self, "箱庭島"))
 
         hint = QLabel(
-            "箱庭斜視 · 點選格子 → 工具列建設／地形／飛彈 · 下回合結算　"
-            "（色塊佔位；怪獸＝色塊方塊）· 滾輪縮放 · 中／右鍵平移　"
+            "箱庭斜視 · 點選格子 → 左下「工具／設定」建設／地形／飛彈 · 下回合結算　"
+            "（色塊佔位）· 滾輪縮放 · 中／右鍵平移　"
             "快捷鍵：1–9／B 工具 · T 下回合 · S 存檔 · Esc 取消選取 · 0 重置視圖"
         )
         hint.setObjectName("calcResult")
         hint.setWordWrap(True)
         root.addWidget(hint)
 
-        # Optional NAS server URL (empty = local JSON only).
-        sync_row = QHBoxLayout()
-        sync_row.setSpacing(6)
-        url_cap = QLabel("伺服器")
-        url_cap.setObjectName("calcFieldCaption")
-        sync_row.addWidget(url_cap)
-        self.server_url = QLineEdit()
-        self.server_url.setPlaceholderText("留空＝本機；例 http://192.168.1.10:8787")
-        self.server_url.setText(self._load_server_url())
-        self.server_url.setMinimumWidth(280)
-        sync_row.addWidget(self.server_url, stretch=1)
-        connect_btn = QPushButton("連線")
-        connect_btn.setObjectName("calcAction")
-        connect_btn.clicked.connect(self._connect_server)
-        sync_row.addWidget(connect_btn)
-        local_btn = QPushButton("本機")
-        local_btn.setObjectName("calcAction")
-        local_btn.clicked.connect(self._use_local)
-        sync_row.addWidget(local_btn)
-        root.addLayout(sync_row)
-
-        self.conn_status = QLabel()
-        self.conn_status.setObjectName("calcResult")
-        self.conn_status.setWordWrap(True)
-        root.addWidget(self.conn_status)
-
-        # Status bar: funds / food / turn / land (plus pop + mode).
-        self.stats = QLabel()
-        self.stats.setObjectName("calcSectionTitle")
-        self.stats.setWordWrap(True)
-        root.addWidget(self.stats)
-
-        body = QHBoxLayout()
-        body.setSpacing(8)
-
+        # Map fills the body; all numeric/function UI is in-viewport HUD.
         self.map = HakoniwaMapWidget(self.state)
         self.map.cell_clicked.connect(self._on_cell_clicked)
-        body.addWidget(self.map, stretch=1)
+        self.hud = HakoniwaMapHud(self.map)
+        self.stats = self.hud.stats
+        self.sel_label = self.hud.sel_label
+        self.log_view = self.hud.log_view
+        self.guestbook_view = self.hud.guestbook_view
+        root.addWidget(self.hud, stretch=1)
 
-        side = QVBoxLayout()
-        side.setSpacing(4)
-
-        self.sel_label = QLabel("未選取格子")
-        self.sel_label.setObjectName("calcResult")
-        self.sel_label.setWordWrap(True)
-        side.addWidget(self.sel_label)
-
+        # --- Tools / settings drawer (orange button) ---
+        tools_lay = self.hud.tools_layout
         tools_cap = QLabel("工具")
-        tools_cap.setObjectName("calcFieldCaption")
-        side.addWidget(tools_cap)
+        tools_cap.setObjectName("hakoniwaHudCaption")
+        tools_lay.addWidget(tools_cap)
 
         self.tool_buttons: Dict[str, QPushButton] = {}
         for key, name, cost, digit in TOOL_SPECS:
@@ -251,85 +483,83 @@ class HakoniwaIslandDialog(QDialog):
             btn.setObjectName("calcAction")
             btn.setProperty("toolKey", key)
             btn.clicked.connect(lambda checked=False, k=key: self._do_action(k))
-            side.addWidget(btn)
+            tools_lay.addWidget(btn)
             self.tool_buttons[key] = btn
 
-        side.addSpacing(6)
+        tools_lay.addSpacing(4)
 
         self.turn_btn = QPushButton("T. 下回合")
         self.turn_btn.setObjectName("calcAction")
         self.turn_btn.setToolTip("結算本回合產糧／產資（快捷鍵 T）")
         self.turn_btn.clicked.connect(self._next_turn)
-        side.addWidget(self.turn_btn)
+        tools_lay.addWidget(self.turn_btn)
 
         tour_btn = QPushButton("觀光")
         tour_btn.setObjectName("calcAction")
         tour_btn.setToolTip("瀏覽諸島地圖（唯讀）；留言板仍可用")
         tour_btn.clicked.connect(self._open_tourism)
-        side.addWidget(tour_btn)
+        tools_lay.addWidget(tour_btn)
 
         save_btn = QPushButton("S. 存檔")
         save_btn.setObjectName("calcAction")
         save_btn.setToolTip("寫入本機 JSON（快捷鍵 S）")
         save_btn.clicked.connect(self._save)
-        side.addWidget(save_btn)
+        tools_lay.addWidget(save_btn)
 
         new_btn = QPushButton("新島（重置）")
         new_btn.setObjectName("calcAction")
         new_btn.clicked.connect(self._new_island)
-        side.addWidget(new_btn)
+        tools_lay.addWidget(new_btn)
 
         reset_view_btn = QPushButton("0. 重置視圖")
         reset_view_btn.setObjectName("calcAction")
         reset_view_btn.setToolTip("縮放／平移回到預設（快捷鍵 0）")
         reset_view_btn.clicked.connect(self.map.reset_view)
-        side.addWidget(reset_view_btn)
+        tools_lay.addWidget(reset_view_btn)
+        tools_lay.addStretch(1)
 
-        side.addSpacing(4)
-        log_cap = QLabel("日誌")
-        log_cap.setObjectName("calcFieldCaption")
-        side.addWidget(log_cap)
-        self.log_view = QPlainTextEdit()
-        self.log_view.setReadOnly(True)
-        self.log_view.setMaximumWidth(280)
-        self.log_view.setMinimumHeight(140)
-        side.addWidget(self.log_view, stretch=1)
+        # Server connection lives in settings (was top chrome + status [本機]).
+        settings_lay = self.hud.settings_layout
+        settings_cap = QLabel("設定 · 伺服器連線")
+        settings_cap.setObjectName("hakoniwaHudCaption")
+        settings_lay.addWidget(settings_cap)
 
-        side_wrap = QWidget()
-        side_wrap.setLayout(side)
-        side_wrap.setFixedWidth(290)
-        body.addWidget(side_wrap)
+        self.server_url = QLineEdit()
+        self.server_url.setObjectName("hakoniwaHudInput")
+        self.server_url.setPlaceholderText("留空＝本機；例 http://192.168.1.10:8787")
+        self.server_url.setText(self._load_server_url())
+        settings_lay.addWidget(self.server_url)
 
-        root.addLayout(body, stretch=1)
+        sync_row = QHBoxLayout()
+        sync_row.setSpacing(4)
+        connect_btn = QPushButton("連線")
+        connect_btn.setObjectName("calcAction")
+        connect_btn.clicked.connect(self._connect_server)
+        sync_row.addWidget(connect_btn)
+        local_btn = QPushButton("本機")
+        local_btn.setObjectName("calcAction")
+        local_btn.clicked.connect(self._use_local)
+        sync_row.addWidget(local_btn)
+        settings_lay.addLayout(sync_row)
 
-        self._install_shortcuts()
+        self.conn_status = QLabel()
+        self.conn_status.setObjectName("hakoniwaHudCaption")
+        self.conn_status.setWordWrap(True)
+        settings_lay.addWidget(self.conn_status)
 
-        # Visitor guestbook (島留言板) — local JSON or NAS /comments.
-        gb_cap = QLabel("訪客留言板")
-        gb_cap.setObjectName("calcSectionTitle")
-        root.addWidget(gb_cap)
-
-        self.guestbook_view = QPlainTextEdit()
-        self.guestbook_view.setReadOnly(True)
-        self.guestbook_view.setMinimumHeight(90)
-        self.guestbook_view.setMaximumHeight(140)
-        self.guestbook_view.setPlaceholderText("尚無留言 — 留下第一則吧")
-        root.addWidget(self.guestbook_view)
-
-        gb_form = QHBoxLayout()
-        gb_form.setSpacing(6)
+        # Guestbook form fields inside the translucent bottom overlay.
+        gb_form = self.hud.guestbook_form
         name_cap = QLabel("名字")
-        name_cap.setObjectName("calcFieldCaption")
+        name_cap.setObjectName("hakoniwaHudCaption")
         gb_form.addWidget(name_cap)
         self.guest_name = QLineEdit()
+        self.guest_name.setObjectName("hakoniwaHudInput")
         self.guest_name.setPlaceholderText("訪客名")
         self.guest_name.setMaxLength(MAX_GUEST_NAME)
-        self.guest_name.setFixedWidth(120)
+        self.guest_name.setFixedWidth(90)
         gb_form.addWidget(self.guest_name)
-        text_cap = QLabel("留言")
-        text_cap.setObjectName("calcFieldCaption")
-        gb_form.addWidget(text_cap)
         self.guest_text = QLineEdit()
+        self.guest_text.setObjectName("hakoniwaHudInput")
         self.guest_text.setPlaceholderText("寫點什麼…")
         self.guest_text.setMaxLength(MAX_GUEST_TEXT)
         gb_form.addWidget(self.guest_text, stretch=1)
@@ -337,11 +567,13 @@ class HakoniwaIslandDialog(QDialog):
         post_btn.setObjectName("calcAction")
         post_btn.clicked.connect(self._post_guestbook)
         gb_form.addWidget(post_btn)
-        refresh_gb = QPushButton("重新整理")
+        refresh_gb = QPushButton("整理")
         refresh_gb.setObjectName("calcAction")
+        refresh_gb.setToolTip("重新整理留言板")
         refresh_gb.clicked.connect(self._reload_guestbook)
         gb_form.addWidget(refresh_gb)
-        root.addLayout(gb_form)
+
+        self._install_shortcuts()
 
         close_row = QHBoxLayout()
         close_row.addStretch()
@@ -356,6 +588,7 @@ class HakoniwaIslandDialog(QDialog):
         else:
             self._set_offline("本機模式（JSON 存檔）")
         self._refresh_ui()
+        self.hud._layout_overlays()
 
     def _install_shortcuts(self) -> None:
         """Optional keyboard shortcuts for local play (tools / turn / view).
@@ -552,8 +785,8 @@ class HakoniwaIslandDialog(QDialog):
 
     def _refresh_ui(self) -> None:
         s = self.state
-        mode = "連線" if self._online else "本機"
-        # Dedicated status strip: funds / food / turn / land (+ pop / monster).
+        # Status overlay: funds / food / turn / land / pop / monster.
+        # Server mode ([本機]/連線) lives in tools → settings, not here.
         monster_bit = ""
         if s.monsters:
             m = s.monsters[0]
@@ -561,7 +794,7 @@ class HakoniwaIslandDialog(QDialog):
         self.stats.setText(
             f"狀態　｜　資金 {s.funds}　｜　糧食 {s.food}　｜　"
             f"回合 {s.turn}　｜　陸地 {s.land_count()} 格　｜　"
-            f"人口 {s.population}{monster_bit}　｜　[{mode}]"
+            f"人口 {s.population}{monster_bit}"
         )
         self.log_view.setPlainText("\n".join(s.log[-30:]))
         bar = self.log_view.verticalScrollBar()
@@ -570,6 +803,8 @@ class HakoniwaIslandDialog(QDialog):
         self._refresh_selection_label()
         self._refresh_toolbar()
         self._show_guestbook(s.list_comments())
+        if hasattr(self, "hud"):
+            self.hud._layout_overlays()
 
     def _refresh_toolbar(self) -> None:
         """Enable tools only when the selection can afford / accepts them."""
@@ -924,7 +1159,7 @@ class TourismIslandDialog(QDialog):
         self.setStyleSheet(dp.CALC_DIALOG_STYLE + getattr(dp, "MINI_PROGRAM_STYLE", ""))
 
         root = dp.install_ornate_calc_frame(self)
-        root.setSpacing(6)
+        root.setSpacing(4)
         root.addWidget(dp.make_draggable_title(self, title))
 
         hint = QLabel(
@@ -936,64 +1171,36 @@ class TourismIslandDialog(QDialog):
         hint.setWordWrap(True)
         root.addWidget(hint)
 
+        self.map = HakoniwaMapWidget(self.state)
+        self.map.cell_clicked.connect(self._on_cell_clicked)
+        self.hud = HakoniwaMapHud(self.map)
+        self.stats = self.hud.stats
+        self.sel_label = self.hud.sel_label
+        self.guestbook_view = self.hud.guestbook_view
+        # Tourism: no build toolbar; hide tools chrome; log shows read-only note.
+        self.hud.tools_btn.hide()
+        self.hud.tools_drawer.hide()
         mode = "連線" if remote is not None else "本機示範"
-        self.stats = QLabel(
+        self.stats.setText(
             f"[{mode}觀光] {island.name}（{self._island_id}）　"
             f"資金 {island.funds}　糧食 {island.food}　人口 {island.population}　"
             f"回合 {island.turn}　陸地 {island.land_count()} 格"
         )
-        self.stats.setObjectName("calcSectionTitle")
-        root.addWidget(self.stats)
+        self.hud.log_view.setPlainText("觀光模式：建設與地形指令已鎖定。")
+        root.addWidget(self.hud, stretch=1)
 
-        body = QHBoxLayout()
-        body.setSpacing(8)
-
-        self.map = HakoniwaMapWidget(self.state)
-        self.map.cell_clicked.connect(self._on_cell_clicked)
-        body.addWidget(self.map, stretch=1)
-
-        side = QVBoxLayout()
-        side.setSpacing(4)
-        self.sel_label = QLabel("未選取格子")
-        self.sel_label.setObjectName("calcResult")
-        self.sel_label.setWordWrap(True)
-        side.addWidget(self.sel_label)
-        side.addStretch(1)
-        note = QLabel("建設與地形指令在觀光中不可用。")
-        note.setObjectName("calcFieldCaption")
-        note.setWordWrap(True)
-        side.addWidget(note)
-        side_wrap = QWidget()
-        side_wrap.setLayout(side)
-        side_wrap.setFixedWidth(220)
-        body.addWidget(side_wrap)
-        root.addLayout(body, stretch=1)
-
-        gb_cap = QLabel("訪客留言板")
-        gb_cap.setObjectName("calcSectionTitle")
-        root.addWidget(gb_cap)
-
-        self.guestbook_view = QPlainTextEdit()
-        self.guestbook_view.setReadOnly(True)
-        self.guestbook_view.setMinimumHeight(90)
-        self.guestbook_view.setMaximumHeight(140)
-        self.guestbook_view.setPlaceholderText("尚無留言")
-        root.addWidget(self.guestbook_view)
-
-        gb_form = QHBoxLayout()
-        gb_form.setSpacing(6)
+        gb_form = self.hud.guestbook_form
         name_cap = QLabel("名字")
-        name_cap.setObjectName("calcFieldCaption")
+        name_cap.setObjectName("hakoniwaHudCaption")
         gb_form.addWidget(name_cap)
         self.guest_name = QLineEdit()
+        self.guest_name.setObjectName("hakoniwaHudInput")
         self.guest_name.setPlaceholderText("訪客名")
         self.guest_name.setMaxLength(MAX_GUEST_NAME)
-        self.guest_name.setFixedWidth(120)
+        self.guest_name.setFixedWidth(90)
         gb_form.addWidget(self.guest_name)
-        text_cap = QLabel("留言")
-        text_cap.setObjectName("calcFieldCaption")
-        gb_form.addWidget(text_cap)
         self.guest_text = QLineEdit()
+        self.guest_text.setObjectName("hakoniwaHudInput")
         self.guest_text.setPlaceholderText("寫點什麼…")
         self.guest_text.setMaxLength(MAX_GUEST_TEXT)
         gb_form.addWidget(self.guest_text, stretch=1)
@@ -1001,11 +1208,10 @@ class TourismIslandDialog(QDialog):
         post_btn.setObjectName("calcAction")
         post_btn.clicked.connect(self._post_guestbook)
         gb_form.addWidget(post_btn)
-        refresh_gb = QPushButton("重新整理")
+        refresh_gb = QPushButton("整理")
         refresh_gb.setObjectName("calcAction")
         refresh_gb.clicked.connect(self._reload_guestbook)
         gb_form.addWidget(refresh_gb)
-        root.addLayout(gb_form)
 
         close_row = QHBoxLayout()
         close_row.addStretch()
@@ -1015,6 +1221,7 @@ class TourismIslandDialog(QDialog):
         root.addLayout(close_row)
 
         self._show_guestbook(self.state.list_comments())
+        self.hud._layout_overlays()
 
     def _format_guestbook(self, comments: List[GuestbookEntry]) -> str:
         if not comments:
