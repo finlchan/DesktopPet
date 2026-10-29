@@ -42,7 +42,9 @@ def make_demo_coral() -> IslandState:
     core = center_cluster(GRID_SIZE)
     land = _expand(core, 1)
     for idx, (i, j) in enumerate(land):
-        if idx < 3:
+        if idx == 0:
+            cells[i][j] = Cell("mountain")
+        elif idx < 3:
             cells[i][j] = Cell("dirt")
         elif idx < 8:
             cells[i][j] = Cell("grass")
@@ -51,12 +53,15 @@ def make_demo_coral() -> IslandState:
                 cells[i][j] = Cell("forest", trees=TREE_MIN + 200)
             else:
                 cells[i][j] = Cell("grass")
-    # Place a farm and factory on grass.
+    # Place a farm and factory on grass; quarry on the mountain.
     farms = [(i, j) for i, j in land if cells[i][j].terrain == "grass"]
     if farms:
         cells[farms[0][0]][farms[0][1]].building = "farm"
     if len(farms) > 2:
         cells[farms[2][0]][farms[2][1]].building = "factory"
+    mountains = [(i, j) for i, j in land if cells[i][j].terrain == "mountain"]
+    if mountains:
+        cells[mountains[0][0]][mountains[0][1]].building = "quarry"
     # One shallow ring touch.
     for i, j in land:
         for ni, nj in neighbors(i, j, GRID_SIZE):

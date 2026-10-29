@@ -48,12 +48,15 @@ from .model import (
     COST_MISSILE,
     COST_MISSILE_BASE,
     COST_MONUMENT,
+    COST_QUARRY,
+    COST_RAISE,
     COST_SHIPYARD,
     FOOD_EXPORT_LOT,
     FUNDS_PER_FOOD_LOT,
     GuestbookEntry,
     MAX_GUEST_NAME,
     MAX_GUEST_TEXT,
+    MOUNTAIN_ONLY_BUILDINGS,
     PLACEABLE_BUILDINGS,
     TREE_MIN,
     food_export_funds,
@@ -339,6 +342,8 @@ TOOL_SPECS: Tuple[Tuple[str, str, Optional[int], str], ...] = (
     ("remove", "移除建築", None, "3"),
     ("landfill", "填海造陸", COST_LANDFILL, "4"),
     ("level", "整地", COST_LEVEL, "5"),
+    ("raise", "造山", COST_RAISE, "R"),
+    ("quarry", "建設採掘場", COST_QUARRY, "Q"),
     ("afforest", "植林", COST_AFFOREST, "6"),
     ("harvest", "伐採", COST_HARVEST if COST_HARVEST else None, "C"),
     ("missile", "發射飛彈", COST_MISSILE, "7"),
@@ -391,10 +396,13 @@ def tool_enabled(
         cost = int(BUILDINGS[kind]["cost"])
         if state.monster_at(i, j) is not None:
             return False, "此格有怪獸"
-        if c.terrain not in BUILDABLE:
-            return False, "須在平地建設"
         if c.building is not None:
             return False, "此格已有建築"
+        if kind in MOUNTAIN_ONLY_BUILDINGS:
+            if c.terrain != "mountain":
+                return False, "採掘場須建在山上"
+        elif c.terrain not in BUILDABLE:
+            return False, "須在平地建設"
         if kind in COASTAL_BUILDINGS and not state._adjacent_to_sea(i, j):
             return False, "須臨海平地（鄰海／淺灘）"
         if state.funds < cost:
@@ -420,6 +428,15 @@ def tool_enabled(
             return False, "此格無需整地"
         if state.funds < COST_LEVEL:
             return False, f"資金不足（需 {COST_LEVEL}）"
+        return True, ""
+
+    if kind == "raise":
+        if not state.can_raise_mountain(i, j):
+            if state.monster_at(i, j) is not None:
+                return False, "此格有怪獸"
+            return False, "須空的荒地或平地"
+        if state.funds < COST_RAISE:
+            return False, f"資金不足（需 {COST_RAISE}）"
         return True, ""
 
     if kind == "afforest":
@@ -891,6 +908,10 @@ class HakoniwaIslandDialog(QDialog):
                     tip += f"\n本批可得 +{food_export_funds(1)}；現有糧食 {self.state.food}"
             elif key == "monument":
                 tip += "\n國威色塊：加島分數／安穩；抗怪獸踩踏；鄰格抑火災"
+            elif key == "raise":
+                tip += "\n空荒地／平地→山（可再建採掘場；噴火亦會生山）"
+            elif key == "quarry":
+                tip += "\n僅山上可建；勞動產資（農場優先後填採掘）"
             elif self.selected is not None:
                 tip += f"\n選格 {self.selected[0]},{self.selected[1]}"
             tip += f"\n快捷鍵 {digit}"
@@ -920,11 +941,15 @@ class HakoniwaIslandDialog(QDialog):
             hints.append(f"可填海（{step}）")
         if self.state.can_level(i, j):
             hints.append("可整地")
+        if self.state.can_raise_mountain(i, j):
+            hints.append("可造山")
         if self.state.can_afforest(i, j):
             hints.append("可植林")
         if self.state.can_harvest(i, j):
             trees = c.trees if c.trees > 0 else TREE_MIN
             hints.append(f"可伐採（{trees}本→+{timber_funds(trees)}）")
+        if self.state.can_place_building(i, j, "quarry"):
+            hints.append("可建採掘場")
         if self.state.can_place_building(i, j, "harbor"):
             hints.append("可建港灣")
         if self.state.can_place_building(i, j, "shipyard"):
@@ -979,6 +1004,8 @@ class HakoniwaIslandDialog(QDialog):
                     out = self.remote.landfill(i, j)
                 elif kind == "level":
                     out = self.remote.level(i, j)
+                elif kind == "raise":
+                    out = self.remote.raise_mountain(i, j)
                 elif kind == "afforest":
                     out = self.remote.afforest(i, j)
                 elif kind == "harvest":
@@ -1010,6 +1037,8 @@ class HakoniwaIslandDialog(QDialog):
             msg = self.state.landfill(i, j)
         elif kind == "level":
             msg = self.state.level_land(i, j)
+        elif kind == "raise":
+            msg = self.state.raise_mountain(i, j)
         elif kind == "afforest":
             msg = self.state.afforest(i, j)
         elif kind == "harvest":

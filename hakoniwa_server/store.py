@@ -157,6 +157,13 @@ class IslandStore:
                 self._persist_home_unlocked()
             return msg, self._state.to_dict()
 
+    def raise_mountain(self, i: int, j: int) -> tuple[str, dict]:
+        with self._lock:
+            msg = self._state.raise_mountain(i, j)
+            if msg == "ok":
+                self._persist_home_unlocked()
+            return msg, self._state.to_dict()
+
     def afforest(self, i: int, j: int) -> tuple[str, dict]:
         with self._lock:
             msg = self._state.afforest(i, j)
