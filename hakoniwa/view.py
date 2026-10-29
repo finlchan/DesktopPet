@@ -1,9 +1,9 @@
-"""箱庭斜視 map widget — solid-color diamond placeholders (no art assets yet).
+"""箱庭斜視 map widget — textured diamond tops (dirt／grass／sea) + color buildings.
 
-Supports wheel zoom + drag pan for local play. Lattice is logical 1:1 diamonds
-with v9 stagger, then ~45° oblique foreshortening (Y *= sin(45°)) from
-``hakoniwa.grid`` — NOT a flat top-down grid merely rotated 45°.
-No under-tile thickness/skirts.
+Lattice is logical 1:1 diamonds with v9 stagger, then ~45° oblique foreshortening
+(Y *= sin(45°)) from ``hakoniwa.grid`` — NOT a flat top-down grid merely rotated
+45°. Terrain uses flat top textures only; no under-tile thickness/skirts.
+Buildings／monsters remain solid color placeholders.
 
 After any map/view change, run smoke (oblique invariant) and visually compare
 against correct-hakoniwa-oblique-45.png; reject wrong-flat-rotated-grid.png.
@@ -17,6 +17,7 @@ from PySide6.QtCore import Qt, Signal, QPointF, QPoint, QRectF
 from PySide6.QtGui import (
     QColor,
     QPainter,
+    QPainterPath,
     QPen,
     QBrush,
     QPolygonF,
@@ -29,18 +30,22 @@ from PySide6.QtWidgets import QWidget
 from .grid import (
     DEFAULT_CELL,
     cell_center,
+    cell_screen_size,
     diamond_vertices,
     hit_test,
     map_bounds,
     paint_order,
 )
 from .model import BUILDINGS, TERRAIN, IslandState
+from .tiles import ATLAS
 
 Coord = Tuple[int, int]
 
 MIN_CELL = 12.0
 MAX_CELL = 96.0
 ZOOM_STEP = 1.12
+# Fallback wash when ocean-background.png is missing.
+BG_FALLBACK = QColor(28, 48, 72)
 
 
 class HakoniwaMapWidget(QWidget):
@@ -56,6 +61,7 @@ class HakoniwaMapWidget(QWidget):
         self._pan = QPointF(0.0, 0.0)
         self._panning = False
         self._pan_last: Optional[QPoint] = None
+        self._atlas = ATLAS
         self.setMinimumSize(420, 420)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
@@ -139,13 +145,58 @@ class HakoniwaMapWidget(QWidget):
         super().resizeEvent(event)
         self.update()
 
+    def _paint_background(self, painter: QPainter) -> None:
+        """Sea backdrop (ocean texture) or dark-teal wash; sea cells still tiled."""
+        bg = self._atlas.ocean_background()
+        if bg is not None and not bg.isNull():
+            painter.drawPixmap(self.rect(), bg)
+            # Slight darken so HUD text stays readable over bright water.
+            painter.fillRect(self.rect(), QColor(8, 24, 36, 70))
+        else:
+            painter.fillRect(self.rect(), BG_FALLBACK)
+
+    def _paint_terrain_top(
+        self,
+        painter: QPainter,
+        terrain_key: str,
+        cx: float,
+        cy: float,
+        poly: QPolygonF,
+    ) -> None:
+        """Draw flat top texture clipped to the foreshortened diamond (no skirts)."""
+        w, h = cell_screen_size(self.cell)
+        hw, hh = w / 2.0, h / 2.0
+        dest = QRectF(cx - hw, cy - hh, w, h)
+        pix = self._atlas.pixmap_for(terrain_key)
+        if pix is not None and not pix.isNull():
+            path = QPainterPath()
+            path.addPolygon(poly)
+            painter.save()
+            painter.setClipPath(path)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawPixmap(dest, pix, QRectF(0, 0, pix.width(), pix.height()))
+            tint = self._atlas.tint_for(terrain_key)
+            if tint is not None:
+                painter.fillPath(path, tint)
+            painter.restore()
+        else:
+            # Color placeholder if a top PNG is missing.
+            meta = TERRAIN.get(terrain_key, TERRAIN["sea"])
+            painter.setBrush(QBrush(QColor(*meta["color"])))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawPolygon(poly)
+
+        edge = QColor(20, 24, 32, 160)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(edge, 1.0))
+        painter.drawPolygon(poly)
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
 
-        # Soft sky → sea wash (atmosphere; tiles remain solid diamonds).
-        bg = QColor(28, 48, 72)
-        painter.fillRect(self.rect(), bg)
+        self._paint_background(painter)
 
         ox, oy = self._origin_offset()
         size = self.state.size
@@ -158,12 +209,7 @@ class HakoniwaMapWidget(QWidget):
             verts = diamond_vertices(cx, cy, self.cell)
             poly = QPolygonF([QPointF(x, y) for x, y in verts])
 
-            terrain = TERRAIN.get(cell.terrain, TERRAIN["sea"])
-            fill = QColor(*terrain["color"])
-            painter.setBrush(QBrush(fill))
-            edge = QColor(20, 24, 32, 180)
-            painter.setPen(QPen(edge, 1.0))
-            painter.drawPolygon(poly)
+            self._paint_terrain_top(painter, cell.terrain, cx, cy, poly)
 
             # Building: smaller inset diamond (solid placeholder block).
             if cell.building and cell.building in BUILDINGS:

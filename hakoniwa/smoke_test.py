@@ -742,14 +742,48 @@ def test_dialog_import_offscreen():
     assert dlg.guest_text is not None
     assert hasattr(dlg, "tool_buttons")
     assert set(dlg.tool_buttons) == {k for k, *_ in TOOL_SPECS}
+    # HUD overlays live inside the map viewport (not outside columns).
+    from hakoniwa.dialog import HakoniwaMapHud
+
+    assert isinstance(dlg.hud, HakoniwaMapHud)
+    assert dlg.stats.parent() is dlg.hud
+    assert dlg.sel_label.parent() is dlg.hud
+    assert dlg.log_view.parent() is dlg.hud
+    assert dlg.guestbook_view.parent() is dlg.hud.guestbook_frame
+    assert dlg.map.parent() is dlg.hud
+    assert dlg.server_url.parent() is dlg.hud.settings_body
+    assert dlg.conn_status.parent() is dlg.hud.settings_body
+    assert not dlg.hud.tools_drawer.isVisible()
     # No selection → tools disabled.
     dlg._refresh_toolbar()
     assert all(not b.isEnabled() for b in dlg.tool_buttons.values())
-    # Status bar carries the four core fields.
-    assert "資金" in dlg.stats.text()
-    assert "糧食" in dlg.stats.text()
-    assert "回合" in dlg.stats.text()
-    assert "陸地" in dlg.stats.text()
+    # Status overlay: locked order 狀態→資金→糧食→人口→回合→格數; no connection mode.
+    st = dlg.stats.text()
+    assert "資金" in st and "糧食" in st and "人口" in st
+    assert "回合" in st and "格數" in st
+    assert "狀態" in st
+    assert "[本機]" not in st and "[連線]" not in st
+    # Exact field order (indices increase left→right).
+    i_status, i_funds = st.index("狀態"), st.index("資金")
+    i_food, i_pop = st.index("糧食"), st.index("人口")
+    i_turn, i_cells = st.index("回合"), st.index("格數")
+    assert i_status < i_funds < i_food < i_pop < i_turn < i_cells, st
+    # Status HUD is a single horizontal line (no wrap / multi-line).
+    assert dlg.stats.wordWrap() is False
+    assert "\n" not in st
+    dlg.show()
+    dlg.resize(960, 780)
+    dlg._refresh_ui()
+    app.processEvents()
+    status_h = dlg.stats.height()
+    line_h = dlg.stats.fontMetrics().height()
+    assert status_h <= line_h + 16, (status_h, line_h, dlg.stats.text())
+    # Opening tools drawer exposes build toolbar + server settings.
+    # Use isHidden() — isVisible() is false while the dialog itself is not shown.
+    dlg.hud.tools_btn.setChecked(True)
+    assert not dlg.hud.tools_drawer.isHidden()
+    dlg.hud.tools_btn.setChecked(False)
+    assert dlg.hud.tools_drawer.isHidden()
 
     # Select a buildable grass cell → farm/factory enable.
     land = [(i, j) for i in range(20) for j in range(20) if dlg.state.is_land(i, j)]
@@ -784,6 +818,9 @@ def test_dialog_import_offscreen():
     dlg._refresh_ui()
     assert "Smoke" in dlg.guestbook_view.toPlainText()
 
+    # Offscreen proof: overlays sit on the map viewport.
+    _write_ui_overlay_proof(dlg)
+
     catalog = dlg._tourism_catalog()
     assert len(catalog) >= 2
     assert any(r.get("id") == "demo-coral" for r in catalog)
@@ -798,6 +835,8 @@ def test_dialog_import_offscreen():
     assert "觀光" in tour.windowTitle()
     assert tour.guestbook_view is not None
     assert hasattr(tour.map, "zoom_by")
+    assert tour.guestbook_view.parent() is tour.hud.guestbook_frame
+    assert not tour.hud.tools_btn.isVisible()
     tour.state.add_comment("Tourist", "nice pines")
     tour._show_guestbook(tour.state.list_comments())
     assert "Tourist" in tour.guestbook_view.toPlainText()
@@ -805,6 +844,35 @@ def test_dialog_import_offscreen():
 
     dlg.close()
     del app
+
+
+def _write_ui_overlay_proof(dlg) -> None:
+    """Grab map HUD proving status/tile/log/guestbook/tools live on the map."""
+    from PySide6.QtWidgets import QApplication
+
+    out_dir = Path(__file__).resolve().parents[1] / "hakoniwa" / "testdata"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    dlg.resize(960, 780)
+    dlg.show()
+    dlg.hud.tools_btn.setChecked(False)
+    dlg._refresh_ui()
+    app = QApplication.instance()
+    if app is not None:
+        app.processEvents()
+    closed = dlg.hud.grab()
+    closed_path = out_dir / "ui_overlay_map_hud.png"
+    assert closed.save(str(closed_path), "PNG"), closed_path
+    print(f"ui overlay proof: wrote {closed_path}")
+
+    dlg.hud.tools_btn.setChecked(True)
+    if app is not None:
+        app.processEvents()
+    open_pix = dlg.hud.grab()
+    open_path = out_dir / "ui_overlay_tools_open.png"
+    assert open_pix.save(str(open_path), "PNG"), open_path
+    print(f"ui overlay proof: wrote {open_path}")
+    dlg.hud.tools_btn.setChecked(False)
 
 
 def test_server_api_if_available():
@@ -950,6 +1018,42 @@ def test_server_api_if_available():
         assert listed_pine["comments"][0]["text"] == "松風好美"
 
 
+def test_terrain_top_assets():
+    """Bundled dirt／grass／sea flat tops must exist (no skirt assets required)."""
+    from hakoniwa.tiles import (
+        OCEAN_BACKGROUND,
+        TERRAIN_TILE_FILES,
+        TILES_DIR,
+        ATLAS,
+    )
+
+    for key in ("dirt", "grass", "sea"):
+        fname = TERRAIN_TILE_FILES[key]
+        path = TILES_DIR / fname
+        assert path.is_file(), f"missing terrain top {path}"
+        assert path.stat().st_size > 1000, path
+    # Ocean backdrop is preferred but optional (dark teal fallback).
+    if OCEAN_BACKGROUND.is_file():
+        assert OCEAN_BACKGROUND.stat().st_size > 1000
+
+    # Qt load path (offscreen) — primary tops must decode.
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    try:
+        from PySide6.QtWidgets import QApplication
+    except Exception as exc:  # pragma: no cover
+        print(f"terrain assets: skip Qt load ({exc})")
+        return
+    _app = QApplication.instance() or QApplication([])
+    assert ATLAS.has_primary_tops(), "dirt/grass/sea tops failed to load"
+    for key in ("dirt", "grass", "sea"):
+        pix = ATLAS.pixmap_for(key)
+        assert pix is not None and not pix.isNull()
+        assert pix.width() >= 64 and pix.height() >= 64
+    print("terrain tops: dirt/grass/sea OK")
+
+
 def test_oblique_preview_png_if_possible():
     """Write a small foreshortening proof PNG when Qt offscreen is available."""
     import json
@@ -983,6 +1087,14 @@ def test_oblique_preview_png_if_possible():
     pix = widget.grab()
     map_path = out_dir / "oblique_map_offscreen.png"
     assert pix.save(str(map_path), "PNG"), map_path
+    # Textured grab should not be a flat single-color field.
+    img = pix.toImage()
+    samples = {
+        img.pixel(x, y)
+        for x in (80, 160, 320, 480, 560)
+        for y in (120, 240, 360)
+    }
+    assert len(samples) >= 8, f"map grab looks untextured ({len(samples)} colors)"
     print(f"oblique preview: wrote {map_path}")
 
 
@@ -1041,6 +1153,7 @@ def _write_foreshorten_proof_png(path: Path) -> None:
 def main():
     test_grid_geometry()
     test_oblique_foreshortening_invariant()
+    test_terrain_top_assets()
     test_catalog_costs()
     test_new_island_and_loop()
     test_guestbook_local()
