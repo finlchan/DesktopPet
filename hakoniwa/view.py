@@ -1,7 +1,12 @@
 """箱庭斜視 map widget — solid-color diamond placeholders (no art assets yet).
 
-Supports wheel zoom + drag pan for local play. Lattice stays 1:1 diamonds
-with v9 stagger; no under-tile thickness.
+Supports wheel zoom + drag pan for local play. Lattice is logical 1:1 diamonds
+with v9 stagger, then ~45° oblique foreshortening (Y *= sin(45°)) from
+``hakoniwa.grid`` — NOT a flat top-down grid merely rotated 45°.
+No under-tile thickness/skirts.
+
+After any map/view change, run smoke (oblique invariant) and visually compare
+against correct-hakoniwa-oblique-45.png; reject wrong-flat-rotated-grid.png.
 """
 
 from __future__ import annotations

@@ -1,0 +1,28 @@
+# 箱庭島 (`hakoniwa/`)
+
+Desktop Pet mini-program: local 箱庭斜視 map + simplified island loop.
+
+## 箱庭斜視 (mandatory view)
+
+Official player view is **~45° down-looking oblique with depth foreshortening**,
+not a flat top-down square grid rotated 45°.
+
+| | |
+|---|---|
+| Projection | Logical 1:1 diamond tops → screen `H = W · sin(45°)` (`grid.OBLIQUE_Y_SCALE`) |
+| Lattice | v9 diagonal-strip stagger, 20×20, same-layer sea/dirt/grass |
+| Forbidden | Orthographic-only / pure `rotate(45°)` (equal diamond W/H on screen) |
+| No | Under-tile thickness / skirts |
+
+Constants and helpers live in `grid.py` (`oblique_projection_params()`,
+`cell_screen_size()`, `diamond_vertices()`).
+
+## Checklist after any map/view change
+
+1. Open the island map (or render the offscreen preview).
+2. Confirm foreshortening: cell diamonds are **wider than tall** (H/W ≈ 0.707).
+3. If the map looks like flat diamonds with H/W ≈ 1 (rotated squares), **fix immediately**.
+4. Run `python -m hakoniwa.smoke_test` — must pass `test_oblique_foreshortening_invariant`.
+5. Keep v9 stagger, 20×20, same-layer tops, no under-tile skirts.
+
+CI/local smoke fails if the projection regresses to orthographic-only.
