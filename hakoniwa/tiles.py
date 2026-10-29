@@ -3,6 +3,9 @@
 Bundled under ``hakoniwa/assets/tiles/`` (from project store
 ``media/tiles/active/``). Logical 1:1 diamond art is drawn into foreshortened
 screen diamonds (H = W · sin(45°)) via clip — never under-tile thickness.
+
+Optional user overrides (``Data/hakoniwa/user/`` or ``assets/user/``) are
+checked first via :mod:`hakoniwa.user_art`; missing files keep bundled tops.
 """
 
 from __future__ import annotations
@@ -11,6 +14,8 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from PySide6.QtGui import QColor, QImage, QPixmap
+
+from .user_art import LOADER as USER_ART
 
 # Package-local assets (also bundled into frozen EXE via build.bat --add-data).
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
@@ -59,19 +64,51 @@ def _key_black_to_alpha(img: QImage) -> QImage:
 
 
 class TileAtlas:
-    """Lazy-loaded terrain tops + optional ocean backdrop."""
+    """Lazy-loaded terrain tops + optional ocean backdrop.
+
+    Lookup order per terrain: user PNG (if dropped) → bundled ``tiles/`` → None
+    (view falls back to solid TERRAIN color). Ocean: user → bundled → wash.
+    """
 
     def __init__(self) -> None:
         self._pixmaps: Dict[str, QPixmap] = {}
+        self._user_terrain: Dict[str, Optional[QPixmap]] = {}
         self._bg: Optional[QPixmap] = None
+        self._bg_tried = False
+        self._user_bg_tried = False
+        self._user_bg: Optional[QPixmap] = None
+
+    def invalidate_user_cache(self) -> None:
+        """Clear user-override caches after :func:`configure_user_art`."""
+        self._user_terrain.clear()
+        self._user_bg = None
+        self._user_bg_tried = False
+        self._bg = None
         self._bg_tried = False
 
     def pixmap_for(self, terrain: str) -> Optional[QPixmap]:
+        # 1) Optional user override (no new art shipped — only if file exists).
+        if terrain in self._user_terrain:
+            user_cached = self._user_terrain[terrain]
+            if user_cached is not None and not user_cached.isNull():
+                return user_cached
+        else:
+            user_pix = USER_ART.terrain_pixmap(terrain)
+            if user_pix is not None and not user_pix.isNull():
+                # Apply same black-key as bundled diamond tops when needed.
+                img = user_pix.toImage()
+                keyed = QPixmap.fromImage(_key_black_to_alpha(img))
+                self._user_terrain[terrain] = keyed if not keyed.isNull() else user_pix
+                return self._user_terrain[terrain]
+            self._user_terrain[terrain] = None
+
+        # 2) Bundled active tops (sea／dirt／grass and aliases).
         fname = TERRAIN_TILE_FILES.get(terrain)
         if not fname:
             return None
         if fname in self._pixmaps:
-            return self._pixmaps[fname]
+            pix = self._pixmaps[fname]
+            return pix if not pix.isNull() else None
         path = TILES_DIR / fname
         if not path.is_file():
             self._pixmaps[fname] = QPixmap()
@@ -91,6 +128,14 @@ class TileAtlas:
         return QColor(*rgba)
 
     def ocean_background(self) -> Optional[QPixmap]:
+        if not self._user_bg_tried:
+            self._user_bg_tried = True
+            user_bg = USER_ART.ocean_pixmap()
+            if user_bg is not None and not user_bg.isNull():
+                self._user_bg = user_bg
+        if self._user_bg is not None and not self._user_bg.isNull():
+            return self._user_bg
+
         if self._bg_tried:
             return self._bg if self._bg and not self._bg.isNull() else None
         self._bg_tried = True
@@ -99,6 +144,14 @@ class TileAtlas:
             return None
         self._bg = QPixmap(str(OCEAN_BACKGROUND))
         return self._bg if not self._bg.isNull() else None
+
+    def building_pixmap(self, kind: str) -> Optional[QPixmap]:
+        """Optional user building art; None → view paints color diamond."""
+        return USER_ART.building_pixmap(kind)
+
+    def monster_pixmap(self, kind: str) -> Optional[QPixmap]:
+        """Optional user monster art; None → view paints color square."""
+        return USER_ART.monster_pixmap(kind)
 
     def has_primary_tops(self) -> bool:
         """True when dirt／grass／sea active tops are all loadable."""

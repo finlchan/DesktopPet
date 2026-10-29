@@ -2100,6 +2100,122 @@ def test_terrain_top_assets():
     print("terrain tops: dirt/grass/sea OK")
 
 
+def test_user_art_loader_hook():
+    """Naming covers catalog; missing files → None; drop-in PNG loads then falls back."""
+    import os
+    import struct
+    import zlib
+
+    from hakoniwa.user_art import (
+        ASSETS_USER_DIR,
+        USER_BUILDING_FILES,
+        USER_MONSTER_FILES,
+        USER_TERRAIN_FILES,
+        UserArtLoader,
+        assert_naming_covers_catalog,
+        configure_user_art,
+        default_user_art_roots,
+        expected_filenames,
+    )
+
+    assert_naming_covers_catalog()
+    names = expected_filenames()
+    assert "farm.png" in names["building"]
+    assert "park.png" in names["building"]
+    assert "inora.png" in names["monster"]
+    assert "sea.png" in names["terrain"]
+    assert "ocean-background.png" in names["ocean"]
+    # Every BUILDINGS／MONSTERS／TERRAIN key has a documented slot.
+    assert set(USER_BUILDING_FILES) >= {
+        k for k in USER_BUILDING_FILES
+    }
+    assert "farm" in USER_BUILDING_FILES and "missile_base" in USER_BUILDING_FILES
+    assert "inora" in USER_MONSTER_FILES
+    assert set(USER_TERRAIN_FILES) >= {"sea", "dirt", "grass", "forest", "mountain"}
+
+    roots = default_user_art_roots(None)
+    assert ASSETS_USER_DIR in roots
+    assert roots[-1] == ASSETS_USER_DIR
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = Path(tmp)
+        data_user = cfg / "Data" / "hakoniwa" / "user"
+        data_user.mkdir(parents=True)
+        ordered = default_user_art_roots(cfg)
+        assert ordered[0] == data_user.resolve()
+        assert ordered[1] == ASSETS_USER_DIR
+
+        loader = UserArtLoader(roots=[data_user])
+        # Empty folder → no art (color-block / bundled fallback path).
+        assert loader.path_for_building("farm") is None
+        assert loader.path_for_monster("inora") is None
+        assert loader.path_for_terrain("sea") is None
+        assert loader.present_keys()["building"] == []
+
+        def _tiny_png(path: Path, rgb=(200, 40, 40)) -> None:
+            """Write a 2×2 RGB PNG without Qt (smoke can run headless)."""
+            w = h = 2
+            r, g, b = rgb
+            raw = b""
+            for _y in range(h):
+                raw += b"\x00" + bytes([r, g, b]) * w
+            compressed = zlib.compress(raw, 9)
+
+            def chunk(tag: bytes, data: bytes) -> bytes:
+                return (
+                    struct.pack(">I", len(data))
+                    + tag
+                    + data
+                    + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+                )
+
+            ihdr = struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)
+            path.write_bytes(
+                b"\x89PNG\r\n\x1a\n"
+                + chunk(b"IHDR", ihdr)
+                + chunk(b"IDAT", compressed)
+                + chunk(b"IEND", b"")
+            )
+
+        farm_png = data_user / "farm.png"
+        _tiny_png(farm_png)
+        assert loader.path_for_building("farm") == farm_png
+        assert loader.path_for_building("park") is None  # still color block
+        assert "farm" in loader.present_keys()["building"]
+
+        # configure_user_art + atlas: user building loads; terrain still bundled.
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        try:
+            from PySide6.QtWidgets import QApplication
+            from hakoniwa.tiles import ATLAS
+        except Exception as exc:  # pragma: no cover
+            print(f"user art: skip Qt load ({exc})")
+            configure_user_art(None)  # restore package-only roots
+            print("user art loader: naming + path resolve OK (no Qt)")
+            return
+
+        _app = QApplication.instance() or QApplication([])
+        configure_user_art(cfg)
+        ATLAS.invalidate_user_cache()
+        bpix = ATLAS.building_pixmap("farm")
+        assert bpix is not None and not bpix.isNull()
+        assert ATLAS.building_pixmap("park") is None
+        assert ATLAS.monster_pixmap("inora") is None
+        # Bundled tops still work when no user terrain PNG.
+        assert ATLAS.has_primary_tops()
+        # After dropping sea.png, user override wins for that key.
+        _tiny_png(data_user / "sea.png", rgb=(20, 80, 160))
+        ATLAS.invalidate_user_cache()
+        configure_user_art(cfg)
+        sea = ATLAS.pixmap_for("sea")
+        assert sea is not None and not sea.isNull()
+
+        # Restore singleton for later smoke steps (no leftover temp roots).
+        configure_user_art(None)
+        ATLAS.invalidate_user_cache()
+        print("user art loader: naming + optional PNG hook OK")
+
+
 def test_oblique_preview_png_if_possible():
     """Write a small foreshortening proof PNG when Qt offscreen is available."""
     import json
@@ -2200,6 +2316,7 @@ def main():
     test_grid_geometry()
     test_oblique_foreshortening_invariant()
     test_terrain_top_assets()
+    test_user_art_loader_hook()
     test_catalog_costs()
     test_new_island_and_loop()
     test_guestbook_local()
