@@ -188,6 +188,9 @@ class HakoniwaRemote:
     def withdraw_funds(self, amount: int) -> ActionOutcome:
         return self._action("/api/v1/island/withdraw", {"amount": int(amount)})
 
+    def attract_population(self) -> ActionOutcome:
+        return self._action("/api/v1/island/attract", {})
+
     def next_turn(self) -> ActionOutcome:
         return self._action("/api/v1/island/turn", {})
 

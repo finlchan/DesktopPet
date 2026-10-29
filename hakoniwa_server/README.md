@@ -12,7 +12,7 @@ Auth is a stub: leave `HAKONIWA_API_KEY` empty for open LAN, or set it and send 
 | GET | `/api/v1/island` | Full island JSON |
 | PUT | `/api/v1/island` | Replace island |
 | POST | `/api/v1/island/reset` | New central-7 island |
-| POST | `/api/v1/island/place` | `{i,j,kind}` farm/factory/quarry/defense/missile_base/harbor/shipyard/breakwater/monument |
+| POST | `/api/v1/island/place` | `{i,j,kind}` farm/factory/…/bank/supermarket/shrine/park |
 | POST | `/api/v1/island/excavate` | `{i,j}` 掘削／探油 |
 | POST | `/api/v1/island/remove` | `{i,j}` |
 | POST | `/api/v1/island/turn` | Advance turn |
@@ -21,6 +21,7 @@ Auth is a stub: leave `HAKONIWA_API_KEY` empty for open LAN, or set it and send 
 | POST | `/api/v1/island/afforest` | `{i,j}` |
 | POST | `/api/v1/island/harvest` | `{i,j}` 伐採 |
 | POST | `/api/v1/island/export` | `{lots}` 貿易輸出（需港灣／造船所） |
+| POST | `/api/v1/island/attract` | 誘致活動（定本 1000；下回合人口加成） |
 | GET | `/api/v1/island/comments` | Visitor guestbook list (home) |
 | POST | `/api/v1/island/comments` | `{name,text}` leave a message (home) |
 | GET | `/api/v1/islands` | Tourism catalog (home + demos) |
