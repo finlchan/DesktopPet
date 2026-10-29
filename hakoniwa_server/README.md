@@ -12,7 +12,8 @@ Auth is a stub: leave `HAKONIWA_API_KEY` empty for open LAN, or set it and send 
 | GET | `/api/v1/island` | Full island JSON |
 | PUT | `/api/v1/island` | Replace island |
 | POST | `/api/v1/island/reset` | New central-7 island |
-| POST | `/api/v1/island/place` | `{i,j,kind}` farm/factory/defense/missile_base/harbor/shipyard/monument |
+| POST | `/api/v1/island/place` | `{i,j,kind}` farm/factory/quarry/defense/missile_base/harbor/shipyard/breakwater/monument |
+| POST | `/api/v1/island/excavate` | `{i,j}` 掘削／探油 |
 | POST | `/api/v1/island/remove` | `{i,j}` |
 | POST | `/api/v1/island/turn` | Advance turn |
 | POST | `/api/v1/island/landfill` | `{i,j}` |

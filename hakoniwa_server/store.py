@@ -164,6 +164,13 @@ class IslandStore:
                 self._persist_home_unlocked()
             return msg, self._state.to_dict()
 
+    def excavate(self, i: int, j: int) -> tuple[str, dict]:
+        with self._lock:
+            msg = self._state.excavate(i, j)
+            if msg == "ok":
+                self._persist_home_unlocked()
+            return msg, self._state.to_dict()
+
     def afforest(self, i: int, j: int) -> tuple[str, dict]:
         with self._lock:
             msg = self._state.afforest(i, j)

@@ -26,8 +26,11 @@ from hakoniwa.grid import (
     point_in_diamond,
 )
 from hakoniwa.model import (
+    BREAKWATER_TSUNAMI_FACTOR,
     COST_AFFOREST,
+    COST_BREAKWATER,
     COST_DEFENSE,
+    COST_EXCAVATE,
     COST_FACTORY,
     COST_FARM,
     COST_HARBOR,
@@ -50,6 +53,7 @@ from hakoniwa.model import (
     FOREST_FIRE_FACTOR,
     FUNDS_PER_FACTORY,
     FUNDS_PER_FOOD_LOT,
+    FUNDS_PER_OILFIELD,
     FUNDS_PER_QUARRY,
     FUNDS_PER_TIMBER_LOT,
     HAPPINESS_POP_PER_MONUMENT,
@@ -61,15 +65,22 @@ from hakoniwa.model import (
     MONSTER_MIN_POP,
     MONSTER_MIN_TURN,
     MONSTER_REWARD,
+    OIL_DEPLETION_CHANCE,
+    OIL_DISCOVER_CHANCE,
     SAVE_VERSION,
+    SCORE_PER_BREAKWATER,
     SCORE_PER_MONUMENT,
+    SCORE_PER_OILFIELD,
     SCORE_PER_QUARRY,
     TIMBER_LOT,
     TOWN_TO_CITY_POP,
     TREE_GROWTH_PER_TURN,
     TREE_MAX,
     TREE_MIN,
+    TSUNAMI_BASE_CHANCE,
+    TSUNAMI_PER_SEA_NEIGHBOR,
     VILLAGE_TO_TOWN_POP,
+    Cell,
     IslandState,
     assign_labor,
     compute_island_score,
@@ -156,6 +167,8 @@ def test_catalog_costs():
     assert COST_FACTORY == 100
     assert COST_QUARRY == 300
     assert COST_RAISE == 100
+    assert COST_EXCAVATE == 200
+    assert COST_BREAKWATER == 200
     assert COST_LANDFILL == 150
     assert COST_LEVEL == 5
     assert COST_AFFOREST == 50
@@ -177,10 +190,17 @@ def test_catalog_costs():
     assert COST_MONUMENT == 9999
     assert SCORE_PER_MONUMENT == 2000
     assert SCORE_PER_QUARRY == 70
+    assert SCORE_PER_BREAKWATER == 50
+    assert SCORE_PER_OILFIELD == 120
     assert HAPPINESS_POP_PER_MONUMENT == 5
     assert FOOD_EXPORT_LOT == 100
     assert FUNDS_PER_FOOD_LOT == 5
     assert FUNDS_PER_QUARRY == 8
+    assert FUNDS_PER_OILFIELD == 50
+    assert 0 < OIL_DISCOVER_CHANCE <= 1
+    assert 0 < OIL_DEPLETION_CHANCE < 1
+    assert TSUNAMI_BASE_CHANCE > 0
+    assert 0 < BREAKWATER_TSUNAMI_FACTOR < 1
     assert LABOR_PER_FARM == 100
     assert LABOR_PER_FACTORY == 1000
     assert LABOR_PER_QUARRY == 500
@@ -189,7 +209,7 @@ def test_catalog_costs():
     assert DEFENSE_RADIUS == 2
     assert 0 < DEFENSE_SPAWN_FACTOR < 1
     assert 0 < DEFENSE_STOMP_SAVE_CHANCE < 1
-    assert SAVE_VERSION >= 8
+    assert SAVE_VERSION >= 9
     # Labor: farms first.
     fl, facl, ql, fs, facs, qs = assign_labor(100, farms=1, factories=1, quarries=1)
     assert (fl, facl, ql) == (100, 0, 0)
@@ -509,6 +529,8 @@ def test_monument_and_island_score():
         mountains=0,
         harbors=0,
         shipyards=0,
+        breakwaters=0,
+        oilfields=0,
         defenses=0,
         missile_bases=0,
         villages=0,
@@ -648,6 +670,8 @@ def test_local_demos():
     assert pine.name == "松風島"
     assert coral.terrain_count("mountain") >= 1
     assert coral.building_count("quarry") == 1
+    assert coral.building_count("breakwater") == 1
+    assert coral.terrain_count("oilfield") >= 1
     row = island_summary(coral)
     assert row["id"] == "demo-coral"
     assert row["land"] == coral.land_count()
@@ -711,6 +735,7 @@ def test_mountain_quarry_labor():
         model_mod.TYPHOON_BASE_CHANCE,
         model_mod.QUAKE_BASE_CHANCE,
         model_mod.VOLCANO_BASE_CHANCE,
+        model_mod.TSUNAMI_BASE_CHANCE,
         model_mod.SETTLEMENT_SPAWN_CHANCE,
         model_mod.MONSTER_BASE_CHANCE,
     )
@@ -718,6 +743,7 @@ def test_mountain_quarry_labor():
     model_mod.TYPHOON_BASE_CHANCE = 0.0
     model_mod.QUAKE_BASE_CHANCE = 0.0
     model_mod.VOLCANO_BASE_CHANCE = 0.0
+    model_mod.TSUNAMI_BASE_CHANCE = 0.0
     model_mod.SETTLEMENT_SPAWN_CHANCE = 0.0
     model_mod.MONSTER_BASE_CHANCE = 0.0
     try:
@@ -743,6 +769,7 @@ def test_mountain_quarry_labor():
             model_mod.TYPHOON_BASE_CHANCE,
             model_mod.QUAKE_BASE_CHANCE,
             model_mod.VOLCANO_BASE_CHANCE,
+            model_mod.TSUNAMI_BASE_CHANCE,
             model_mod.SETTLEMENT_SPAWN_CHANCE,
             model_mod.MONSTER_BASE_CHANCE,
         ) = old
@@ -768,6 +795,277 @@ def test_mountain_quarry_labor():
     loaded = IslandState.from_dict(state2.to_dict())
     assert loaded.cell(*empty).terrain == "mountain"
     assert loaded.to_dict()["version"] == SAVE_VERSION
+
+
+def test_breakwater_oilfield_tsunami():
+    """防波堤臨海；掘削探油→油田產資；海嘯傷臨海設施、防波堤減災。"""
+    import random
+
+    import hakoniwa.model as model_mod
+
+    state = IslandState.new_game()
+    land = [(i, j) for i in range(20) for j in range(20) if state.is_land(i, j)]
+    for i, j in land:
+        if state.cell(i, j).terrain == "dirt":
+            assert state.level_land(i, j) == "ok"
+
+    # Coastal grass for breakwater.
+    coastal = next(
+        (
+            (i, j)
+            for i, j in land
+            if state.cell(i, j).terrain == "grass"
+            and state.cell(i, j).building is None
+            and state._adjacent_to_sea(i, j)
+        ),
+        None,
+    )
+    assert coastal is not None
+    bi, bj = coastal
+    assert state.can_place_building(bi, bj, "breakwater")
+    ok, _ = tool_enabled(state, "breakwater", (bi, bj))
+    assert ok is True
+    funds_before = state.funds
+    assert state.place_building(bi, bj, "breakwater") == "ok"
+    assert state.cell(bi, bj).building == "breakwater"
+    assert state.funds == funds_before - COST_BREAKWATER
+    assert state.island_score() >= SCORE_PER_BREAKWATER
+
+    # Inland grass cannot place breakwater.
+    inland = next(
+        (
+            (i, j)
+            for i, j in land
+            if state.cell(i, j).terrain == "grass"
+            and state.cell(i, j).building is None
+            and not state._adjacent_to_sea(i, j)
+        ),
+        None,
+    )
+    if inland is not None:
+        assert state.can_place_building(*inland, "breakwater") is False
+        ok, reason = tool_enabled(state, "breakwater", inland)
+        assert ok is False
+        assert "臨海" in reason
+
+    keys = {k for k, *_ in TOOL_SPECS}
+    assert "excavate" in keys and "breakwater" in keys
+
+    # Excavate sea → oilfield (force discover).
+    sea = next(
+        (
+            (i, j)
+            for i in range(20)
+            for j in range(20)
+            if state.can_excavate(i, j) and state.cell(i, j).terrain == "sea"
+        ),
+        None,
+    )
+    assert sea is not None
+    si, sj = sea
+    ok, _ = tool_enabled(state, "excavate", (si, sj))
+    assert ok is True
+    funds_before = state.funds
+    old_discover = model_mod.OIL_DISCOVER_CHANCE
+    model_mod.OIL_DISCOVER_CHANCE = 1.0
+    try:
+        assert state.excavate(si, sj) == "ok"
+    finally:
+        model_mod.OIL_DISCOVER_CHANCE = old_discover
+    assert state.cell(si, sj).terrain == "oilfield"
+    assert state.funds == funds_before - COST_EXCAVATE
+    assert state.terrain_count("oilfield") >= 1
+    assert state.island_score() >= SCORE_PER_OILFIELD
+
+    # Oilfield passive income; silence disasters / depletion / monsters.
+    old = (
+        model_mod.FIRE_BASE_CHANCE,
+        model_mod.TYPHOON_BASE_CHANCE,
+        model_mod.QUAKE_BASE_CHANCE,
+        model_mod.VOLCANO_BASE_CHANCE,
+        model_mod.TSUNAMI_BASE_CHANCE,
+        model_mod.OIL_DEPLETION_CHANCE,
+        model_mod.SETTLEMENT_SPAWN_CHANCE,
+        model_mod.MONSTER_BASE_CHANCE,
+    )
+    (
+        model_mod.FIRE_BASE_CHANCE,
+        model_mod.TYPHOON_BASE_CHANCE,
+        model_mod.QUAKE_BASE_CHANCE,
+        model_mod.VOLCANO_BASE_CHANCE,
+        model_mod.TSUNAMI_BASE_CHANCE,
+        model_mod.OIL_DEPLETION_CHANCE,
+        model_mod.SETTLEMENT_SPAWN_CHANCE,
+        model_mod.MONSTER_BASE_CHANCE,
+    ) = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    try:
+        oils = state.terrain_count("oilfield")
+        funds_before = state.funds
+        notes = state.next_turn()
+        assert any(f"海底油田×{oils}" in n for n in notes)
+        assert state.funds == funds_before + oils * FUNDS_PER_OILFIELD
+    finally:
+        (
+            model_mod.FIRE_BASE_CHANCE,
+            model_mod.TYPHOON_BASE_CHANCE,
+            model_mod.QUAKE_BASE_CHANCE,
+            model_mod.VOLCANO_BASE_CHANCE,
+            model_mod.TSUNAMI_BASE_CHANCE,
+            model_mod.OIL_DEPLETION_CHANCE,
+            model_mod.SETTLEMENT_SPAWN_CHANCE,
+            model_mod.MONSTER_BASE_CHANCE,
+        ) = old
+
+    # Forced depletion → sea.
+    model_mod.OIL_DEPLETION_CHANCE = 1.0
+    model_mod.FIRE_BASE_CHANCE = 0.0
+    model_mod.TYPHOON_BASE_CHANCE = 0.0
+    model_mod.QUAKE_BASE_CHANCE = 0.0
+    model_mod.VOLCANO_BASE_CHANCE = 0.0
+    model_mod.TSUNAMI_BASE_CHANCE = 0.0
+    model_mod.SETTLEMENT_SPAWN_CHANCE = 0.0
+    model_mod.MONSTER_BASE_CHANCE = 0.0
+    try:
+        notes = state.next_turn()
+        assert any("油田枯竭" in n for n in notes)
+        assert state.cell(si, sj).terrain == "sea"
+        assert state.terrain_count("oilfield") == 0
+    finally:
+        model_mod.OIL_DEPLETION_CHANCE = old[5]
+        (
+            model_mod.FIRE_BASE_CHANCE,
+            model_mod.TYPHOON_BASE_CHANCE,
+            model_mod.QUAKE_BASE_CHANCE,
+            model_mod.VOLCANO_BASE_CHANCE,
+            model_mod.TSUNAMI_BASE_CHANCE,
+            model_mod.SETTLEMENT_SPAWN_CHANCE,
+            model_mod.MONSTER_BASE_CHANCE,
+        ) = (old[0], old[1], old[2], old[3], old[4], old[6], old[7])
+
+    # Tsunami: unprotected coastal farm → dirt; breakwater neighbor mitigates.
+    # Place a farm on another coastal grass cell without breakwater neighbor if possible.
+    farm_spot = next(
+        (
+            (i, j)
+            for i, j in land
+            if state.cell(i, j).terrain == "grass"
+            and state.cell(i, j).building is None
+            and state._sea_neighbor_count(i, j) > 0
+            and not state._has_breakwater_neighbor(i, j)
+        ),
+        None,
+    )
+    if farm_spot is None:
+        # Fall back: any coastal empty grass.
+        farm_spot = next(
+            (
+                (i, j)
+                for i, j in land
+                if state.cell(i, j).terrain == "grass"
+                and state.cell(i, j).building is None
+                and state._sea_neighbor_count(i, j) > 0
+            ),
+            None,
+        )
+    assert farm_spot is not None
+    fi, fj = farm_spot
+    assert state.place_building(fi, fj, "farm") == "ok"
+
+    # Force tsunami hit without breakwater mitigation for this cell.
+    # Temporarily clear nearby breakwaters' mitigation by testing a cell
+    # that we know has sea neighbors; bump chance high.
+    model_mod.FIRE_BASE_CHANCE = 0.0
+    model_mod.TYPHOON_BASE_CHANCE = 0.0
+    model_mod.QUAKE_BASE_CHANCE = 0.0
+    model_mod.VOLCANO_BASE_CHANCE = 0.0
+    model_mod.SETTLEMENT_SPAWN_CHANCE = 0.0
+    model_mod.MONSTER_BASE_CHANCE = 0.0
+    model_mod.OIL_DEPLETION_CHANCE = 0.0
+    model_mod.TSUNAMI_BASE_CHANCE = 1.0
+    model_mod.TSUNAMI_PER_SEA_NEIGHBOR = 0.0
+    # If farm is protected by our breakwater, remove breakwater first for the hit assert.
+    if state._has_breakwater_neighbor(fi, fj):
+        state.cell(bi, bj).building = None
+    random.seed(0)
+    try:
+        notes = state._apply_disasters()
+        assert any("海嘯" in n for n in notes)
+        assert state.cell(fi, fj).building is None
+        assert state.cell(fi, fj).terrain == "dirt"
+    finally:
+        model_mod.TSUNAMI_BASE_CHANCE = TSUNAMI_BASE_CHANCE
+        model_mod.TSUNAMI_PER_SEA_NEIGHBOR = TSUNAMI_PER_SEA_NEIGHBOR
+        model_mod.OIL_DEPLETION_CHANCE = OIL_DEPLETION_CHANCE
+
+    # Breakwater itself survives tsunami.
+    state.cell(bi, bj).building = "breakwater"
+    state.cell(bi, bj).terrain = "grass"
+    model_mod.TSUNAMI_BASE_CHANCE = 1.0
+    model_mod.TSUNAMI_PER_SEA_NEIGHBOR = 1.0
+    try:
+        state._apply_disasters()
+        assert state.cell(bi, bj).building == "breakwater"
+    finally:
+        model_mod.TSUNAMI_BASE_CHANCE = TSUNAMI_BASE_CHANCE
+        model_mod.TSUNAMI_PER_SEA_NEIGHBOR = TSUNAMI_PER_SEA_NEIGHBOR
+        model_mod.FIRE_BASE_CHANCE = FIRE_BASE_CHANCE
+        model_mod.TYPHOON_BASE_CHANCE = 0.06
+        model_mod.QUAKE_BASE_CHANCE = 0.05
+        model_mod.VOLCANO_BASE_CHANCE = 0.04
+        model_mod.SETTLEMENT_SPAWN_CHANCE = 0.20
+        model_mod.MONSTER_BASE_CHANCE = 0.12
+        model_mod.OIL_DEPLETION_CHANCE = OIL_DEPLETION_CHANCE
+
+    # Dig land → shallow, then shallow → sea.
+    dig = next(
+        (
+            (i, j)
+            for i, j in land
+            if state.cell(i, j).terrain == "grass"
+            and state.cell(i, j).building is None
+        ),
+        None,
+    )
+    assert dig is not None
+    assert state.excavate(*dig) == "ok"
+    assert state.cell(*dig).terrain == "shallow"
+    assert state.excavate(*dig) == "ok"
+    assert state.cell(*dig).terrain == "sea"
+
+    # Save round-trip keeps oilfield + breakwater.
+    state3 = IslandState.new_game()
+    for i, j in [(x, y) for x in range(20) for y in range(20) if state3.is_land(x, y)]:
+        if state3.cell(i, j).terrain == "dirt":
+            state3.level_land(i, j)
+    coast3 = next(
+        (
+            (i, j)
+            for i in range(20)
+            for j in range(20)
+            if state3.is_land(i, j)
+            and state3.cell(i, j).terrain == "grass"
+            and state3._adjacent_to_sea(i, j)
+        ),
+        None,
+    )
+    assert coast3 is not None
+    state3.funds = 5000
+    assert state3.place_building(*coast3, "breakwater") == "ok"
+    sea3 = next(
+        (
+            (i, j)
+            for i in range(20)
+            for j in range(20)
+            if state3.cell(i, j).terrain == "sea"
+        ),
+        None,
+    )
+    assert sea3 is not None
+    state3.cells[sea3[0]][sea3[1]] = Cell("oilfield")
+    loaded3 = IslandState.from_dict(state3.to_dict())
+    assert loaded3.cell(*coast3).building == "breakwater"
+    assert loaded3.cell(*sea3).terrain == "oilfield"
+    assert loaded3.to_dict()["version"] == SAVE_VERSION
 
 
 def test_settlements_and_disasters():
@@ -808,6 +1106,7 @@ def test_settlements_and_disasters():
     old_typhoon = model_mod.TYPHOON_BASE_CHANCE
     old_quake = model_mod.QUAKE_BASE_CHANCE
     old_volcano = model_mod.VOLCANO_BASE_CHANCE
+    old_tsunami = model_mod.TSUNAMI_BASE_CHANCE
     try:
         # Force spawn (random < 0.20).
         random.random = lambda: 0.0  # type: ignore[assignment]
@@ -829,10 +1128,11 @@ def test_settlements_and_disasters():
         assert state.level_land(si, sj) == "ok"
         assert state.cell(si, sj).terrain == "grass"
 
-        # Fire on town (no forest neighbor); silence typhoon/quake/volcano.
+        # Fire on town (no forest neighbor); silence typhoon/quake/volcano/tsunami.
         model_mod.TYPHOON_BASE_CHANCE = 0.0
         model_mod.QUAKE_BASE_CHANCE = 0.0
         model_mod.VOLCANO_BASE_CHANCE = 0.0
+        model_mod.TSUNAMI_BASE_CHANCE = 0.0
         state.cell(si, sj).terrain = "town"
         assert not state._has_forest_neighbor(si, sj)
         notes = state._apply_disasters()
@@ -862,20 +1162,22 @@ def test_settlements_and_disasters():
         assert state.cell(si, sj).terrain == "town"
         assert not any("火災" in n and f"({si},{sj})" in n for n in notes)
 
-        # Typhoon: farm → plain (silence fire/quake).
+        # Typhoon: farm → plain (silence fire/quake/tsunami).
         model_mod.FIRE_BASE_CHANCE = 0.0
         model_mod.TYPHOON_BASE_CHANCE = old_typhoon
         model_mod.QUAKE_BASE_CHANCE = 0.0
+        model_mod.TSUNAMI_BASE_CHANCE = 0.0
         random.random = lambda: 0.0  # type: ignore[assignment]
         assert state.cell(fi, fj).building == "farm"
         notes = state._apply_disasters()
         assert state.cell(fi, fj).building is None
         assert any("颱風" in n for n in notes)
 
-        # Quake: factory → wasteland (silence fire/typhoon).
+        # Quake: factory → wasteland (silence fire/typhoon/tsunami).
         model_mod.FIRE_BASE_CHANCE = 0.0
         model_mod.TYPHOON_BASE_CHANCE = 0.0
         model_mod.QUAKE_BASE_CHANCE = old_quake
+        model_mod.TSUNAMI_BASE_CHANCE = 0.0
         gi, gj = grass[1] if grass[1] != (fi, fj) else grass[2]
         state.cell(gi, gj).terrain = "grass"
         state.cell(gi, gj).building = "factory"
@@ -895,6 +1197,7 @@ def test_settlements_and_disasters():
         model_mod.TYPHOON_BASE_CHANCE = old_typhoon
         model_mod.QUAKE_BASE_CHANCE = old_quake
         model_mod.VOLCANO_BASE_CHANCE = old_volcano
+        model_mod.TSUNAMI_BASE_CHANCE = old_tsunami
 
 
 def test_monster_events():
@@ -1636,6 +1939,7 @@ def main():
     test_harbor_shipyard_trade()
     test_monument_and_island_score()
     test_mountain_quarry_labor()
+    test_breakwater_oilfield_tsunami()
     test_local_demos()
     test_save_load_roundtrip()
     test_remote_url_normalize()

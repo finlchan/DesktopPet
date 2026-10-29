@@ -1,13 +1,14 @@
 """In-memory island state + simplified Hakoniwa Islands 2–inspired turn loop.
 
-v1 deepen: catalog place costs, terrain commands (整地／填海／植林／伐採／造山),
+v1 deepen: catalog place costs, terrain commands (整地／填海／植林／伐採／造山／掘削),
 forest tree growth + timber→funds, farm／工場／採掘場 production with labor
 assignment (農場優先), optional population stub, visitor guestbook (name + text),
 color-block monster events (飛彈 stub), village/town/city terrain evolution +
-fire/typhoon/quake/volcano disaster stubs, 防衛設施／飛彈基地 color-block
+fire/typhoon/quake/volcano/tsunami disaster stubs, 防衛設施／飛彈基地 color-block
 buildings (spawn/stomp/missile stubs), 港灣／造船所／貿易輸出（臨海色塊；糧食→資金）,
 紀念碑色塊＋簡易島分數／安穩（國威；抗踩踏；抑火災如森）,
-山岳地形＋採掘場色塊（僅山上；產資）.
+山岳地形＋採掘場色塊（僅山上；產資）,
+防波堤色塊（臨海；減海嘯）＋海底油田（掘削／探油；被動產資；枯竭）.
 Color-block placeholders only — user art later.
 """
 
@@ -36,6 +37,7 @@ COST_QUARRY = 300       # 採掘場整備（定本 300 億；僅山上）
 COST_LANDFILL = 150     # 埋め立て：海→淺灘 or 淺灘→荒地
 COST_LEVEL = 5          # 整地：荒地→平地（亦可清建築；山→荒地）
 COST_RAISE = 100        # 造山／隆起 stub：荒地／平地→山（本機短局；定本多靠噴火）
+COST_EXCAVATE = 200     # 掘削：陸→淺灘／淺灘→海；海上掘削可找海底油田
 COST_AFFOREST = 50      # 植林：平地→森
 COST_HARVEST = 0        # 伐採：森→平地（免費；木材瞬售）
 COST_MISSILE = 20       # ミサイル発射 stub（定本 20 億／發；無基地時）
@@ -44,6 +46,7 @@ COST_MISSILE_BASE = 300 # ミサイル基地（定本 300 億）
 COST_DEFENSE = 1000     # 防衛施設（定本 1000 億）
 COST_HARBOR = 800       # 港灣（變體／改造常見 800 億；須臨海）
 COST_SHIPYARD = 500     # 造船所（變體常見 500 億；須臨海）
+COST_BREAKWATER = 200   # 防波堤（變體／防災；臨海；減海嘯）
 COST_MONUMENT = 9999    # 記念碑建造（定本 9999 億；國威／順位用）
 
 # Forest tree stock (catalog 木 100～20000；+100／回合；新植林 100).
@@ -74,14 +77,17 @@ PLACEABLE_BUILDINGS = frozenset(
         "missile_base",
         "harbor",
         "shipyard",
+        "breakwater",
         "monument",
     }
 )
-COASTAL_BUILDINGS = frozenset({"harbor", "shipyard"})
+COASTAL_BUILDINGS = frozenset({"harbor", "shipyard", "breakwater"})
 # Catalog: 採掘場僅能整備在山上.
 MOUNTAIN_ONLY_BUILDINGS = frozenset({"quarry"})
 # Catalog: 紀念碑抗怪獸踩踏、抑火災如森（鄰居減火）.
 MONSTER_PROOF_BUILDINGS = frozenset({"monument"})
+# Water-like terrains (海嘯鄰接／臨海判定；油田算海域).
+WATER_TERRAINS = frozenset({"sea", "shallow", "oilfield"})
 
 # Island score weights (local ranking stub; 順位／國威簡易統計).
 SCORE_PER_POP = 1
@@ -93,6 +99,8 @@ SCORE_PER_QUARRY = 70
 SCORE_PER_MOUNTAIN = 15
 SCORE_PER_HARBOR = 80
 SCORE_PER_SHIPYARD = 60
+SCORE_PER_BREAKWATER = 50
+SCORE_PER_OILFIELD = 120
 SCORE_PER_DEFENSE = 40
 SCORE_PER_MISSILE_BASE = 30
 SCORE_PER_VILLAGE = 30
@@ -107,8 +115,12 @@ HAPPINESS_POP_PER_MONUMENT = 5
 FOOD_PER_FARM = 100     # ~100 人農場 → 100 噸／回合
 FUNDS_PER_FACTORY = 10   # catalog ~1 億／千人；本機短局用 ×10 回饋
 FUNDS_PER_QUARRY = 8    # catalog 採掘場產資；本機短局略低於工場
+FUNDS_PER_OILFIELD = 50  # catalog 海底油田約千億級；本機短局被動產資
 FOOD_PER_500_POP = 100  # 人口每 500 人／回合耗約 100 噸
 MIN_FOOD_NEED = 20      # 小島 soft floor
+# 海上掘削發現油田機率（定本約 1%/次×數量；短局提高可玩性）.
+OIL_DISCOVER_CHANCE = 0.55
+OIL_DEPLETION_CHANCE = 0.08  # 油田枯竭→海
 
 # Labor slots (catalog: 農場優先填滿；工場／採掘場分剩餘人口).
 LABOR_PER_FARM = 100
@@ -139,14 +151,18 @@ FIRE_BASE_CHANCE = 0.08
 TYPHOON_BASE_CHANCE = 0.06
 QUAKE_BASE_CHANCE = 0.05
 VOLCANO_BASE_CHANCE = 0.04  # 噴火：隨機陸格→山（可整備採掘場）
+TSUNAMI_BASE_CHANCE = 0.04  # 海嘯：臨海設施→荒地
+TSUNAMI_PER_SEA_NEIGHBOR = 0.03  # 鄰海域越多越危險
 FOREST_FIRE_FACTOR = 0.25     # any adjacent 森 → fire chance × this
 FOREST_TYPHOON_FACTOR = 0.35  # any adjacent 森 → typhoon chance × this
+BREAKWATER_TSUNAMI_FACTOR = 0.25  # adjacent 防波堤 → tsunami chance × this
 
 # Terrain kinds — map paints flat top textures (dirt／grass／sea) via tiles.py;
 # ``color`` remains fallback / tint basis. Opening map: 中央 7 泥／草, rest 海.
 TERRAIN = {
     "sea": {"label": "海", "color": (42, 110, 168), "land": False},
     "shallow": {"label": "淺灘", "color": (72, 148, 176), "land": False},
+    "oilfield": {"label": "海底油田", "color": (48, 52, 58), "land": False},
     "dirt": {"label": "荒地", "color": (139, 90, 43), "land": True},
     "grass": {"label": "平地", "color": (74, 143, 60), "land": True},
     "forest": {"label": "森", "color": (36, 96, 48), "land": True},
@@ -166,9 +182,10 @@ BUILDINGS = {
     # 軍事色塊佔位（定本費用；美術後補）
     "defense": {"label": "防衛設施", "color": (48, 88, 160), "cost": COST_DEFENSE},
     "missile_base": {"label": "飛彈基地", "color": (160, 72, 48), "cost": COST_MISSILE_BASE},
-    # 港灣／造船所色塊（臨海；美術後補）
+    # 港灣／造船所／防波堤色塊（臨海；美術後補）
     "harbor": {"label": "港灣", "color": (40, 140, 168), "cost": COST_HARBOR},
     "shipyard": {"label": "造船所", "color": (56, 72, 112), "cost": COST_SHIPYARD},
+    "breakwater": {"label": "防波堤", "color": (128, 138, 152), "cost": COST_BREAKWATER},
     # 紀念碑色塊（定本國威；美術後補）
     "monument": {"label": "紀念碑", "color": (168, 140, 72), "cost": COST_MONUMENT},
 }
@@ -189,7 +206,7 @@ Coord = Tuple[int, int]
 LAND_TERRAINS = frozenset(k for k, v in TERRAIN.items() if v["land"])
 SETTLEMENT_TERRAINS = frozenset({"village", "town", "city"})
 BUILDABLE = frozenset({"grass"})  # 平地 only（村／町／都市請先整地；採掘場除外）
-SAVE_VERSION = 8
+SAVE_VERSION = 9
 
 
 def timber_funds(trees: int) -> int:
@@ -255,6 +272,8 @@ def compute_island_score(
     mountains: int,
     harbors: int,
     shipyards: int,
+    breakwaters: int,
+    oilfields: int,
     defenses: int,
     missile_bases: int,
     villages: int,
@@ -272,6 +291,8 @@ def compute_island_score(
         + max(0, int(mountains)) * SCORE_PER_MOUNTAIN
         + max(0, int(harbors)) * SCORE_PER_HARBOR
         + max(0, int(shipyards)) * SCORE_PER_SHIPYARD
+        + max(0, int(breakwaters)) * SCORE_PER_BREAKWATER
+        + max(0, int(oilfields)) * SCORE_PER_OILFIELD
         + max(0, int(defenses)) * SCORE_PER_DEFENSE
         + max(0, int(missile_bases)) * SCORE_PER_MISSILE_BASE
         + max(0, int(villages)) * SCORE_PER_VILLAGE
@@ -472,11 +493,28 @@ class IslandState:
         return any(self.is_land(ni, nj) for ni, nj in neighbors(i, j, self.size))
 
     def _adjacent_to_sea(self, i: int, j: int) -> bool:
-        """True if any neighbor is 海 or 淺灘 (coastal land for 港灣／造船所)."""
+        """True if any neighbor is 海／淺灘／油田 (coastal land for 港灣／防波堤)."""
         for ni, nj in neighbors(i, j, self.size):
-            if self.cell(ni, nj).terrain in ("sea", "shallow"):
+            if self.cell(ni, nj).terrain in WATER_TERRAINS:
                 return True
         return False
+
+    def _sea_neighbor_count(self, i: int, j: int) -> int:
+        """How many adjacent water cells (海嘯風險 stub)."""
+        return sum(
+            1
+            for ni, nj in neighbors(i, j, self.size)
+            if self.cell(ni, nj).terrain in WATER_TERRAINS
+        )
+
+    def _has_breakwater_neighbor(self, i: int, j: int) -> bool:
+        """Adjacent 防波堤 mitigates tsunami (self breakwater also counts)."""
+        if self.cell(i, j).building == "breakwater":
+            return True
+        return any(
+            self.cell(ni, nj).building == "breakwater"
+            for ni, nj in neighbors(i, j, self.size)
+        )
 
     def cells_within(self, i: int, j: int, radius: int) -> List[Coord]:
         """Hex BFS: all in-bounds cells within ``radius`` steps (includes self)."""
@@ -535,6 +573,8 @@ class IslandState:
             mountains=self.terrain_count("mountain"),
             harbors=self.building_count("harbor"),
             shipyards=self.building_count("shipyard"),
+            breakwaters=self.building_count("breakwater"),
+            oilfields=self.terrain_count("oilfield"),
             defenses=self.building_count("defense"),
             missile_bases=self.building_count("missile_base"),
             villages=self.terrain_count("village"),
@@ -639,7 +679,7 @@ class IslandState:
             return "只能在平地上建設（請先整地）"
         if kind in COASTAL_BUILDINGS and not self._adjacent_to_sea(i, j):
             label = BUILDINGS[kind]["label"]
-            return f"{label}須建在臨海的平地（鄰接海／淺灘）"
+            return f"{label}須建在臨海的平地（鄰接海／淺灘／油田）"
         cost = int(BUILDINGS[kind]["cost"])
         if self.funds < cost:
             return f"資金不足（需要 {cost}）"
@@ -647,6 +687,57 @@ class IslandState:
         c.building = kind
         label = BUILDINGS[kind]["label"]
         self._log(f"回合 {self.turn}：在 ({i},{j}) 建設{label}（−{cost} 資金）")
+        return "ok"
+
+    def can_excavate(self, i: int, j: int) -> bool:
+        """掘削：空陸→淺灘；淺灘→海；海→探油（可能變海底油田）."""
+        if self.monster_at(i, j) is not None:
+            return False
+        c = self.cell(i, j)
+        if c.building is not None:
+            return False
+        if c.terrain == "sea":
+            return True
+        if c.terrain == "shallow":
+            return True
+        if c.terrain in LAND_TERRAINS and c.terrain != "oilfield":
+            return True
+        return False
+
+    def excavate(self, i: int, j: int) -> str:
+        """掘削／探油 stub（定本海上掘削找油田；本機短局發現率提高）."""
+        if not self.can_excavate(i, j):
+            if self.monster_at(i, j) is not None:
+                return "此格有怪獸，無法掘削"
+            return "此格無法掘削（須為空陸地、淺灘或海）"
+        if self.funds < COST_EXCAVATE:
+            return f"資金不足（掘削需要 {COST_EXCAVATE}）"
+        c = self.cell(i, j)
+        prev = c.terrain
+        self.funds -= COST_EXCAVATE
+        if prev == "sea":
+            if random.random() < OIL_DISCOVER_CHANCE:
+                self.cells[i][j] = Cell("oilfield")
+                self._log(
+                    f"回合 {self.turn}：掘削探油 ({i},{j}) 發現海底油田！"
+                    f"（−{COST_EXCAVATE} 資金）"
+                )
+            else:
+                self._log(
+                    f"回合 {self.turn}：掘削探油 ({i},{j}) 未發現油田"
+                    f"（−{COST_EXCAVATE} 資金）"
+                )
+            return "ok"
+        if prev == "shallow":
+            self.cells[i][j] = Cell("sea")
+            step = "淺灘→海"
+        else:
+            # Land (incl. mountain／森／村…) → shallow.
+            self.cells[i][j] = Cell("shallow")
+            step = f"{TERRAIN[prev]['label']}→淺灘"
+        self._log(
+            f"回合 {self.turn}：掘削 ({i},{j}) {step}（−{COST_EXCAVATE} 資金）"
+        )
         return "ok"
 
     def export_food(self, lots: int = 1) -> str:
@@ -1051,7 +1142,7 @@ class IslandState:
         return ["林木生長：" + "；".join(parts)]
 
     def _apply_disasters(self) -> List[str]:
-        """Fire / typhoon / quake stubs; forest neighbors reduce fire & typhoon."""
+        """Fire / typhoon / quake / tsunami stubs; forest／防波堤 mitigate some."""
         notes: List[str] = []
 
         # Fire: 町／都市／工場 → 荒地（鄰森／紀念碑則不易發生）
@@ -1117,6 +1208,41 @@ class IslandState:
                 label = "、".join(parts) if parts else "目標"
                 notes.append(f"地震！{label}→荒地 ({i},{j})")
 
+        # Tsunami: coastal land facilities／settlements → 荒地（鄰海越多越險；防波堤減災）
+        # Master off when TSUNAMI_BASE_CHANCE <= 0 (tests silence disasters this way).
+        if TSUNAMI_BASE_CHANCE > 0:
+            for i in range(self.size):
+                for j in range(self.size):
+                    c = self.cell(i, j)
+                    if c.terrain not in LAND_TERRAINS:
+                        continue
+                    sea_n = self._sea_neighbor_count(i, j)
+                    if sea_n <= 0:
+                        continue
+                    # 防波堤自身不受海嘯摧毀（防災設施）
+                    if c.building == "breakwater":
+                        continue
+                    vulnerable = (
+                        c.building is not None or c.terrain in SETTLEMENT_TERRAINS
+                    )
+                    if not vulnerable:
+                        continue
+                    chance = TSUNAMI_BASE_CHANCE + sea_n * TSUNAMI_PER_SEA_NEIGHBOR
+                    if self._has_breakwater_neighbor(i, j):
+                        chance *= BREAKWATER_TSUNAMI_FACTOR
+                    if random.random() >= chance:
+                        continue
+                    parts = []
+                    if c.building is not None:
+                        parts.append(BUILDINGS[c.building]["label"])
+                        c.building = None
+                    if c.terrain in LAND_TERRAINS and c.terrain != "dirt":
+                        parts.append(TERRAIN[c.terrain]["label"])
+                        c.terrain = "dirt"
+                        c.trees = 0
+                    label = "、".join(parts) if parts else "臨海設施"
+                    notes.append(f"海嘯！{label}→荒地 ({i},{j})")
+
         # Volcano: one random land cell may become 山 (center stub; clears building).
         land_cells = [
             (i, j)
@@ -1137,6 +1263,28 @@ class IslandState:
                 detail += f"／{BUILDINGS[cleared]['label']}"
             notes.append(f"噴火！{detail}→山 ({vi},{vj})")
 
+        return notes
+
+    def _oilfield_income_and_depletion(self) -> List[str]:
+        """海底油田被動產資；機率枯竭→海（定本枯竭 stub）."""
+        notes: List[str] = []
+        oilfields = self.terrain_count("oilfield")
+        if oilfields <= 0:
+            return notes
+        gain = oilfields * FUNDS_PER_OILFIELD
+        self.funds += gain
+        notes.append(f"海底油田×{oilfields} 產資 +{gain}")
+        depleted: List[Coord] = []
+        for i in range(self.size):
+            for j in range(self.size):
+                if self.cell(i, j).terrain != "oilfield":
+                    continue
+                if random.random() >= OIL_DEPLETION_CHANCE:
+                    continue
+                self.cells[i][j] = Cell("sea")
+                depleted.append((i, j))
+        for i, j in depleted:
+            notes.append(f"油田枯竭→海 ({i},{j})")
         return notes
 
     def next_turn(self) -> List[str]:
@@ -1179,6 +1327,9 @@ class IslandState:
             f"工場×{factories} 產資 +{factory_funds}；"
             f"採掘場×{quarries} 產資 +{quarry_funds}"
         )
+
+        # 海底油田：被動產資（無勞動）＋枯竭機率.
+        notes.extend(self._oilfield_income_and_depletion())
 
         if self.food >= food_need:
             self.food -= food_need
