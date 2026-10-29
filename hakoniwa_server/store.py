@@ -164,6 +164,13 @@ class IslandStore:
                 self._persist_home_unlocked()
             return msg, self._state.to_dict()
 
+    def harvest(self, i: int, j: int) -> tuple[str, dict]:
+        with self._lock:
+            msg = self._state.harvest(i, j)
+            if msg == "ok":
+                self._persist_home_unlocked()
+            return msg, self._state.to_dict()
+
     def missile(self, i: int, j: int) -> tuple[str, dict]:
         with self._lock:
             msg = self._state.fire_missile(i, j)

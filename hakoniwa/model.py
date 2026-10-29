@@ -1,10 +1,10 @@
 """In-memory island state + simplified Hakoniwa Islands 2–inspired turn loop.
 
-v1 deepen: catalog place costs, terrain commands (整地／填海／植林),
-farm food + factory funds turn processing, optional population stub,
-visitor guestbook (name + text), color-block monster events (飛彈 stub),
-village/town/city terrain evolution + fire/typhoon/quake disaster stubs,
-防衛設施／飛彈基地 color-block buildings (spawn/stomp/missile stubs).
+v1 deepen: catalog place costs, terrain commands (整地／填海／植林／伐採),
+forest tree growth + timber→funds, farm food + factory funds turn processing,
+optional population stub, visitor guestbook (name + text), color-block monster
+events (飛彈 stub), village/town/city terrain evolution + fire/typhoon/quake
+disaster stubs, 防衛設施／飛彈基地 color-block buildings (spawn/stomp/missile stubs).
 Color-block placeholders only — user art later.
 """
 
@@ -32,10 +32,19 @@ COST_FACTORY = 100      # 工場建設
 COST_LANDFILL = 150     # 埋め立て：海→淺灘 or 淺灘→荒地
 COST_LEVEL = 5          # 整地：荒地→平地（亦可清建築）
 COST_AFFOREST = 50      # 植林：平地→森
+COST_HARVEST = 0        # 伐採：森→平地（免費；木材瞬售）
 COST_MISSILE = 20       # ミサイル発射 stub（定本 20 億／發；無基地時）
 COST_MISSILE_CHEAP = 10 # 有飛彈基地時較便宜
 COST_MISSILE_BASE = 300 # ミサイル基地（定本 300 億）
 COST_DEFENSE = 1000     # 防衛施設（定本 1000 億）
+
+# Forest tree stock (catalog 木 100～20000；+100／回合；新植林 100).
+TREE_MIN = 100
+TREE_MAX = 20000
+TREE_GROWTH_PER_TURN = 100
+# Timber instant-sale: 100 本 ≈ 5 億；不入庫.
+TIMBER_LOT = 100
+FUNDS_PER_TIMBER_LOT = 5
 
 # Defense / missile-base interaction stubs (hex radius; catalog 周圍 2).
 DEFENSE_RADIUS = 2
@@ -117,16 +126,34 @@ Coord = Tuple[int, int]
 LAND_TERRAINS = frozenset(k for k, v in TERRAIN.items() if v["land"])
 SETTLEMENT_TERRAINS = frozenset({"village", "town", "city"})
 BUILDABLE = frozenset({"grass"})  # 平地 only（村／町／都市請先整地）
-SAVE_VERSION = 5
+SAVE_VERSION = 6
+
+
+def timber_funds(trees: int) -> int:
+    """Instant-sale funds for a tree stock (catalog 100本≈5億；floor lots)."""
+    if trees <= 0:
+        return 0
+    return (int(trees) // TIMBER_LOT) * FUNDS_PER_TIMBER_LOT
+
+
+def clamp_trees(trees: int) -> int:
+    return max(0, min(TREE_MAX, int(trees)))
 
 
 @dataclass
 class Cell:
     terrain: str = "sea"
     building: Optional[str] = None
+    trees: int = 0  # only meaningful on 森；植林起點 TREE_MIN
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"terrain": self.terrain, "building": self.building}
+        data: Dict[str, Any] = {
+            "terrain": self.terrain,
+            "building": self.building,
+        }
+        if self.terrain == "forest" or self.trees:
+            data["trees"] = int(self.trees)
+        return data
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Cell":
@@ -137,7 +164,16 @@ class Cell:
         building = data.get("building")
         if building in (None, "none") or building not in BUILDINGS:
             building = None
-        return cls(terrain=terrain, building=building)
+        try:
+            trees = int(data.get("trees") or 0)
+        except (TypeError, ValueError):
+            trees = 0
+        if terrain == "forest":
+            # Legacy saves without trees → treat as newly planted stock.
+            trees = clamp_trees(trees if trees > 0 else TREE_MIN)
+        else:
+            trees = 0
+        return cls(terrain=terrain, building=building, trees=trees)
 
 
 @dataclass
@@ -367,6 +403,13 @@ class IslandState:
         c = self.cell(i, j)
         return c.terrain == "grass" and c.building is None
 
+    def can_harvest(self, i: int, j: int) -> bool:
+        """伐採：森→平地並瞬售木材。"""
+        if self.monster_at(i, j) is not None:
+            return False
+        c = self.cell(i, j)
+        return c.terrain == "forest"
+
     def place_building(self, i: int, j: int, kind: str) -> str:
         if kind not in PLACEABLE_BUILDINGS:
             return "未知建築"
@@ -427,12 +470,17 @@ class IslandState:
         cleared = c.building
         c.building = None
         prev = c.terrain
+        prev_trees = c.trees
         if c.terrain in ("dirt", "forest") or c.terrain in SETTLEMENT_TERRAINS:
             c.terrain = "grass"
+            c.trees = 0
         # grass + building: terrain stays grass after clear
         parts = [f"({i},{j})"]
         if prev != c.terrain:
-            parts.append(f"{TERRAIN[prev]['label']}→平地")
+            if prev == "forest" and prev_trees:
+                parts.append(f"森（{prev_trees}本）→平地")
+            else:
+                parts.append(f"{TERRAIN[prev]['label']}→平地")
         if cleared:
             parts.append(f"清除{BUILDINGS[cleared]['label']}")
         self._log(
@@ -441,7 +489,7 @@ class IslandState:
         return "ok"
 
     def afforest(self, i: int, j: int) -> str:
-        """植林 placeholder：平地→森。"""
+        """植林：空平地→森（新林 TREE_MIN 本）。"""
         if not self.can_afforest(i, j):
             if self.monster_at(i, j) is not None:
                 return "此格有怪獸，無法植林"
@@ -449,8 +497,30 @@ class IslandState:
         if self.funds < COST_AFFOREST:
             return f"資金不足（植林需要 {COST_AFFOREST}）"
         self.funds -= COST_AFFOREST
-        self.cells[i][j] = Cell("forest")
-        self._log(f"回合 {self.turn}：植林 ({i},{j})（−{COST_AFFOREST} 資金）")
+        self.cells[i][j] = Cell("forest", trees=TREE_MIN)
+        self._log(
+            f"回合 {self.turn}：植林 ({i},{j}) → 森（{TREE_MIN}本）"
+            f"（−{COST_AFFOREST} 資金）"
+        )
+        return "ok"
+
+    def harvest(self, i: int, j: int) -> str:
+        """伐採：森→平地；木材瞬售成資金（不入庫）。"""
+        if not self.can_harvest(i, j):
+            if self.monster_at(i, j) is not None:
+                return "此格有怪獸，無法伐採"
+            return "只能伐採森林"
+        c = self.cell(i, j)
+        trees = clamp_trees(c.trees if c.trees > 0 else TREE_MIN)
+        sold = timber_funds(trees)
+        c.terrain = "grass"
+        c.building = None
+        c.trees = 0
+        self.funds += sold
+        self._log(
+            f"回合 {self.turn}：伐採 ({i},{j}) 森（{trees}本）→平地"
+            f"（木材瞬售 +{sold} 資金）"
+        )
         return "ok"
 
     def fire_missile(self, i: int, j: int) -> str:
@@ -564,6 +634,7 @@ class IslandState:
             c.building = None
             if c.terrain in LAND_TERRAINS and c.terrain != "dirt":
                 c.terrain = "dirt"
+            c.trees = 0
             self.monsters = [x for x in self.monsters if x is not monster]
             notes.append(
                 f"{monster.label()}踩到防衛設施！自爆清除 ({i},{j})"
@@ -583,7 +654,10 @@ class IslandState:
             notes.append(f"{monster.label()}踩毀{blabel} ({i},{j})")
         if c.terrain in LAND_TERRAINS and c.terrain != "dirt":
             prev = TERRAIN[c.terrain]["label"]
+            if c.terrain == "forest" and c.trees:
+                prev = f"森（{c.trees}本）"
             c.terrain = "dirt"
+            c.trees = 0
             notes.append(f"{monster.label()}踏平 {prev}→荒地 ({i},{j})")
         elif not notes:
             notes.append(f"{monster.label()}停留於 ({i},{j})")
@@ -663,6 +737,31 @@ class IslandState:
                     notes.append(f"町→都市 ({i},{j})（人口 {self.population}）")
         return notes
 
+    def _grow_forests(self) -> List[str]:
+        """Each 森 gains TREE_GROWTH_PER_TURN trees up to TREE_MAX."""
+        grown = 0
+        capped = 0
+        for row in self.cells:
+            for c in row:
+                if c.terrain != "forest":
+                    c.trees = 0
+                    continue
+                before = clamp_trees(c.trees if c.trees > 0 else TREE_MIN)
+                after = clamp_trees(before + TREE_GROWTH_PER_TURN)
+                c.trees = after
+                if after > before:
+                    grown += 1
+                elif before >= TREE_MAX:
+                    capped += 1
+        if grown == 0 and capped == 0:
+            return []
+        parts = []
+        if grown:
+            parts.append(f"{grown} 片森各 +{TREE_GROWTH_PER_TURN}本")
+        if capped:
+            parts.append(f"{capped} 片已達上限 {TREE_MAX}")
+        return ["林木生長：" + "；".join(parts)]
+
     def _apply_disasters(self) -> List[str]:
         """Fire / typhoon / quake stubs; forest neighbors reduce fire & typhoon."""
         notes: List[str] = []
@@ -686,6 +785,7 @@ class IslandState:
                 if c.terrain in LAND_TERRAINS and c.terrain != "dirt":
                     parts.append(TERRAIN[c.terrain]["label"])
                     c.terrain = "dirt"
+                    c.trees = 0
                 label = "、".join(parts) if parts else "目標"
                 notes.append(f"火災！{label}→荒地 ({i},{j})")
 
@@ -703,6 +803,7 @@ class IslandState:
                 c.building = None
                 if c.terrain != "grass":
                     c.terrain = "grass"
+                c.trees = 0
                 notes.append(f"颱風！農場→平地 ({i},{j})")
 
         # Quake: 工場／都市 → 荒地（stub；森不減震）
@@ -721,13 +822,14 @@ class IslandState:
                 if c.terrain in LAND_TERRAINS and c.terrain != "dirt":
                     parts.append(TERRAIN[c.terrain]["label"])
                     c.terrain = "dirt"
+                    c.trees = 0
                 label = "、".join(parts) if parts else "目標"
                 notes.append(f"地震！{label}→荒地 ({i},{j})")
 
         return notes
 
     def next_turn(self) -> List[str]:
-        """Advance one turn: economy → settlements → disasters → monsters."""
+        """Advance one turn: economy → forests → settlements → disasters → monsters."""
         notes: List[str] = []
         farms = self.building_count("farm")
         factories = self.building_count("factory")
@@ -774,6 +876,9 @@ class IslandState:
             notes.append(
                 f"糧食不足（僅 {starved}）！人口 −{loss} → {self.population}"
             )
+
+        # Forest growth (catalog +100本／回合，上限 TREE_MAX).
+        notes.extend(self._grow_forests())
 
         # Settlement growth / tier upgrades (local-first color-block terrains).
         notes.extend(self._evolve_settlements())

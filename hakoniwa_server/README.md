@@ -18,6 +18,7 @@ Auth is a stub: leave `HAKONIWA_API_KEY` empty for open LAN, or set it and send 
 | POST | `/api/v1/island/landfill` | `{i,j}` |
 | POST | `/api/v1/island/level` | `{i,j}` |
 | POST | `/api/v1/island/afforest` | `{i,j}` |
+| POST | `/api/v1/island/harvest` | `{i,j}` 伐採 |
 | GET | `/api/v1/island/comments` | Visitor guestbook list (home) |
 | POST | `/api/v1/island/comments` | `{name,text}` leave a message (home) |
 | GET | `/api/v1/islands` | Tourism catalog (home + demos) |

@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import List, Tuple
 
 from .grid import GRID_SIZE, center_cluster, neighbors
-from .model import Cell, GuestbookEntry, IslandState, _utc_now_iso
+from .model import TREE_MIN, Cell, GuestbookEntry, IslandState, _utc_now_iso
 
 
 def _paint_blob(
@@ -47,7 +47,10 @@ def make_demo_coral() -> IslandState:
         elif idx < 8:
             cells[i][j] = Cell("grass")
         else:
-            cells[i][j] = Cell("forest" if idx % 3 == 0 else "grass")
+            if idx % 3 == 0:
+                cells[i][j] = Cell("forest", trees=TREE_MIN + 200)
+            else:
+                cells[i][j] = Cell("grass")
     # Place a farm and factory on grass.
     farms = [(i, j) for i, j in land if cells[i][j].terrain == "grass"]
     if farms:
@@ -96,7 +99,7 @@ def make_demo_pine() -> IslandState:
     land = _expand(seeds, 1)
     for idx, (i, j) in enumerate(sorted(land)):
         if idx % 2 == 0:
-            cells[i][j] = Cell("forest")
+            cells[i][j] = Cell("forest", trees=TREE_MIN + idx * 50)
         elif idx % 3 == 0:
             cells[i][j] = Cell("dirt")
         else:

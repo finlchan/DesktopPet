@@ -30,6 +30,7 @@ from hakoniwa.model import (
     COST_DEFENSE,
     COST_FACTORY,
     COST_FARM,
+    COST_HARVEST,
     COST_LANDFILL,
     COST_LEVEL,
     COST_MISSILE,
@@ -42,15 +43,21 @@ from hakoniwa.model import (
     FOOD_PER_FARM,
     FOREST_FIRE_FACTOR,
     FUNDS_PER_FACTORY,
+    FUNDS_PER_TIMBER_LOT,
     MAX_GUEST_NAME,
     MAX_GUEST_TEXT,
     MONSTER_MIN_POP,
     MONSTER_MIN_TURN,
     MONSTER_REWARD,
     SAVE_VERSION,
+    TIMBER_LOT,
     TOWN_TO_CITY_POP,
+    TREE_GROWTH_PER_TURN,
+    TREE_MAX,
+    TREE_MIN,
     VILLAGE_TO_TOWN_POP,
     IslandState,
+    timber_funds,
 )
 from hakoniwa.demos import island_summary, local_demo_islands, make_demo_coral, make_demo_pine
 from hakoniwa.dialog import TOOL_SPECS, tool_enabled
@@ -132,6 +139,15 @@ def test_catalog_costs():
     assert COST_LANDFILL == 150
     assert COST_LEVEL == 5
     assert COST_AFFOREST == 50
+    assert COST_HARVEST == 0
+    assert TREE_MIN == 100
+    assert TREE_MAX == 20000
+    assert TREE_GROWTH_PER_TURN == 100
+    assert TIMBER_LOT == 100
+    assert FUNDS_PER_TIMBER_LOT == 5
+    assert timber_funds(100) == 5
+    assert timber_funds(250) == 10
+    assert timber_funds(99) == 0
     assert COST_MISSILE == 20
     assert COST_MISSILE_CHEAP == 10
     assert COST_MISSILE_BASE == 300
@@ -139,6 +155,7 @@ def test_catalog_costs():
     assert DEFENSE_RADIUS == 2
     assert 0 < DEFENSE_SPAWN_FACTOR < 1
     assert 0 < DEFENSE_STOMP_SAVE_CHANCE < 1
+    assert SAVE_VERSION >= 6
 
 
 def test_new_island_and_loop():
@@ -212,11 +229,13 @@ def test_new_island_and_loop():
     funds_before = state.funds
     assert state.afforest(gi, gj) == "ok"
     assert state.cell(gi, gj).terrain == "forest"
+    assert state.cell(gi, gj).trees == TREE_MIN
     assert state.funds == funds_before - COST_AFFOREST
 
-    # 整地 forest → grass.
+    # 整地 forest → grass (no timber payout).
     assert state.level_land(gi, gj) == "ok"
     assert state.cell(gi, gj).terrain == "grass"
+    assert state.cell(gi, gj).trees == 0
 
     food_before = state.food
     funds_before = state.funds
@@ -232,6 +251,86 @@ def test_new_island_and_loop():
     assert state.food == food_before + farms * FOOD_PER_FARM - 20  # pop < 500 → min need
     assert state.funds == funds_before + factories * FUNDS_PER_FACTORY
     assert state.food > 0
+
+
+def test_forest_plant_grow_harvest():
+    """植林 → 回合生長 → 伐採瞬售資金（定本 100本≈5億）。"""
+    state = IslandState.new_game()
+    grass = next(
+        (
+            (x, y)
+            for x in range(20)
+            for y in range(20)
+            if state.can_afforest(x, y)
+        ),
+        None,
+    )
+    assert grass is not None
+    gi, gj = grass
+    assert state.afforest(gi, gj) == "ok"
+    cell = state.cell(gi, gj)
+    assert cell.terrain == "forest" and cell.trees == TREE_MIN
+
+    ok, _ = tool_enabled(state, "harvest", (gi, gj))
+    assert ok is True
+    ok, reason = tool_enabled(state, "afforest", (gi, gj))
+    assert ok is False and "平地" in reason
+
+    # Grow one turn (silence disasters/monsters for a clean assert).
+    import random as _rnd
+
+    _rnd.seed(0)
+    notes = state.next_turn()
+    assert any("林木生長" in n for n in notes)
+    assert state.cell(gi, gj).trees == TREE_MIN + TREE_GROWTH_PER_TURN
+
+    # Cap: pre-fill near max then grow.
+    state.cell(gi, gj).trees = TREE_MAX - 50
+    state.next_turn()
+    assert state.cell(gi, gj).trees == TREE_MAX
+
+    funds_before = state.funds
+    trees = state.cell(gi, gj).trees
+    expected = timber_funds(trees)
+    assert state.harvest(gi, gj) == "ok"
+    assert state.cell(gi, gj).terrain == "grass"
+    assert state.cell(gi, gj).trees == 0
+    assert state.funds == funds_before + expected
+    assert expected == (TREE_MAX // TIMBER_LOT) * FUNDS_PER_TIMBER_LOT
+
+    # Free action; cannot harvest grass.
+    assert state.can_harvest(gi, gj) is False
+    assert state.harvest(gi, gj) != "ok"
+
+    # Persist trees across save round-trip.
+    state.afforest(gi, gj)
+    state.cell(gi, gj).trees = 450
+    blob = state.to_dict()
+    assert blob["version"] == SAVE_VERSION
+    assert blob["cells"][gi][gj]["trees"] == 450
+    loaded = IslandState.from_dict(blob)
+    assert loaded.cell(gi, gj).terrain == "forest"
+    assert loaded.cell(gi, gj).trees == 450
+    # Legacy forest without trees key → TREE_MIN.
+    legacy = IslandState.from_dict(
+        {
+            "version": 5,
+            "size": 20,
+            "cells": [
+                [
+                    {"terrain": "forest"}
+                    if (r, c) == (gi, gj)
+                    else {"terrain": "sea"}
+                    for c in range(20)
+                ]
+                for r in range(20)
+            ],
+        }
+    )
+    assert legacy.cell(gi, gj).trees == TREE_MIN
+
+    keys = {k for k, *_ in TOOL_SPECS}
+    assert "harvest" in keys and "afforest" in keys
 
 
 def test_guestbook_local():

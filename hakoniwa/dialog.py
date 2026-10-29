@@ -40,6 +40,7 @@ from .model import (
     COST_DEFENSE,
     COST_FACTORY,
     COST_FARM,
+    COST_HARVEST,
     COST_LANDFILL,
     COST_LEVEL,
     COST_MISSILE,
@@ -48,6 +49,8 @@ from .model import (
     MAX_GUEST_NAME,
     MAX_GUEST_TEXT,
     PLACEABLE_BUILDINGS,
+    TREE_MIN,
+    timber_funds,
     TERRAIN,
     IslandState,
 )
@@ -330,6 +333,7 @@ TOOL_SPECS: Tuple[Tuple[str, str, Optional[int], str], ...] = (
     ("landfill", "填海造陸", COST_LANDFILL, "4"),
     ("level", "整地", COST_LEVEL, "5"),
     ("afforest", "植林", COST_AFFOREST, "6"),
+    ("harvest", "伐採", COST_HARVEST if COST_HARVEST else None, "C"),
     ("missile", "發射飛彈", COST_MISSILE, "7"),
     ("wait", "觀望怪獸", None, "8"),
     ("defense", "建設防衛設施", COST_DEFENSE, "9"),
@@ -406,6 +410,13 @@ def tool_enabled(
             return False, f"資金不足（需 {COST_AFFOREST}）"
         return True, ""
 
+    if kind == "harvest":
+        if not state.can_harvest(i, j):
+            if state.monster_at(i, j) is not None:
+                return False, "此格有怪獸"
+            return False, "須為森林"
+        return True, ""
+
     return False, "未知指令"
 
 
@@ -458,7 +469,7 @@ class HakoniwaIslandDialog(QDialog):
         hint = QLabel(
             "箱庭斜視 · 點選格子 → 左下「工具／設定」建設／地形／飛彈 · 下回合結算　"
             "（色塊佔位）· 滾輪縮放 · 中／右鍵平移　"
-            "快捷鍵：1–9／B 工具 · T 下回合 · S 存檔 · Esc 取消選取 · 0 重置視圖"
+            "快捷鍵：1–9／B／C 工具 · T 下回合 · S 存檔 · Esc 取消選取 · 0 重置視圖"
         )
         hint.setObjectName("calcResult")
         hint.setWordWrap(True)
@@ -840,6 +851,12 @@ class HakoniwaIslandDialog(QDialog):
                 tip += "\n周圍 2 格減怪獸出現／踩踏；踩上自爆清怪"
             elif key == "missile_base":
                 tip += "\n有基地時飛彈更便宜"
+            elif key == "afforest":
+                tip += "\n空平地→森（新林 100 本）"
+            elif key == "harvest" and ok and self.selected is not None:
+                hc = self.state.cell(*self.selected)
+                trees = hc.trees if hc.trees > 0 else TREE_MIN
+                tip += f"\n森→平地；{trees}本瞬售 +{timber_funds(trees)} 資金"
             elif self.selected is not None:
                 tip += f"\n選格 {self.selected[0]},{self.selected[1]}"
             tip += f"\n快捷鍵 {digit}"
@@ -871,8 +888,17 @@ class HakoniwaIslandDialog(QDialog):
             hints.append("可整地")
         if self.state.can_afforest(i, j):
             hints.append("可植林")
+        if self.state.can_harvest(i, j):
+            trees = c.trees if c.trees > 0 else TREE_MIN
+            hints.append(f"可伐採（{trees}本→+{timber_funds(trees)}）")
+        tree_line = ""
+        if c.terrain == "forest":
+            trees = c.trees if c.trees > 0 else TREE_MIN
+            tree_line = f"\n林木：{trees} 本"
         extra = ("\n" + " · ".join(hints)) if hints else ""
-        self.sel_label.setText(f"格子 ({i},{j})\n地形：{t}\n建築：{b}{mline}{extra}")
+        self.sel_label.setText(
+            f"格子 ({i},{j})\n地形：{t}{tree_line}\n建築：{b}{mline}{extra}"
+        )
 
     def _on_cell_clicked(self, i: int, j: int) -> None:
         self.selected = (i, j)
@@ -915,6 +941,8 @@ class HakoniwaIslandDialog(QDialog):
                     out = self.remote.level(i, j)
                 elif kind == "afforest":
                     out = self.remote.afforest(i, j)
+                elif kind == "harvest":
+                    out = self.remote.harvest(i, j)
                 elif kind == "missile":
                     out = self.remote.missile(i, j)
                 elif kind == "wait":
@@ -942,6 +970,8 @@ class HakoniwaIslandDialog(QDialog):
             msg = self.state.level_land(i, j)
         elif kind == "afforest":
             msg = self.state.afforest(i, j)
+        elif kind == "harvest":
+            msg = self.state.harvest(i, j)
         elif kind == "missile":
             msg = self.state.fire_missile(i, j)
         elif kind == "wait":
