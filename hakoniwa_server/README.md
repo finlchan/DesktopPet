@@ -18,6 +18,8 @@ Auth is a stub: leave `HAKONIWA_API_KEY` empty for open LAN, or set it and send 
 | POST | `/api/v1/island/landfill` | `{i,j}` |
 | POST | `/api/v1/island/level` | `{i,j}` |
 | POST | `/api/v1/island/afforest` | `{i,j}` |
+| GET | `/api/v1/island/comments` | Visitor guestbook list |
+| POST | `/api/v1/island/comments` | `{name,text}` leave a message |
 
 Gameplay rules match the Desktop Pet `hakoniwa` package (色塊佔位 · 箱庭斜視 client).
 

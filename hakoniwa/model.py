@@ -1,17 +1,25 @@
 """In-memory island state + simplified Hakoniwa Islands 2–inspired turn loop.
 
 v1 deepen: catalog place costs, terrain commands (整地／填海／植林),
-farm food + factory funds turn processing, optional population stub.
+farm food + factory funds turn processing, optional population stub,
+visitor guestbook (name + text).
 Color-block placeholders only — user art later.
 """
 
 from __future__ import annotations
 
 import random
+import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 from .grid import GRID_SIZE, center_cluster, neighbors
+
+# Visitor guestbook limits (島際留言板 v1).
+MAX_GUEST_NAME = 24
+MAX_GUEST_TEXT = 200
+MAX_GUEST_COMMENTS = 100
 
 # ---------------------------------------------------------------------------
 # Catalog-inspired costs (箱庭諸島2 定本；億円／噸 units as soft placeholders)
@@ -79,6 +87,56 @@ class Cell:
 
 
 @dataclass
+class GuestbookEntry:
+    """One visitor message on the island bulletin board."""
+
+    id: str
+    name: str
+    text: str
+    at: str  # ISO-ish UTC timestamp
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "text": self.text,
+            "at": self.at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> Optional["GuestbookEntry"]:
+        if not isinstance(data, dict):
+            return None
+        name = str(data.get("name") or "").strip()
+        text = str(data.get("text") or "").strip()
+        if not name or not text:
+            return None
+        entry_id = str(data.get("id") or "").strip() or uuid.uuid4().hex[:12]
+        at = str(data.get("at") or "").strip() or _utc_now_iso()
+        return cls(
+            id=entry_id[:32],
+            name=name[:MAX_GUEST_NAME],
+            text=text[:MAX_GUEST_TEXT],
+            at=at[:40],
+        )
+
+
+def _utc_now_iso() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _parse_comments(raw: Any) -> List[GuestbookEntry]:
+    if not isinstance(raw, list):
+        return []
+    out: List[GuestbookEntry] = []
+    for item in raw:
+        entry = GuestbookEntry.from_dict(item if isinstance(item, dict) else {})
+        if entry is not None:
+            out.append(entry)
+    return out[-MAX_GUEST_COMMENTS:]
+
+
+@dataclass
 class IslandState:
     size: int = GRID_SIZE
     turn: int = 1
@@ -88,6 +146,7 @@ class IslandState:
     name: str = "箱庭島"
     cells: List[List[Cell]] = field(default_factory=list)
     log: List[str] = field(default_factory=list)
+    comments: List[GuestbookEntry] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.cells:
@@ -281,6 +340,33 @@ class IslandState:
             self._log(f"回合 {self.turn - 1}→{self.turn}：{n}")
         return notes
 
+    def list_comments(self) -> List[GuestbookEntry]:
+        return list(self.comments)
+
+    def add_comment(self, name: str, text: str) -> str:
+        """Post a visitor guestbook message. Returns 'ok' or an error string."""
+        clean_name = (name or "").strip()
+        clean_text = (text or "").strip()
+        if not clean_name:
+            return "請輸入名字"
+        if not clean_text:
+            return "請輸入留言"
+        if len(clean_name) > MAX_GUEST_NAME:
+            return f"名字過長（最多 {MAX_GUEST_NAME} 字）"
+        if len(clean_text) > MAX_GUEST_TEXT:
+            return f"留言過長（最多 {MAX_GUEST_TEXT} 字）"
+        entry = GuestbookEntry(
+            id=uuid.uuid4().hex[:12],
+            name=clean_name,
+            text=clean_text,
+            at=_utc_now_iso(),
+        )
+        self.comments.append(entry)
+        if len(self.comments) > MAX_GUEST_COMMENTS:
+            self.comments = self.comments[-MAX_GUEST_COMMENTS:]
+        self._log(f"訪客留言：{clean_name}")
+        return "ok"
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "version": 2,
@@ -292,6 +378,7 @@ class IslandState:
             "population": self.population,
             "cells": [[c.to_dict() for c in row] for row in self.cells],
             "log": list(self.log[-40:]),
+            "comments": [c.to_dict() for c in self.comments],
         }
 
     @classmethod
@@ -324,6 +411,7 @@ class IslandState:
             name=str(data.get("name") or "箱庭島"),
             cells=parsed if ok else [],
             log=[str(x) for x in (data.get("log") or [])][-80:],
+            comments=_parse_comments(data.get("comments")),
         )
         return state
 

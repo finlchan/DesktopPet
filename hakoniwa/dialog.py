@@ -1,8 +1,9 @@
-"""箱庭島 window — FramelessCalcDialog chrome + map + turn / terrain actions."""
+"""箱庭島 window — FramelessCalcDialog chrome + map + turn / terrain / guestbook."""
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import List
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -24,6 +25,9 @@ from .model import (
     COST_FARM,
     COST_LANDFILL,
     COST_LEVEL,
+    GuestbookEntry,
+    MAX_GUEST_NAME,
+    MAX_GUEST_TEXT,
     TERRAIN,
     IslandState,
 )
@@ -65,8 +69,8 @@ class HakoniwaIslandDialog(QDialog):
         self._drag_grips = []
 
         self.setWindowTitle("箱庭島")
-        self.setMinimumSize(720, 600)
-        self.resize(880, 680)
+        self.setMinimumSize(720, 720)
+        self.resize(900, 780)
         self.setStyleSheet(dp.CALC_DIALOG_STYLE + getattr(dp, "MINI_PROGRAM_STYLE", ""))
 
         self._save_path = self._resolve_save_path()
@@ -178,6 +182,45 @@ class HakoniwaIslandDialog(QDialog):
 
         root.addLayout(body, stretch=1)
 
+        # Visitor guestbook (島留言板) — local JSON or NAS /comments.
+        gb_cap = QLabel("訪客留言板")
+        gb_cap.setObjectName("calcSectionTitle")
+        root.addWidget(gb_cap)
+
+        self.guestbook_view = QPlainTextEdit()
+        self.guestbook_view.setReadOnly(True)
+        self.guestbook_view.setMinimumHeight(90)
+        self.guestbook_view.setMaximumHeight(140)
+        self.guestbook_view.setPlaceholderText("尚無留言 — 留下第一則吧")
+        root.addWidget(self.guestbook_view)
+
+        gb_form = QHBoxLayout()
+        gb_form.setSpacing(6)
+        name_cap = QLabel("名字")
+        name_cap.setObjectName("calcFieldCaption")
+        gb_form.addWidget(name_cap)
+        self.guest_name = QLineEdit()
+        self.guest_name.setPlaceholderText("訪客名")
+        self.guest_name.setMaxLength(MAX_GUEST_NAME)
+        self.guest_name.setFixedWidth(120)
+        gb_form.addWidget(self.guest_name)
+        text_cap = QLabel("留言")
+        text_cap.setObjectName("calcFieldCaption")
+        gb_form.addWidget(text_cap)
+        self.guest_text = QLineEdit()
+        self.guest_text.setPlaceholderText("寫點什麼…")
+        self.guest_text.setMaxLength(MAX_GUEST_TEXT)
+        gb_form.addWidget(self.guest_text, stretch=1)
+        post_btn = QPushButton("留言")
+        post_btn.setObjectName("calcAction")
+        post_btn.clicked.connect(self._post_guestbook)
+        gb_form.addWidget(post_btn)
+        refresh_gb = QPushButton("重新整理")
+        refresh_gb.setObjectName("calcAction")
+        refresh_gb.clicked.connect(self._reload_guestbook)
+        gb_form.addWidget(refresh_gb)
+        root.addLayout(gb_form)
+
         close_row = QHBoxLayout()
         close_row.addStretch()
         close_btn = QPushButton("Close")
@@ -259,6 +302,57 @@ class HakoniwaIslandDialog(QDialog):
             self._apply_island(loaded)
         self._refresh_ui()
 
+    def _format_guestbook(self, comments: List[GuestbookEntry]) -> str:
+        if not comments:
+            return "（尚無留言）"
+        lines = []
+        for c in comments:
+            stamp = c.at.replace("T", " ").rstrip("Z")
+            lines.append(f"[{stamp}] {c.name}：{c.text}")
+        return "\n".join(lines)
+
+    def _show_guestbook(self, comments: List[GuestbookEntry]) -> None:
+        self.guestbook_view.setPlainText(self._format_guestbook(comments))
+        bar = self.guestbook_view.verticalScrollBar()
+        bar.setValue(bar.maximum())
+
+    def _reload_guestbook(self) -> None:
+        if self._online and self.remote is not None:
+            try:
+                comments = self.remote.list_comments()
+                self.state.comments = list(comments)
+                self._cache_local()
+                self._show_guestbook(comments)
+                return
+            except HakoniwaRemoteError as e:
+                self._drop_to_local_on_error(e)
+        self._show_guestbook(self.state.list_comments())
+
+    def _post_guestbook(self) -> None:
+        name = self.guest_name.text()
+        text = self.guest_text.text()
+        if self._online and self.remote is not None:
+            try:
+                ok, err, comments = self.remote.post_comment(name, text)
+                self.state.comments = list(comments)
+                self._cache_local()
+                self._show_guestbook(comments)
+                if not ok:
+                    QMessageBox.information(self, "箱庭島", err or "留言失敗")
+                    return
+                self.guest_text.clear()
+                self._refresh_ui()
+                return
+            except HakoniwaRemoteError as e:
+                self._drop_to_local_on_error(e)
+
+        msg = self.state.add_comment(name, text)
+        if msg != "ok":
+            QMessageBox.information(self, "箱庭島", msg)
+            return
+        self.guest_text.clear()
+        self._refresh_ui()
+
     def _refresh_ui(self) -> None:
         s = self.state
         mode = "連線" if self._online else "本機"
@@ -271,6 +365,7 @@ class HakoniwaIslandDialog(QDialog):
         bar.setValue(bar.maximum())
         self.map.update()
         self._refresh_selection_label()
+        self._show_guestbook(s.list_comments())
 
     def _refresh_selection_label(self) -> None:
         if self.selected is None:
