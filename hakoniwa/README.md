@@ -23,7 +23,7 @@ All numeric / function chrome sits **inside the map viewport** (`HakoniwaMapHud`
 
 | Overlay | Position | Notes |
 |---|---|---|
-| Status (funds / food / turn / land / pop) | Top center | Connection mode is **not** here |
+| Status (funds / food / turn / land / pop) | Top center | **Single line** (no wrap); connection mode is **not** here |
 | Tile info | Top-left | Below status |
 | Action log | Bottom-right | ~70% transparent frame |
 | Guestbook | Bottom center | ~70% transparent frame |

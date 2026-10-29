@@ -764,6 +764,16 @@ def test_dialog_import_offscreen():
     assert "陸地" in dlg.stats.text()
     assert "[本機]" not in dlg.stats.text()
     assert "[連線]" not in dlg.stats.text()
+    # Status HUD is a single horizontal line (no wrap / multi-line).
+    assert dlg.stats.wordWrap() is False
+    assert "\n" not in dlg.stats.text()
+    dlg.show()
+    dlg.resize(960, 780)
+    dlg._refresh_ui()
+    app.processEvents()
+    status_h = dlg.stats.height()
+    line_h = dlg.stats.fontMetrics().height()
+    assert status_h <= line_h + 16, (status_h, line_h, dlg.stats.text())
     # Opening tools drawer exposes build toolbar + server settings.
     # Use isHidden() — isVisible() is false while the dialog itself is not shown.
     dlg.hud.tools_btn.setChecked(True)

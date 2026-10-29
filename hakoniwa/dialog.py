@@ -66,7 +66,8 @@ QLabel#hakoniwaHudStatus {{
     color: #e4f5e4;
     border: 1px solid rgba(90, 150, 90, 200);
     border-radius: 3px;
-    padding: 4px 10px;
+    padding: 3px 10px;
+    /* Single-line status strip — do not wrap stats. */
 }}
 QLabel#hakoniwaHudTile {{
     background-color: rgba(16, 40, 28, 170);
@@ -144,8 +145,12 @@ class HakoniwaMapHud(QWidget):
 
         self.stats = QLabel(self)
         self.stats.setObjectName("hakoniwaHudStatus")
-        self.stats.setWordWrap(True)
-        self.stats.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # User-locked: status HUD is one horizontal line (no wrap).
+        self.stats.setWordWrap(False)
+        self.stats.setAlignment(
+            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
+        )
+        self.stats.setTextFormat(Qt.TextFormat.PlainText)
 
         self.sel_label = QLabel("未選取格子", self)
         self.sel_label.setObjectName("hakoniwaHudTile")
@@ -255,10 +260,12 @@ class HakoniwaMapHud(QWidget):
         self.map.lower()
 
         margin = 8
-        # Status — top center
-        self.stats.adjustSize()
-        status_h = max(self.stats.sizeHint().height() + 8, 28)
-        status_w = min(max(self.stats.sizeHint().width() + 24, 320), w - 2 * margin)
+        # Status — top center, single horizontal line (no wrap / multi-line).
+        fm = self.stats.fontMetrics()
+        text = self.stats.text() or ""
+        text_w = fm.horizontalAdvance(text) + 24
+        status_h = max(fm.height() + 10, 26)
+        status_w = min(max(text_w, 200), w - 2 * margin)
         self.stats.setGeometry((w - status_w) // 2, margin, status_w, status_h)
 
         # Tile info — top-left below status
@@ -790,10 +797,11 @@ class HakoniwaIslandDialog(QDialog):
         monster_bit = ""
         if s.monsters:
             m = s.monsters[0]
-            monster_bit = f"　｜　怪獸 {m.label()}({m.i},{m.j})"
+            monster_bit = f" | 怪獸 {m.label()}({m.i},{m.j})"
+        # One line only — compact separators so the strip stays single-row.
         self.stats.setText(
-            f"狀態　｜　資金 {s.funds}　｜　糧食 {s.food}　｜　"
-            f"回合 {s.turn}　｜　陸地 {s.land_count()} 格　｜　"
+            f"狀態 | 資金 {s.funds} | 糧食 {s.food} | "
+            f"回合 {s.turn} | 陸地 {s.land_count()} 格 | "
             f"人口 {s.population}{monster_bit}"
         )
         self.log_view.setPlainText("\n".join(s.log[-30:]))
@@ -1182,9 +1190,9 @@ class TourismIslandDialog(QDialog):
         self.hud.tools_drawer.hide()
         mode = "連線" if remote is not None else "本機示範"
         self.stats.setText(
-            f"[{mode}觀光] {island.name}（{self._island_id}）　"
-            f"資金 {island.funds}　糧食 {island.food}　人口 {island.population}　"
-            f"回合 {island.turn}　陸地 {island.land_count()} 格"
+            f"[{mode}觀光] {island.name}（{self._island_id}） | "
+            f"資金 {island.funds} | 糧食 {island.food} | 人口 {island.population} | "
+            f"回合 {island.turn} | 陸地 {island.land_count()} 格"
         )
         self.hud.log_view.setPlainText("觀光模式：建設與地形指令已鎖定。")
         root.addWidget(self.hud, stretch=1)
