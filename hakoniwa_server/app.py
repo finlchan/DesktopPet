@@ -28,8 +28,11 @@ def _api_key() -> Optional[str]:
 store = IslandStore(_data_dir())
 app = FastAPI(
     title="箱庭島",
-    description="NAS-ready single-player island server (v1). Custom auth later.",
-    version="0.1.0",
+    description=(
+        "NAS-ready island server (v1): home island + multi-island tourism. "
+        "Custom auth later."
+    ),
+    version="0.2.0",
 )
 
 
@@ -65,8 +68,9 @@ def health() -> Dict[str, Any]:
     return {
         "ok": True,
         "service": "hakoniwa-island",
-        "version": "0.1.0",
+        "version": "0.2.0",
         "auth": "api_key" if _api_key() else "none",
+        "islands": len(store.list_islands()),
     }
 
 
@@ -157,6 +161,48 @@ def get_comments() -> Dict[str, Any]:
 )
 def post_comment(body: CommentBody) -> CommentsResult:
     msg, comments = store.add_comment(body.name, body.text)
+    if msg != "ok":
+        return CommentsResult(ok=False, error=msg, comments=comments)
+    return CommentsResult(ok=True, comments=comments)
+
+
+# --- Multi-island tourism (觀光) --------------------------------------------
+
+
+@app.get("/api/v1/islands", dependencies=[Depends(require_api_key)])
+def list_islands() -> Dict[str, Any]:
+    """Catalog of browseable islands (home + seeded demos)."""
+    return {"islands": store.list_islands()}
+
+
+@app.get("/api/v1/islands/{island_id}", dependencies=[Depends(require_api_key)])
+def get_island_by_id(island_id: str) -> Dict[str, Any]:
+    data = store.get_island(island_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail=f"Island not found: {island_id}")
+    return data
+
+
+@app.get(
+    "/api/v1/islands/{island_id}/comments",
+    dependencies=[Depends(require_api_key)],
+)
+def get_island_comments(island_id: str) -> Dict[str, Any]:
+    comments = store.list_island_comments(island_id)
+    if comments is None:
+        raise HTTPException(status_code=404, detail=f"Island not found: {island_id}")
+    return {"comments": comments}
+
+
+@app.post(
+    "/api/v1/islands/{island_id}/comments",
+    response_model=CommentsResult,
+    dependencies=[Depends(require_api_key)],
+)
+def post_island_comment(island_id: str, body: CommentBody) -> CommentsResult:
+    msg, comments = store.add_island_comment(island_id, body.name, body.text)
+    if msg is None:
+        raise HTTPException(status_code=404, detail=f"Island not found: {island_id}")
     if msg != "ok":
         return CommentsResult(ok=False, error=msg, comments=comments)
     return CommentsResult(ok=True, comments=comments)
