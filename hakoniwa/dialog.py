@@ -30,14 +30,17 @@ from .model import (
     BUILDABLE,
     BUILDINGS,
     COST_AFFOREST,
+    COST_DEFENSE,
     COST_FACTORY,
     COST_FARM,
     COST_LANDFILL,
     COST_LEVEL,
     COST_MISSILE,
+    COST_MISSILE_BASE,
     GuestbookEntry,
     MAX_GUEST_NAME,
     MAX_GUEST_TEXT,
+    PLACEABLE_BUILDINGS,
     TERRAIN,
     IslandState,
 )
@@ -45,7 +48,7 @@ from .remote import HakoniwaRemote, HakoniwaRemoteError, try_connect
 from .save import default_save_path, load_island, save_island
 from .view import HakoniwaMapWidget
 
-# Toolbar: (action key, display name, cost or None, shortcut digit)
+# Toolbar: (action key, display name, cost or None, shortcut digit/letter)
 TOOL_SPECS: Tuple[Tuple[str, str, Optional[int], str], ...] = (
     ("farm", "建設農場", COST_FARM, "1"),
     ("factory", "建設工場", COST_FACTORY, "2"),
@@ -55,6 +58,8 @@ TOOL_SPECS: Tuple[Tuple[str, str, Optional[int], str], ...] = (
     ("afforest", "植林", COST_AFFOREST, "6"),
     ("missile", "發射飛彈", COST_MISSILE, "7"),
     ("wait", "觀望怪獸", None, "8"),
+    ("defense", "建設防衛設施", COST_DEFENSE, "9"),
+    ("missile_base", "建設飛彈基地", COST_MISSILE_BASE, "B"),
 )
 
 
@@ -80,30 +85,21 @@ def tool_enabled(
     if kind == "missile":
         if state.monster_at(i, j) is None:
             return False, "此格沒有怪獸"
-        if state.funds < COST_MISSILE:
-            return False, f"資金不足（需 {COST_MISSILE}）"
+        cost = state.missile_cost()
+        if state.funds < cost:
+            return False, f"資金不足（需 {cost}）"
         return True, ""
 
-    if kind == "farm":
+    if kind in PLACEABLE_BUILDINGS:
+        cost = int(BUILDINGS[kind]["cost"])
         if state.monster_at(i, j) is not None:
             return False, "此格有怪獸"
         if c.terrain not in BUILDABLE:
             return False, "須在平地建設"
         if c.building is not None:
             return False, "此格已有建築"
-        if state.funds < COST_FARM:
-            return False, f"資金不足（需 {COST_FARM}）"
-        return True, ""
-
-    if kind == "factory":
-        if state.monster_at(i, j) is not None:
-            return False, "此格有怪獸"
-        if c.terrain not in BUILDABLE:
-            return False, "須在平地建設"
-        if c.building is not None:
-            return False, "此格已有建築"
-        if state.funds < COST_FACTORY:
-            return False, f"資金不足（需 {COST_FACTORY}）"
+        if state.funds < cost:
+            return False, f"資金不足（需 {cost}）"
         return True, ""
 
     if kind == "remove":
@@ -188,7 +184,7 @@ class HakoniwaIslandDialog(QDialog):
         hint = QLabel(
             "箱庭斜視 · 點選格子 → 工具列建設／地形／飛彈 · 下回合結算　"
             "（色塊佔位；怪獸＝色塊方塊）· 滾輪縮放 · 中／右鍵平移　"
-            "快捷鍵：1–8 工具 · T 下回合 · S 存檔 · Esc 取消選取 · 0 重置視圖"
+            "快捷鍵：1–9／B 工具 · T 下回合 · S 存檔 · Esc 取消選取 · 0 重置視圖"
         )
         hint.setObjectName("calcResult")
         hint.setWordWrap(True)
@@ -579,18 +575,28 @@ class HakoniwaIslandDialog(QDialog):
         """Enable tools only when the selection can afford / accepts them."""
         for key, name, cost, digit in TOOL_SPECS:
             btn = self.tool_buttons[key]
-            if cost is None:
+            # 飛彈費用隨飛彈基地動態變化。
+            shown_cost = self.state.missile_cost() if key == "missile" else cost
+            if shown_cost is None:
                 label = f"{digit}. {name}"
             else:
-                label = f"{digit}. {name}（{cost}）"
+                label = f"{digit}. {name}（{shown_cost}）"
             btn.setText(label)
             ok, reason = tool_enabled(self.state, key, self.selected)
             btn.setEnabled(ok)
-            tip = f"{name}" + (f" · 費用 {cost}" if cost is not None else " · 免費")
+            tip = f"{name}" + (
+                f" · 費用 {shown_cost}" if shown_cost is not None else " · 免費"
+            )
+            if key == "missile" and self.state.has_missile_base():
+                tip += "（飛彈基地優惠）"
             if reason:
                 tip += f"\n不可用：{reason}"
             elif key == "wait" and self.state.has_monster():
                 tip += "\n本回合不攻擊；下回合怪獸會行動"
+            elif key == "defense":
+                tip += "\n周圍 2 格減怪獸出現／踩踏；踩上自爆清怪"
+            elif key == "missile_base":
+                tip += "\n有基地時飛彈更便宜"
             elif self.selected is not None:
                 tip += f"\n選格 {self.selected[0]},{self.selected[1]}"
             tip += f"\n快捷鍵 {digit}"
@@ -656,10 +662,8 @@ class HakoniwaIslandDialog(QDialog):
 
         if self._online and self.remote is not None:
             try:
-                if kind == "farm":
-                    out = self.remote.place(i, j, "farm")
-                elif kind == "factory":
-                    out = self.remote.place(i, j, "factory")
+                if kind in PLACEABLE_BUILDINGS:
+                    out = self.remote.place(i, j, kind)
                 elif kind == "remove":
                     out = self.remote.remove(i, j)
                 elif kind == "landfill":
@@ -685,10 +689,8 @@ class HakoniwaIslandDialog(QDialog):
                 self._drop_to_local_on_error(e)
                 # Fall through to local action below.
 
-        if kind == "farm":
-            msg = self.state.place_building(i, j, "farm")
-        elif kind == "factory":
-            msg = self.state.place_building(i, j, "factory")
+        if kind in PLACEABLE_BUILDINGS:
+            msg = self.state.place_building(i, j, kind)
         elif kind == "remove":
             msg = self.state.remove_building(i, j)
         elif kind == "landfill":

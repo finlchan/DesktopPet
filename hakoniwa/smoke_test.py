@@ -23,11 +23,17 @@ from hakoniwa.grid import (
 )
 from hakoniwa.model import (
     COST_AFFOREST,
+    COST_DEFENSE,
     COST_FACTORY,
     COST_FARM,
     COST_LANDFILL,
     COST_LEVEL,
     COST_MISSILE,
+    COST_MISSILE_BASE,
+    COST_MISSILE_CHEAP,
+    DEFENSE_RADIUS,
+    DEFENSE_SPAWN_FACTOR,
+    DEFENSE_STOMP_SAVE_CHANCE,
     FIRE_BASE_CHANCE,
     FOOD_PER_FARM,
     FOREST_FIRE_FACTOR,
@@ -78,6 +84,12 @@ def test_catalog_costs():
     assert COST_LEVEL == 5
     assert COST_AFFOREST == 50
     assert COST_MISSILE == 20
+    assert COST_MISSILE_CHEAP == 10
+    assert COST_MISSILE_BASE == 300
+    assert COST_DEFENSE == 1000
+    assert DEFENSE_RADIUS == 2
+    assert 0 < DEFENSE_SPAWN_FACTOR < 1
+    assert 0 < DEFENSE_STOMP_SAVE_CHANCE < 1
 
 
 def test_new_island_and_loop():
@@ -431,6 +443,173 @@ def test_monster_events():
     assert (loaded.monsters[0].i, loaded.monsters[0].j) == (m2.i, m2.j)
 
 
+def test_defense_and_missile_base():
+    """防衛設施／飛彈基地 place + spawn/stomp/missile stubs."""
+    state = IslandState.new_game()
+    land = [(i, j) for i in range(20) for j in range(20) if state.is_land(i, j)]
+    # Ensure two grass cells for base + defense.
+    grass = [
+        (i, j) for i, j in land if state.cell(i, j).terrain == "grass"
+    ]
+    while len(grass) < 3:
+        for i, j in land:
+            if state.cell(i, j).terrain == "dirt" and state.cell(i, j).building is None:
+                assert state.level_land(i, j) == "ok"
+                grass.append((i, j))
+                if len(grass) >= 3:
+                    break
+        else:
+            break
+    assert len(grass) >= 3
+    bi, bj = grass[0]
+    di, dj = grass[1]
+    fi, fj = grass[2]
+
+    # Missile base → cheaper missiles.
+    state.funds = max(state.funds, COST_MISSILE_BASE + COST_DEFENSE + 50)
+    assert state.missile_cost() == COST_MISSILE
+    assert state.place_building(bi, bj, "missile_base") == "ok"
+    assert state.cell(bi, bj).building == "missile_base"
+    assert state.has_missile_base()
+    assert state.missile_cost() == COST_MISSILE_CHEAP
+    ok, _ = tool_enabled(state, "missile_base", (fi, fj))
+    assert ok is True
+
+    # Defense facility covers neighbors within radius.
+    assert state.place_building(di, dj, "defense") == "ok"
+    assert state.cell(di, dj).building == "defense"
+    assert state.protected_by_defense(di, dj)
+    covered = state.cells_within(di, dj, DEFENSE_RADIUS)
+    assert (di, dj) in covered
+    assert len(covered) > 1
+
+    # Spawn chance reduced when defense exists.
+    state.population = MONSTER_MIN_POP
+    state.turn = MONSTER_MIN_TURN
+    # Temporarily clear defense to measure baseline, then restore.
+    state.cell(di, dj).building = None
+    base_chance = state._monster_spawn_chance()
+    state.cell(di, dj).building = "defense"
+    reduced = state._monster_spawn_chance()
+    assert base_chance > 0
+    assert abs(reduced - base_chance * DEFENSE_SPAWN_FACTOR) < 1e-9
+
+    # Spawn candidates prefer cells outside defense cover.
+    cands = state._spawn_candidate_cells()
+    assert cands
+    assert all(not state.protected_by_defense(x, y) for x, y in cands) or all(
+        state.protected_by_defense(x, y) for x, y in cands
+    )
+
+    # Cheaper missile kill with base.
+    open_cell = next(
+        ((x, y) for x, y in land if not state.protected_by_defense(x, y)),
+        land[-1],
+    )
+    m = state.spawn_monster(*open_cell)
+    assert m is not None
+    funds_before = state.funds
+    assert state.fire_missile(m.i, m.j) == "ok"
+    assert not state.has_monster()
+    assert state.funds == funds_before - COST_MISSILE_CHEAP + MONSTER_REWARD
+    assert any("飛彈基地" in line for line in state.log)
+
+    # Miss near defense logs nullified collateral.
+    near = next(iter(state.cells_within(di, dj, 1)))
+    funds_before = state.funds
+    assert state.monster_at(*near) is None
+    assert state.fire_missile(*near) == "ok"
+    assert state.funds == funds_before - COST_MISSILE_CHEAP
+    assert any("無效化" in line for line in state.log)
+
+    # Stomp on defense → self-destruct clears monster.
+    state.funds = max(state.funds, COST_DEFENSE)
+    # Re-place defense if wiped (shouldn't be).
+    if state.cell(di, dj).building != "defense":
+        if state.cell(di, dj).terrain != "grass":
+            state.cell(di, dj).terrain = "grass"
+        state.cell(di, dj).building = None
+        assert state.place_building(di, dj, "defense") == "ok"
+    m2 = state.spawn_monster(di, dj)
+    assert m2 is not None
+    notes = state._stomp_cell(di, dj, m2)
+    assert any("自爆" in n for n in notes)
+    assert not state.has_monster()
+    assert state.cell(di, dj).building is None
+
+    # Near-defense stomp mitigation (force save).
+    from hakoniwa.model import Monster
+    import hakoniwa.model as model_mod
+
+    state.cell(di, dj).terrain = "grass"
+    state.cell(di, dj).building = "defense"
+    nbr = next(
+        (
+            (x, y)
+            for x, y in state.cells_within(di, dj, DEFENSE_RADIUS)
+            if (x, y) != (di, dj) and state.is_land(x, y)
+        ),
+        None,
+    )
+    assert nbr is not None
+    ni, nj = nbr
+    state.cell(ni, nj).terrain = "grass"
+    state.cell(ni, nj).building = "farm"
+    m3 = Monster(kind="inora", i=ni, j=nj, hp=1)
+    state.monsters = [m3]
+    old_save = model_mod.DEFENSE_STOMP_SAVE_CHANCE
+    model_mod.DEFENSE_STOMP_SAVE_CHANCE = 1.0
+    try:
+        notes = state._stomp_cell(ni, nj, m3)
+        assert any("減免" in n for n in notes)
+        assert state.cell(ni, nj).building == "farm"
+        assert state.cell(ni, nj).terrain == "grass"
+    finally:
+        model_mod.DEFENSE_STOMP_SAVE_CHANCE = old_save
+
+    # Round-trip new buildings in save.
+    data = state.to_dict()
+    assert data["version"] == SAVE_VERSION
+    loaded = IslandState.from_dict(data)
+    assert loaded.building_count("missile_base") == 1
+    assert loaded.building_count("defense") == 1
+    assert loaded.missile_cost() == COST_MISSILE_CHEAP
+
+    # Toolbar rules for defense / missile_base.
+    empty = next(
+        (
+            (x, y)
+            for x in range(20)
+            for y in range(20)
+            if loaded.cell(x, y).terrain == "grass"
+            and loaded.cell(x, y).building is None
+            and loaded.monster_at(x, y) is None
+        ),
+        None,
+    )
+    if empty is None:
+        # Level a dirt cell.
+        dirt = next(
+            (
+                (x, y)
+                for x in range(20)
+                for y in range(20)
+                if loaded.cell(x, y).terrain == "dirt"
+                and loaded.cell(x, y).building is None
+            ),
+            None,
+        )
+        assert dirt is not None
+        loaded.funds = max(loaded.funds, COST_LEVEL + COST_DEFENSE)
+        assert loaded.level_land(*dirt) == "ok"
+        empty = dirt
+    loaded.funds = max(loaded.funds, COST_DEFENSE)
+    ok, _ = tool_enabled(loaded, "defense", empty)
+    assert ok is True
+    ok, reason = tool_enabled(loaded, "defense", (bi, bj))
+    assert ok is False and "建築" in reason
+
+
 def test_tool_enabled_rules():
     state = IslandState.new_game()
     # No selection → cell tools disabled; wait needs a monster.
@@ -533,9 +712,13 @@ def test_dialog_import_offscreen():
     dlg._on_cell_clicked(*grass)
     assert dlg.tool_buttons["farm"].isEnabled()
     assert dlg.tool_buttons["factory"].isEnabled()
+    assert dlg.tool_buttons["defense"].isEnabled()
+    assert dlg.tool_buttons["missile_base"].isEnabled()
     assert not dlg.tool_buttons["remove"].isEnabled()
     assert "農場" in dlg.tool_buttons["farm"].text()
     assert str(COST_FARM) in dlg.tool_buttons["farm"].text()
+    assert "防衛" in dlg.tool_buttons["defense"].text()
+    assert "飛彈基地" in dlg.tool_buttons["missile_base"].text()
 
     # Map pan/zoom API.
     old_cell = dlg.map.cell
@@ -722,6 +905,7 @@ def main():
     test_guestbook_local()
     test_settlements_and_disasters()
     test_monster_events()
+    test_defense_and_missile_base()
     test_local_demos()
     test_save_load_roundtrip()
     test_remote_url_normalize()
