@@ -2,7 +2,8 @@
 
 v1 deepen: catalog place costs, terrain commands (整地／填海／植林),
 farm food + factory funds turn processing, optional population stub,
-visitor guestbook (name + text), color-block monster events (飛彈 stub).
+visitor guestbook (name + text), color-block monster events (飛彈 stub),
+village/town/city terrain evolution + fire/typhoon/quake disaster stubs.
 Color-block placeholders only — user art later.
 """
 
@@ -51,6 +52,19 @@ MONSTER_MAX_CHANCE = 0.45
 MONSTER_REWARD = 30     # 殘骸換資金 stub
 MAX_MONSTERS = 1        # v1: one color-block 怪獸 at a time
 
+# Settlement evolution (catalog 村／町／都市; pop thresholds scaled for short loop).
+# Catalog: 平地 near farm/settlement → 村 ~20%/turn; 村→町@3000, 町→都市@10000.
+SETTLEMENT_SPAWN_CHANCE = 0.20
+VILLAGE_TO_TOWN_POP = 300    # simplified (catalog ~3000)
+TOWN_TO_CITY_POP = 1000      # simplified (catalog ~10000)
+
+# Disaster stubs (per-candidate cell chance; forest neighbors mitigate fire/typhoon).
+FIRE_BASE_CHANCE = 0.08
+TYPHOON_BASE_CHANCE = 0.06
+QUAKE_BASE_CHANCE = 0.05
+FOREST_FIRE_FACTOR = 0.25     # any adjacent 森 → fire chance × this
+FOREST_TYPHOON_FACTOR = 0.35  # any adjacent 森 → typhoon chance × this
+
 # Terrain kinds (same-layer color placeholders until user art lands).
 # Opening map still uses dirt／grass per 箱庭斜視 prefs (中央 7 泥／草).
 TERRAIN = {
@@ -59,6 +73,10 @@ TERRAIN = {
     "dirt": {"label": "荒地", "color": (139, 90, 43), "land": True},
     "grass": {"label": "平地", "color": (74, 143, 60), "land": True},
     "forest": {"label": "森", "color": (36, 96, 48), "land": True},
+    # 居住地形（隨人口演進；色塊佔位）
+    "village": {"label": "村", "color": (186, 150, 96), "land": True},
+    "town": {"label": "町", "color": (168, 118, 72), "land": True},
+    "city": {"label": "都市", "color": (128, 96, 110), "land": True},
 }
 
 # Buildings as solid color blocks on 平地.
@@ -82,8 +100,9 @@ LANDFILL_COST = COST_LANDFILL
 
 Coord = Tuple[int, int]
 LAND_TERRAINS = frozenset(k for k, v in TERRAIN.items() if v["land"])
-BUILDABLE = frozenset({"grass"})  # 平地 only
-SAVE_VERSION = 3
+SETTLEMENT_TERRAINS = frozenset({"village", "town", "city"})
+BUILDABLE = frozenset({"grass"})  # 平地 only（村／町／都市請先整地）
+SAVE_VERSION = 4
 
 
 @dataclass
@@ -276,7 +295,7 @@ class IslandState:
         return self._adjacent_to_land(i, j)
 
     def can_level(self, i: int, j: int) -> bool:
-        """整地：荒地→平地、清建築、或森→平地（伐採佔位）。"""
+        """整地：荒地→平地、清建築、森／村／町／都市→平地。"""
         if self.monster_at(i, j) is not None:
             return False
         c = self.cell(i, j)
@@ -284,7 +303,7 @@ class IslandState:
             return False
         if c.building is not None:
             return True
-        if c.terrain in ("dirt", "forest"):
+        if c.terrain in ("dirt", "forest") or c.terrain in SETTLEMENT_TERRAINS:
             return True
         return False  # empty 平地 — nothing to do
 
@@ -343,11 +362,11 @@ class IslandState:
         return "ok"
 
     def level_land(self, i: int, j: int) -> str:
-        """整地 placeholder：荒地／森→平地；並清除建築。"""
+        """整地 placeholder：荒地／森／村／町／都市→平地；並清除建築。"""
         if not self.can_level(i, j):
             if self.monster_at(i, j) is not None:
                 return "此格有怪獸，無法整地（請先發射飛彈）"
-            return "此格無需整地（須為荒地、森、或有建築的陸地）"
+            return "此格無需整地（須為荒地、森、村／町／都市、或有建築的陸地）"
         if self.funds < COST_LEVEL:
             return f"資金不足（整地需要 {COST_LEVEL}）"
         c = self.cell(i, j)
@@ -355,7 +374,7 @@ class IslandState:
         cleared = c.building
         c.building = None
         prev = c.terrain
-        if c.terrain in ("dirt", "forest"):
+        if c.terrain in ("dirt", "forest") or c.terrain in SETTLEMENT_TERRAINS:
             c.terrain = "grass"
         # grass + building: terrain stays grass after clear
         parts = [f"({i},{j})"]
@@ -497,8 +516,120 @@ class IslandState:
         # spawn_monster already logged; surface a short note for the turn dialog.
         return [f"怪獸出現！{m.label()} 於 ({m.i},{m.j})"]
 
+    def _has_forest_neighbor(self, i: int, j: int) -> bool:
+        """Simple neighbor check: any adjacent 森 mitigates fire/typhoon."""
+        return any(
+            self.cell(ni, nj).terrain == "forest"
+            for ni, nj in neighbors(i, j, self.size)
+        )
+
+    def _near_farm_or_settlement(self, i: int, j: int) -> bool:
+        """Empty 平地 near 農場 or 村／町／都市 can grow a village."""
+        for ni, nj in neighbors(i, j, self.size):
+            c = self.cell(ni, nj)
+            if c.building == "farm":
+                return True
+            if c.terrain in SETTLEMENT_TERRAINS:
+                return True
+        return False
+
+    def _evolve_settlements(self) -> List[str]:
+        """村／町／都市 terrain evolution on plain land near farms (simplified)."""
+        notes: List[str] = []
+        # Spawn: empty 平地 adjacent to farm/settlement → 村 (~20%/turn).
+        spawn_sites: List[Coord] = []
+        for i in range(self.size):
+            for j in range(self.size):
+                if self.monster_at(i, j) is not None:
+                    continue
+                c = self.cell(i, j)
+                if c.terrain != "grass" or c.building is not None:
+                    continue
+                if self._near_farm_or_settlement(i, j):
+                    spawn_sites.append((i, j))
+        for i, j in spawn_sites:
+            if random.random() >= SETTLEMENT_SPAWN_CHANCE:
+                continue
+            self.cell(i, j).terrain = "village"
+            notes.append(f"平地出現村落 ({i},{j})")
+
+        # Upgrade by island population thresholds (short-loop scaled).
+        for i in range(self.size):
+            for j in range(self.size):
+                c = self.cell(i, j)
+                if c.terrain == "village" and self.population >= VILLAGE_TO_TOWN_POP:
+                    c.terrain = "town"
+                    notes.append(f"村→町 ({i},{j})（人口 {self.population}）")
+                elif c.terrain == "town" and self.population >= TOWN_TO_CITY_POP:
+                    c.terrain = "city"
+                    notes.append(f"町→都市 ({i},{j})（人口 {self.population}）")
+        return notes
+
+    def _apply_disasters(self) -> List[str]:
+        """Fire / typhoon / quake stubs; forest neighbors reduce fire & typhoon."""
+        notes: List[str] = []
+
+        # Fire: 町／都市／工場 → 荒地（鄰森則不易發生）
+        for i in range(self.size):
+            for j in range(self.size):
+                c = self.cell(i, j)
+                flammable = c.terrain in ("town", "city") or c.building == "factory"
+                if not flammable:
+                    continue
+                chance = FIRE_BASE_CHANCE
+                if self._has_forest_neighbor(i, j):
+                    chance *= FOREST_FIRE_FACTOR
+                if random.random() >= chance:
+                    continue
+                parts: List[str] = []
+                if c.building is not None:
+                    parts.append(BUILDINGS[c.building]["label"])
+                    c.building = None
+                if c.terrain in LAND_TERRAINS and c.terrain != "dirt":
+                    parts.append(TERRAIN[c.terrain]["label"])
+                    c.terrain = "dirt"
+                label = "、".join(parts) if parts else "目標"
+                notes.append(f"火災！{label}→荒地 ({i},{j})")
+
+        # Typhoon: 農場 → 平地（清建築；鄰森則較耐）
+        for i in range(self.size):
+            for j in range(self.size):
+                c = self.cell(i, j)
+                if c.building != "farm":
+                    continue
+                chance = TYPHOON_BASE_CHANCE
+                if self._has_forest_neighbor(i, j):
+                    chance *= FOREST_TYPHOON_FACTOR
+                if random.random() >= chance:
+                    continue
+                c.building = None
+                if c.terrain != "grass":
+                    c.terrain = "grass"
+                notes.append(f"颱風！農場→平地 ({i},{j})")
+
+        # Quake: 工場／都市 → 荒地（stub；森不減震）
+        for i in range(self.size):
+            for j in range(self.size):
+                c = self.cell(i, j)
+                quakable = c.terrain == "city" or c.building == "factory"
+                if not quakable:
+                    continue
+                if random.random() >= QUAKE_BASE_CHANCE:
+                    continue
+                parts = []
+                if c.building is not None:
+                    parts.append(BUILDINGS[c.building]["label"])
+                    c.building = None
+                if c.terrain in LAND_TERRAINS and c.terrain != "dirt":
+                    parts.append(TERRAIN[c.terrain]["label"])
+                    c.terrain = "dirt"
+                label = "、".join(parts) if parts else "目標"
+                notes.append(f"地震！{label}→荒地 ({i},{j})")
+
+        return notes
+
     def next_turn(self) -> List[str]:
-        """Advance one turn: economy, then monster act / spawn chance."""
+        """Advance one turn: economy → settlements → disasters → monsters."""
         notes: List[str] = []
         farms = self.building_count("farm")
         factories = self.building_count("factory")
@@ -545,6 +676,12 @@ class IslandState:
             notes.append(
                 f"糧食不足（僅 {starved}）！人口 −{loss} → {self.population}"
             )
+
+        # Settlement growth / tier upgrades (local-first color-block terrains).
+        notes.extend(self._evolve_settlements())
+
+        # Disaster stubs (fire / typhoon / quake).
+        notes.extend(self._apply_disasters())
 
         # Monster phase: existing monsters act; otherwise chance to appear.
         if self.monsters:
