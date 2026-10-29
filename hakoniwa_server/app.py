@@ -45,7 +45,8 @@ class PlaceBody(CellAction):
     kind: str = Field(
         ...,
         description=(
-            "farm | factory | defense | missile_base | harbor | shipyard | monument"
+            "farm | factory | quarry | defense | missile_base | "
+            "harbor | shipyard | monument"
         ),
     )
 
@@ -128,6 +129,14 @@ def landfill(body: CellAction) -> ActionResult:
 @app.post("/api/v1/island/level", response_model=ActionResult, dependencies=[Depends(require_api_key)])
 def level(body: CellAction) -> ActionResult:
     msg, island = store.level(body.i, body.j)
+    if msg != "ok":
+        return ActionResult(ok=False, error=msg, island=island)
+    return ActionResult(ok=True, island=island)
+
+
+@app.post("/api/v1/island/raise", response_model=ActionResult, dependencies=[Depends(require_api_key)])
+def raise_mountain(body: CellAction) -> ActionResult:
+    msg, island = store.raise_mountain(body.i, body.j)
     if msg != "ok":
         return ActionResult(ok=False, error=msg, island=island)
     return ActionResult(ok=True, island=island)

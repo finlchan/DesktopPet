@@ -38,6 +38,8 @@ from hakoniwa.model import (
     COST_MISSILE_BASE,
     COST_MISSILE_CHEAP,
     COST_MONUMENT,
+    COST_QUARRY,
+    COST_RAISE,
     COST_SHIPYARD,
     DEFENSE_RADIUS,
     DEFENSE_SPAWN_FACTOR,
@@ -48,8 +50,12 @@ from hakoniwa.model import (
     FOREST_FIRE_FACTOR,
     FUNDS_PER_FACTORY,
     FUNDS_PER_FOOD_LOT,
+    FUNDS_PER_QUARRY,
     FUNDS_PER_TIMBER_LOT,
     HAPPINESS_POP_PER_MONUMENT,
+    LABOR_PER_FACTORY,
+    LABOR_PER_FARM,
+    LABOR_PER_QUARRY,
     MAX_GUEST_NAME,
     MAX_GUEST_TEXT,
     MONSTER_MIN_POP,
@@ -57,6 +63,7 @@ from hakoniwa.model import (
     MONSTER_REWARD,
     SAVE_VERSION,
     SCORE_PER_MONUMENT,
+    SCORE_PER_QUARRY,
     TIMBER_LOT,
     TOWN_TO_CITY_POP,
     TREE_GROWTH_PER_TURN,
@@ -64,8 +71,10 @@ from hakoniwa.model import (
     TREE_MIN,
     VILLAGE_TO_TOWN_POP,
     IslandState,
+    assign_labor,
     compute_island_score,
     food_export_funds,
+    scaled_yield,
     timber_funds,
 )
 from hakoniwa.demos import island_summary, local_demo_islands, make_demo_coral, make_demo_pine
@@ -145,6 +154,8 @@ def test_oblique_foreshortening_invariant():
 def test_catalog_costs():
     assert COST_FARM == 20
     assert COST_FACTORY == 100
+    assert COST_QUARRY == 300
+    assert COST_RAISE == 100
     assert COST_LANDFILL == 150
     assert COST_LEVEL == 5
     assert COST_AFFOREST == 50
@@ -165,15 +176,28 @@ def test_catalog_costs():
     assert COST_SHIPYARD == 500
     assert COST_MONUMENT == 9999
     assert SCORE_PER_MONUMENT == 2000
+    assert SCORE_PER_QUARRY == 70
     assert HAPPINESS_POP_PER_MONUMENT == 5
     assert FOOD_EXPORT_LOT == 100
     assert FUNDS_PER_FOOD_LOT == 5
+    assert FUNDS_PER_QUARRY == 8
+    assert LABOR_PER_FARM == 100
+    assert LABOR_PER_FACTORY == 1000
+    assert LABOR_PER_QUARRY == 500
     assert food_export_funds(1) == 5
     assert food_export_funds(3) == 15
     assert DEFENSE_RADIUS == 2
     assert 0 < DEFENSE_SPAWN_FACTOR < 1
     assert 0 < DEFENSE_STOMP_SAVE_CHANCE < 1
-    assert SAVE_VERSION >= 7
+    assert SAVE_VERSION >= 8
+    # Labor: farms first.
+    fl, facl, ql, fs, facs, qs = assign_labor(100, farms=1, factories=1, quarries=1)
+    assert (fl, facl, ql) == (100, 0, 0)
+    assert (fs, facs, qs) == (100, 1000, 500)
+    fl, facl, ql, *_ = assign_labor(1600, farms=1, factories=1, quarries=1)
+    assert (fl, facl, ql) == (100, 1000, 500)
+    assert scaled_yield(10, 500, 1000) == 5
+    assert scaled_yield(10, 0, 1000) == 0
 
 
 def test_new_island_and_loop():
@@ -263,9 +287,10 @@ def test_new_island_and_loop():
     assert state.turn == 2
     assert notes
     assert any("產糧" in n for n in notes)
-    assert any("勞動 stub" in n for n in notes)
+    assert any(n.startswith("勞動：") for n in notes)
     # Food rose by farm yield then fell by need; net should reflect production.
     assert farms == 1
+    # pop=100 fills 1 farm (100 slots) → full food yield.
     assert state.food == food_before + farms * FOOD_PER_FARM - 20  # pop < 500 → min need
     assert state.funds == funds_before + factories * FUNDS_PER_FACTORY
     assert state.food > 0
@@ -480,6 +505,8 @@ def test_monument_and_island_score():
         monuments=0,
         farms=0,
         factories=0,
+        quarries=0,
+        mountains=0,
         harbors=0,
         shipyards=0,
         defenses=0,
@@ -619,11 +646,128 @@ def test_local_demos():
     assert pine.land_count() >= 5
     assert coral.name == "珊瑚灘島"
     assert pine.name == "松風島"
+    assert coral.terrain_count("mountain") >= 1
+    assert coral.building_count("quarry") == 1
     row = island_summary(coral)
     assert row["id"] == "demo-coral"
     assert row["land"] == coral.land_count()
     # Round-trip keeps id.
     assert IslandState.from_dict(coral.to_dict()).island_id == "demo-coral"
+
+
+def test_mountain_quarry_labor():
+    """造山→採掘場；勞動優先農場；採掘場產資依就業比例。"""
+    import hakoniwa.model as model_mod
+
+    state = IslandState.new_game()
+    land = [(i, j) for i in range(20) for j in range(20) if state.is_land(i, j)]
+    dirt = next(
+        ((i, j) for i, j in land if state.cell(i, j).terrain == "dirt"),
+        None,
+    )
+    grass = next(
+        (
+            (i, j)
+            for i, j in land
+            if state.cell(i, j).terrain == "grass" and state.cell(i, j).building is None
+        ),
+        None,
+    )
+    assert dirt is not None and grass is not None
+    di, dj = dirt
+    gi, gj = grass
+
+    # Quarry cannot sit on 平地.
+    assert state.can_place_building(gi, gj, "quarry") is False
+    assert state.place_building(gi, gj, "quarry") != "ok"
+    ok, reason = tool_enabled(state, "quarry", (gi, gj))
+    assert ok is False
+    assert "山" in reason
+
+    # Raise mountain on dirt.
+    funds_before = state.funds
+    assert state.can_raise_mountain(di, dj)
+    assert state.raise_mountain(di, dj) == "ok"
+    assert state.cell(di, dj).terrain == "mountain"
+    assert state.funds == funds_before - COST_RAISE
+    ok, _ = tool_enabled(state, "raise", (di, dj))
+    assert ok is False  # already mountain
+
+    # Place quarry on mountain.
+    state.funds = max(state.funds, COST_QUARRY + COST_FARM + 50)
+    before = state.funds
+    assert state.can_place_building(di, dj, "quarry")
+    assert state.place_building(di, dj, "quarry") == "ok"
+    assert state.cell(di, dj).building == "quarry"
+    assert state.funds == before - COST_QUARRY
+    assert state.island_score() >= SCORE_PER_QUARRY
+
+    keys = {k for k, *_ in TOOL_SPECS}
+    assert "raise" in keys and "quarry" in keys
+
+    # Silence disasters / growth noise for labor asserts.
+    old = (
+        model_mod.FIRE_BASE_CHANCE,
+        model_mod.TYPHOON_BASE_CHANCE,
+        model_mod.QUAKE_BASE_CHANCE,
+        model_mod.VOLCANO_BASE_CHANCE,
+        model_mod.SETTLEMENT_SPAWN_CHANCE,
+        model_mod.MONSTER_BASE_CHANCE,
+    )
+    model_mod.FIRE_BASE_CHANCE = 0.0
+    model_mod.TYPHOON_BASE_CHANCE = 0.0
+    model_mod.QUAKE_BASE_CHANCE = 0.0
+    model_mod.VOLCANO_BASE_CHANCE = 0.0
+    model_mod.SETTLEMENT_SPAWN_CHANCE = 0.0
+    model_mod.MONSTER_BASE_CHANCE = 0.0
+    try:
+        # Farm takes all pop=100 → quarry idle this turn.
+        assert state.place_building(gi, gj, "farm") == "ok"
+        state.population = 100
+        food_before = state.food
+        funds_before = state.funds
+        notes = state.next_turn()
+        assert any("勞動：" in n and "採掘場 0/" in n for n in notes)
+        assert state.food == food_before + FOOD_PER_FARM - 20  # pop < 500 → min need
+        assert state.funds == funds_before  # quarry/factory unstaffed
+
+        # With spare labor after farm, quarry produces full funds.
+        state.population = LABOR_PER_FARM + LABOR_PER_QUARRY  # 600
+        funds_before = state.funds
+        notes = state.next_turn()
+        assert any("採掘場 500/500" in n for n in notes)
+        assert state.funds == funds_before + FUNDS_PER_QUARRY
+    finally:
+        (
+            model_mod.FIRE_BASE_CHANCE,
+            model_mod.TYPHOON_BASE_CHANCE,
+            model_mod.QUAKE_BASE_CHANCE,
+            model_mod.VOLCANO_BASE_CHANCE,
+            model_mod.SETTLEMENT_SPAWN_CHANCE,
+            model_mod.MONSTER_BASE_CHANCE,
+        ) = old
+
+    # 整地 mountain → dirt (掘削-lite).
+    assert state.level_land(di, dj) == "ok"
+    assert state.cell(di, dj).terrain == "dirt"
+    assert state.cell(di, dj).building is None
+
+    # Save round-trip keeps mountain terrain.
+    state2 = IslandState.new_game()
+    empty = next(
+        (
+            (i, j)
+            for i in range(20)
+            for j in range(20)
+            if state2.can_raise_mountain(i, j)
+        ),
+        None,
+    )
+    assert empty is not None
+    assert state2.raise_mountain(*empty) == "ok"
+    loaded = IslandState.from_dict(state2.to_dict())
+    assert loaded.cell(*empty).terrain == "mountain"
+    assert loaded.to_dict()["version"] == SAVE_VERSION
 
 
 def test_settlements_and_disasters():
@@ -663,6 +807,7 @@ def test_settlements_and_disasters():
     old_fire = model_mod.FIRE_BASE_CHANCE
     old_typhoon = model_mod.TYPHOON_BASE_CHANCE
     old_quake = model_mod.QUAKE_BASE_CHANCE
+    old_volcano = model_mod.VOLCANO_BASE_CHANCE
     try:
         # Force spawn (random < 0.20).
         random.random = lambda: 0.0  # type: ignore[assignment]
@@ -684,9 +829,10 @@ def test_settlements_and_disasters():
         assert state.level_land(si, sj) == "ok"
         assert state.cell(si, sj).terrain == "grass"
 
-        # Fire on town (no forest neighbor); silence typhoon/quake for a clean assert.
+        # Fire on town (no forest neighbor); silence typhoon/quake/volcano.
         model_mod.TYPHOON_BASE_CHANCE = 0.0
         model_mod.QUAKE_BASE_CHANCE = 0.0
+        model_mod.VOLCANO_BASE_CHANCE = 0.0
         state.cell(si, sj).terrain = "town"
         assert not state._has_forest_neighbor(si, sj)
         notes = state._apply_disasters()
@@ -748,6 +894,7 @@ def test_settlements_and_disasters():
         model_mod.FIRE_BASE_CHANCE = old_fire
         model_mod.TYPHOON_BASE_CHANCE = old_typhoon
         model_mod.QUAKE_BASE_CHANCE = old_quake
+        model_mod.VOLCANO_BASE_CHANCE = old_volcano
 
 
 def test_monster_events():
@@ -1008,6 +1155,11 @@ def test_tool_enabled_rules():
     assert ok is True
     ok, _ = tool_enabled(state, "factory", (gi, gj))
     assert ok is True
+    ok, _ = tool_enabled(state, "raise", (gi, gj))
+    assert ok is True
+    ok, reason = tool_enabled(state, "quarry", (gi, gj))
+    assert ok is False
+    assert "山" in reason
     ok, reason = tool_enabled(state, "remove", (gi, gj))
     assert ok is False
     assert "沒有建築" in reason
@@ -1483,6 +1635,7 @@ def main():
     test_defense_and_missile_base()
     test_harbor_shipyard_trade()
     test_monument_and_island_score()
+    test_mountain_quarry_labor()
     test_local_demos()
     test_save_load_roundtrip()
     test_remote_url_normalize()

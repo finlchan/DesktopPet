@@ -1,12 +1,13 @@
 """In-memory island state + simplified Hakoniwa Islands 2–inspired turn loop.
 
-v1 deepen: catalog place costs, terrain commands (整地／填海／植林／伐採),
-forest tree growth + timber→funds, farm food + factory funds turn processing,
-optional population stub, visitor guestbook (name + text), color-block monster
-events (飛彈 stub), village/town/city terrain evolution + fire/typhoon/quake
-disaster stubs, 防衛設施／飛彈基地 color-block buildings (spawn/stomp/missile stubs),
-港灣／造船所／貿易輸出（臨海色塊；糧食→資金）,
-紀念碑色塊＋簡易島分數／安穩（國威；抗踩踏；抑火災如森）.
+v1 deepen: catalog place costs, terrain commands (整地／填海／植林／伐採／造山),
+forest tree growth + timber→funds, farm／工場／採掘場 production with labor
+assignment (農場優先), optional population stub, visitor guestbook (name + text),
+color-block monster events (飛彈 stub), village/town/city terrain evolution +
+fire/typhoon/quake/volcano disaster stubs, 防衛設施／飛彈基地 color-block
+buildings (spawn/stomp/missile stubs), 港灣／造船所／貿易輸出（臨海色塊；糧食→資金）,
+紀念碑色塊＋簡易島分數／安穩（國威；抗踩踏；抑火災如森）,
+山岳地形＋採掘場色塊（僅山上；產資）.
 Color-block placeholders only — user art later.
 """
 
@@ -31,8 +32,10 @@ MAX_GUEST_COMMENTS = 100
 # ---------------------------------------------------------------------------
 COST_FARM = 20          # 農場整備
 COST_FACTORY = 100      # 工場建設
+COST_QUARRY = 300       # 採掘場整備（定本 300 億；僅山上）
 COST_LANDFILL = 150     # 埋め立て：海→淺灘 or 淺灘→荒地
-COST_LEVEL = 5          # 整地：荒地→平地（亦可清建築）
+COST_LEVEL = 5          # 整地：荒地→平地（亦可清建築；山→荒地）
+COST_RAISE = 100        # 造山／隆起 stub：荒地／平地→山（本機短局；定本多靠噴火）
 COST_AFFOREST = 50      # 植林：平地→森
 COST_HARVEST = 0        # 伐採：森→平地（免費；木材瞬售）
 COST_MISSILE = 20       # ミサイル発射 stub（定本 20 億／發；無基地時）
@@ -66,6 +69,7 @@ PLACEABLE_BUILDINGS = frozenset(
     {
         "farm",
         "factory",
+        "quarry",
         "defense",
         "missile_base",
         "harbor",
@@ -74,6 +78,8 @@ PLACEABLE_BUILDINGS = frozenset(
     }
 )
 COASTAL_BUILDINGS = frozenset({"harbor", "shipyard"})
+# Catalog: 採掘場僅能整備在山上.
+MOUNTAIN_ONLY_BUILDINGS = frozenset({"quarry"})
 # Catalog: 紀念碑抗怪獸踩踏、抑火災如森（鄰居減火）.
 MONSTER_PROOF_BUILDINGS = frozenset({"monument"})
 
@@ -83,6 +89,8 @@ SCORE_PER_LAND = 10
 SCORE_PER_MONUMENT = 2000
 SCORE_PER_FARM = 20
 SCORE_PER_FACTORY = 50
+SCORE_PER_QUARRY = 70
+SCORE_PER_MOUNTAIN = 15
 SCORE_PER_HARBOR = 80
 SCORE_PER_SHIPYARD = 60
 SCORE_PER_DEFENSE = 40
@@ -97,9 +105,15 @@ HAPPINESS_POP_PER_MONUMENT = 5
 
 # Turn yields (simplified short loop; not server-accurate).
 FOOD_PER_FARM = 100     # ~100 人農場 → 100 噸／回合
-FUNDS_PER_FACTORY = 10  # catalog ~1 億／千人；本機短局用 ×10 回饋
+FUNDS_PER_FACTORY = 10   # catalog ~1 億／千人；本機短局用 ×10 回饋
+FUNDS_PER_QUARRY = 8    # catalog 採掘場產資；本機短局略低於工場
 FOOD_PER_500_POP = 100  # 人口每 500 人／回合耗約 100 噸
 MIN_FOOD_NEED = 20      # 小島 soft floor
+
+# Labor slots (catalog: 農場優先填滿；工場／採掘場分剩餘人口).
+LABOR_PER_FARM = 100
+LABOR_PER_FACTORY = 1000
+LABOR_PER_QUARRY = 500   # catalog 初雇約 5 千；短局縮為 500
 
 START_FUNDS = 1000
 START_FOOD = 500
@@ -124,6 +138,7 @@ TOWN_TO_CITY_POP = 1000      # simplified (catalog ~10000)
 FIRE_BASE_CHANCE = 0.08
 TYPHOON_BASE_CHANCE = 0.06
 QUAKE_BASE_CHANCE = 0.05
+VOLCANO_BASE_CHANCE = 0.04  # 噴火：隨機陸格→山（可整備採掘場）
 FOREST_FIRE_FACTOR = 0.25     # any adjacent 森 → fire chance × this
 FOREST_TYPHOON_FACTOR = 0.35  # any adjacent 森 → typhoon chance × this
 
@@ -135,17 +150,19 @@ TERRAIN = {
     "dirt": {"label": "荒地", "color": (139, 90, 43), "land": True},
     "grass": {"label": "平地", "color": (74, 143, 60), "land": True},
     "forest": {"label": "森", "color": (36, 96, 48), "land": True},
+    "mountain": {"label": "山", "color": (110, 100, 88), "land": True},
     # 居住地形（泥地貼圖＋色洗；建築仍色塊）
     "village": {"label": "村", "color": (186, 150, 96), "land": True},
     "town": {"label": "町", "color": (168, 118, 72), "land": True},
     "city": {"label": "都市", "color": (128, 96, 110), "land": True},
 }
 
-# Buildings as solid color blocks on 平地.
+# Buildings as solid color blocks on 平地（採掘場在山上）.
 BUILDINGS = {
     None: {"label": "（無）", "color": None, "cost": 0},
     "farm": {"label": "農場", "color": (210, 190, 60), "cost": COST_FARM},
     "factory": {"label": "工場", "color": (120, 120, 130), "cost": COST_FACTORY},
+    "quarry": {"label": "採掘場", "color": (150, 110, 70), "cost": COST_QUARRY},
     # 軍事色塊佔位（定本費用；美術後補）
     "defense": {"label": "防衛設施", "color": (48, 88, 160), "cost": COST_DEFENSE},
     "missile_base": {"label": "飛彈基地", "color": (160, 72, 48), "cost": COST_MISSILE_BASE},
@@ -171,8 +188,8 @@ LANDFILL_COST = COST_LANDFILL
 Coord = Tuple[int, int]
 LAND_TERRAINS = frozenset(k for k, v in TERRAIN.items() if v["land"])
 SETTLEMENT_TERRAINS = frozenset({"village", "town", "city"})
-BUILDABLE = frozenset({"grass"})  # 平地 only（村／町／都市請先整地）
-SAVE_VERSION = 7
+BUILDABLE = frozenset({"grass"})  # 平地 only（村／町／都市請先整地；採掘場除外）
+SAVE_VERSION = 8
 
 
 def timber_funds(trees: int) -> int:
@@ -191,6 +208,40 @@ def clamp_trees(trees: int) -> int:
     return max(0, min(TREE_MAX, int(trees)))
 
 
+def scaled_yield(full_yield: int, labor: int, slots: int) -> int:
+    """Proportional production; full when labor fills all slots."""
+    if slots <= 0 or full_yield <= 0 or labor <= 0:
+        return 0
+    return (int(full_yield) * int(labor)) // int(slots)
+
+
+def assign_labor(
+    population: int, farms: int, factories: int, quarries: int
+) -> Tuple[int, int, int, int, int, int]:
+    """Allocate workers: 農場 first, then 工場, then 採掘場.
+
+    Returns (farm_labor, factory_labor, quarry_labor,
+             farm_slots, factory_slots, quarry_slots).
+    """
+    farm_slots = max(0, int(farms)) * LABOR_PER_FARM
+    factory_slots = max(0, int(factories)) * LABOR_PER_FACTORY
+    quarry_slots = max(0, int(quarries)) * LABOR_PER_QUARRY
+    avail = max(0, int(population))
+    farm_labor = min(avail, farm_slots)
+    avail -= farm_labor
+    factory_labor = min(avail, factory_slots)
+    avail -= factory_labor
+    quarry_labor = min(avail, quarry_slots)
+    return (
+        farm_labor,
+        factory_labor,
+        quarry_labor,
+        farm_slots,
+        factory_slots,
+        quarry_slots,
+    )
+
+
 def compute_island_score(
     *,
     population: int,
@@ -200,6 +251,8 @@ def compute_island_score(
     monuments: int,
     farms: int,
     factories: int,
+    quarries: int,
+    mountains: int,
     harbors: int,
     shipyards: int,
     defenses: int,
@@ -215,6 +268,8 @@ def compute_island_score(
         + max(0, int(monuments)) * SCORE_PER_MONUMENT
         + max(0, int(farms)) * SCORE_PER_FARM
         + max(0, int(factories)) * SCORE_PER_FACTORY
+        + max(0, int(quarries)) * SCORE_PER_QUARRY
+        + max(0, int(mountains)) * SCORE_PER_MOUNTAIN
         + max(0, int(harbors)) * SCORE_PER_HARBOR
         + max(0, int(shipyards)) * SCORE_PER_SHIPYARD
         + max(0, int(defenses)) * SCORE_PER_DEFENSE
@@ -476,6 +531,8 @@ class IslandState:
             monuments=self.monument_count(),
             farms=self.building_count("farm"),
             factories=self.building_count("factory"),
+            quarries=self.building_count("quarry"),
+            mountains=self.terrain_count("mountain"),
             harbors=self.building_count("harbor"),
             shipyards=self.building_count("shipyard"),
             defenses=self.building_count("defense"),
@@ -517,7 +574,7 @@ class IslandState:
         return self._adjacent_to_land(i, j)
 
     def can_level(self, i: int, j: int) -> bool:
-        """整地：荒地→平地、清建築、森／村／町／都市→平地。"""
+        """整地：荒地→平地、清建築、森／村／町／都市→平地；山→荒地。"""
         if self.monster_at(i, j) is not None:
             return False
         c = self.cell(i, j)
@@ -525,9 +582,16 @@ class IslandState:
             return False
         if c.building is not None:
             return True
-        if c.terrain in ("dirt", "forest") or c.terrain in SETTLEMENT_TERRAINS:
+        if c.terrain in ("dirt", "forest", "mountain") or c.terrain in SETTLEMENT_TERRAINS:
             return True
         return False  # empty 平地 — nothing to do
+
+    def can_raise_mountain(self, i: int, j: int) -> bool:
+        """造山／隆起：空的荒地或平地→山。"""
+        if self.monster_at(i, j) is not None:
+            return False
+        c = self.cell(i, j)
+        return c.terrain in ("dirt", "grass") and c.building is None
 
     def can_afforest(self, i: int, j: int) -> bool:
         """植林：空平地→森。"""
@@ -550,7 +614,11 @@ class IslandState:
         if self.monster_at(i, j) is not None:
             return False
         c = self.cell(i, j)
-        if c.terrain not in BUILDABLE or c.building is not None:
+        if c.building is not None:
+            return False
+        if kind in MOUNTAIN_ONLY_BUILDINGS:
+            return c.terrain == "mountain"
+        if c.terrain not in BUILDABLE:
             return False
         if kind in COASTAL_BUILDINGS and not self._adjacent_to_sea(i, j):
             return False
@@ -562,10 +630,13 @@ class IslandState:
         if self.monster_at(i, j) is not None:
             return "此格有怪獸，無法建設"
         c = self.cell(i, j)
-        if c.terrain not in BUILDABLE:
-            return "只能在平地上建設（請先整地）"
         if c.building is not None:
             return "此格已有建築（請先移除或整地）"
+        if kind in MOUNTAIN_ONLY_BUILDINGS:
+            if c.terrain != "mountain":
+                return "採掘場只能建在山上（請先造山或等噴火）"
+        elif c.terrain not in BUILDABLE:
+            return "只能在平地上建設（請先整地）"
         if kind in COASTAL_BUILDINGS and not self._adjacent_to_sea(i, j):
             label = BUILDINGS[kind]["label"]
             return f"{label}須建在臨海的平地（鄰接海／淺灘）"
@@ -635,11 +706,11 @@ class IslandState:
         return "ok"
 
     def level_land(self, i: int, j: int) -> str:
-        """整地 placeholder：荒地／森／村／町／都市→平地；並清除建築。"""
+        """整地：荒地／森／村／町／都市→平地；山→荒地；並清除建築。"""
         if not self.can_level(i, j):
             if self.monster_at(i, j) is not None:
                 return "此格有怪獸，無法整地（請先發射飛彈）"
-            return "此格無需整地（須為荒地、森、村／町／都市、或有建築的陸地）"
+            return "此格無需整地（須為荒地、山、森、村／町／都市、或有建築的陸地）"
         if self.funds < COST_LEVEL:
             return f"資金不足（整地需要 {COST_LEVEL}）"
         c = self.cell(i, j)
@@ -648,7 +719,11 @@ class IslandState:
         c.building = None
         prev = c.terrain
         prev_trees = c.trees
-        if c.terrain in ("dirt", "forest") or c.terrain in SETTLEMENT_TERRAINS:
+        if prev == "mountain":
+            # Catalog 掘削-lite：山→荒地（再整地→平地）.
+            c.terrain = "dirt"
+            c.trees = 0
+        elif prev in ("dirt", "forest") or prev in SETTLEMENT_TERRAINS:
             c.terrain = "grass"
             c.trees = 0
         # grass + building: terrain stays grass after clear
@@ -656,12 +731,32 @@ class IslandState:
         if prev != c.terrain:
             if prev == "forest" and prev_trees:
                 parts.append(f"森（{prev_trees}本）→平地")
+            elif prev == "mountain":
+                parts.append("山→荒地")
             else:
                 parts.append(f"{TERRAIN[prev]['label']}→平地")
         if cleared:
             parts.append(f"清除{BUILDINGS[cleared]['label']}")
         self._log(
             f"回合 {self.turn}：整地 {' '.join(parts)}（−{COST_LEVEL} 資金）"
+        )
+        return "ok"
+
+    def raise_mountain(self, i: int, j: int) -> str:
+        """造山／隆起 stub：空的荒地或平地→山（定本多靠噴火；本機可主動整備）."""
+        if not self.can_raise_mountain(i, j):
+            if self.monster_at(i, j) is not None:
+                return "此格有怪獸，無法造山"
+            return "只能在空的荒地或平地上造山"
+        if self.funds < COST_RAISE:
+            return f"資金不足（造山需要 {COST_RAISE}）"
+        c = self.cell(i, j)
+        prev = c.terrain
+        self.funds -= COST_RAISE
+        self.cells[i][j] = Cell("mountain")
+        self._log(
+            f"回合 {self.turn}：造山 ({i},{j}) "
+            f"{TERRAIN[prev]['label']}→山（−{COST_RAISE} 資金）"
         )
         return "ok"
 
@@ -999,11 +1094,14 @@ class IslandState:
                 c.trees = 0
                 notes.append(f"颱風！農場→平地 ({i},{j})")
 
-        # Quake: 工場／都市 → 荒地（stub；森不減震）
+        # Quake: 工場／採掘場／都市 → 荒地（stub；森不減震）
         for i in range(self.size):
             for j in range(self.size):
                 c = self.cell(i, j)
-                quakable = c.terrain == "city" or c.building == "factory"
+                quakable = (
+                    c.terrain == "city"
+                    or c.building in ("factory", "quarry")
+                )
                 if not quakable:
                     continue
                 if random.random() >= QUAKE_BASE_CHANCE:
@@ -1019,6 +1117,26 @@ class IslandState:
                 label = "、".join(parts) if parts else "目標"
                 notes.append(f"地震！{label}→荒地 ({i},{j})")
 
+        # Volcano: one random land cell may become 山 (center stub; clears building).
+        land_cells = [
+            (i, j)
+            for i in range(self.size)
+            for j in range(self.size)
+            if self.is_land(i, j) and self.cell(i, j).terrain != "mountain"
+        ]
+        if land_cells and random.random() < VOLCANO_BASE_CHANCE:
+            vi, vj = random.choice(land_cells)
+            c = self.cell(vi, vj)
+            prev = c.terrain
+            cleared = c.building
+            c.terrain = "mountain"
+            c.building = None
+            c.trees = 0
+            detail = TERRAIN[prev]["label"]
+            if cleared:
+                detail += f"／{BUILDINGS[cleared]['label']}"
+            notes.append(f"噴火！{detail}→山 ({vi},{vj})")
+
         return notes
 
     def next_turn(self) -> List[str]:
@@ -1026,21 +1144,30 @@ class IslandState:
         notes: List[str] = []
         farms = self.building_count("farm")
         factories = self.building_count("factory")
+        quarries = self.building_count("quarry")
 
-        # Optional labor stub (display only — production stays flat for short loop).
-        farm_slots = farms * 100
-        factory_slots = factories * 1000
-        avail = max(0, self.population)
-        farm_labor = min(avail, farm_slots)
-        avail -= farm_labor
-        factory_labor = min(avail, factory_slots)
+        (
+            farm_labor,
+            factory_labor,
+            quarry_labor,
+            farm_slots,
+            factory_slots,
+            quarry_slots,
+        ) = assign_labor(self.population, farms, factories, quarries)
         notes.append(
-            f"勞動 stub：農場 {farm_labor}/{farm_slots}、"
-            f"工場 {factory_labor}/{factory_slots}（產能暫不扣減）"
+            f"勞動：農場 {farm_labor}/{farm_slots}、"
+            f"工場 {factory_labor}/{factory_slots}、"
+            f"採掘場 {quarry_labor}/{quarry_slots}"
         )
 
-        food_gain = farms * FOOD_PER_FARM
-        funds_gain = factories * FUNDS_PER_FACTORY
+        food_gain = scaled_yield(farms * FOOD_PER_FARM, farm_labor, farm_slots)
+        factory_funds = scaled_yield(
+            factories * FUNDS_PER_FACTORY, factory_labor, factory_slots
+        )
+        quarry_funds = scaled_yield(
+            quarries * FUNDS_PER_QUARRY, quarry_labor, quarry_slots
+        )
+        funds_gain = factory_funds + quarry_funds
         food_need = max(0, (self.population // 500) * FOOD_PER_500_POP)
         if food_need == 0 and self.population > 0:
             food_need = MIN_FOOD_NEED
@@ -1048,7 +1175,9 @@ class IslandState:
         self.food += food_gain
         self.funds += funds_gain
         notes.append(
-            f"農場×{farms} 產糧 +{food_gain}；工場×{factories} 產資 +{funds_gain}"
+            f"農場×{farms} 產糧 +{food_gain}；"
+            f"工場×{factories} 產資 +{factory_funds}；"
+            f"採掘場×{quarries} 產資 +{quarry_funds}"
         )
 
         if self.food >= food_need:
