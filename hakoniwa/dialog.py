@@ -36,20 +36,26 @@ from .demos import island_summary, local_demo_islands
 from .model import (
     BUILDABLE,
     BUILDINGS,
+    COASTAL_BUILDINGS,
     COST_AFFOREST,
     COST_DEFENSE,
     COST_FACTORY,
     COST_FARM,
+    COST_HARBOR,
     COST_HARVEST,
     COST_LANDFILL,
     COST_LEVEL,
     COST_MISSILE,
     COST_MISSILE_BASE,
+    COST_SHIPYARD,
+    FOOD_EXPORT_LOT,
+    FUNDS_PER_FOOD_LOT,
     GuestbookEntry,
     MAX_GUEST_NAME,
     MAX_GUEST_TEXT,
     PLACEABLE_BUILDINGS,
     TREE_MIN,
+    food_export_funds,
     timber_funds,
     TERRAIN,
     IslandState,
@@ -338,6 +344,9 @@ TOOL_SPECS: Tuple[Tuple[str, str, Optional[int], str], ...] = (
     ("wait", "觀望怪獸", None, "8"),
     ("defense", "建設防衛設施", COST_DEFENSE, "9"),
     ("missile_base", "建設飛彈基地", COST_MISSILE_BASE, "B"),
+    ("harbor", "建設港灣", COST_HARBOR, "H"),
+    ("shipyard", "建設造船所", COST_SHIPYARD, "Y"),
+    ("export", "貿易輸出", None, "E"),
 )
 
 
@@ -353,6 +362,14 @@ def tool_enabled(
     if kind == "wait":
         if not state.has_monster():
             return False, "島上沒有怪獸"
+        return True, ""
+
+    # 貿易輸出：有港灣或造船所即可（不必選格）.
+    if kind == "export":
+        if not state.can_trade_export():
+            return False, "需要港灣或造船所"
+        if state.food < FOOD_EXPORT_LOT:
+            return False, f"糧食不足（一批需 {FOOD_EXPORT_LOT}）"
         return True, ""
 
     if selected is None:
@@ -376,6 +393,8 @@ def tool_enabled(
             return False, "須在平地建設"
         if c.building is not None:
             return False, "此格已有建築"
+        if kind in COASTAL_BUILDINGS and not state._adjacent_to_sea(i, j):
+            return False, "須臨海平地（鄰海／淺灘）"
         if state.funds < cost:
             return False, f"資金不足（需 {cost}）"
         return True, ""
@@ -857,6 +876,17 @@ class HakoniwaIslandDialog(QDialog):
                 hc = self.state.cell(*self.selected)
                 trees = hc.trees if hc.trees > 0 else TREE_MIN
                 tip += f"\n森→平地；{trees}本瞬售 +{timber_funds(trees)} 資金"
+            elif key == "harbor":
+                tip += "\n臨海平地→港灣色塊（可解鎖貿易輸出）"
+            elif key == "shipyard":
+                tip += "\n臨海平地→造船所色塊（可解鎖貿易輸出）"
+            elif key == "export":
+                tip += (
+                    f"\n糧食→資金：{FOOD_EXPORT_LOT} 噸≈"
+                    f"{FUNDS_PER_FOOD_LOT} 資金（不推進回合）"
+                )
+                if ok:
+                    tip += f"\n本批可得 +{food_export_funds(1)}；現有糧食 {self.state.food}"
             elif self.selected is not None:
                 tip += f"\n選格 {self.selected[0]},{self.selected[1]}"
             tip += f"\n快捷鍵 {digit}"
@@ -891,6 +921,10 @@ class HakoniwaIslandDialog(QDialog):
         if self.state.can_harvest(i, j):
             trees = c.trees if c.trees > 0 else TREE_MIN
             hints.append(f"可伐採（{trees}本→+{timber_funds(trees)}）")
+        if self.state.can_place_building(i, j, "harbor"):
+            hints.append("可建港灣")
+        if self.state.can_place_building(i, j, "shipyard"):
+            hints.append("可建造船所")
         tree_line = ""
         if c.terrain == "forest":
             trees = c.trees if c.trees > 0 else TREE_MIN
@@ -920,8 +954,8 @@ class HakoniwaIslandDialog(QDialog):
         )
 
     def _do_action(self, kind: str) -> None:
-        # 觀望不需選格；其餘指令要點選格子。
-        if kind == "wait":
+        # 觀望／貿易輸出不需選格；其餘指令要點選格子。
+        if kind in ("wait", "export"):
             i = j = 0
         else:
             sel = self._require_selection()
@@ -947,6 +981,8 @@ class HakoniwaIslandDialog(QDialog):
                     out = self.remote.missile(i, j)
                 elif kind == "wait":
                     out = self.remote.wait_monster()
+                elif kind == "export":
+                    out = self.remote.export_food(1)
                 else:
                     QMessageBox.information(self, "箱庭島", "未知指令")
                     return
@@ -976,6 +1012,8 @@ class HakoniwaIslandDialog(QDialog):
             msg = self.state.fire_missile(i, j)
         elif kind == "wait":
             msg = self.state.wait_monster()
+        elif kind == "export":
+            msg = self.state.export_food(1)
         else:
             msg = "未知指令"
         if msg != "ok":

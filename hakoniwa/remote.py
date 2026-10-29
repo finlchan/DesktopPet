@@ -170,6 +170,9 @@ class HakoniwaRemote:
     def wait_monster(self) -> ActionOutcome:
         return self._action("/api/v1/island/wait", {})
 
+    def export_food(self, lots: int = 1) -> ActionOutcome:
+        return self._action("/api/v1/island/export", {"lots": int(lots)})
+
     def next_turn(self) -> ActionOutcome:
         return self._action("/api/v1/island/turn", {})
 

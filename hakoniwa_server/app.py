@@ -43,8 +43,15 @@ class CellAction(BaseModel):
 
 class PlaceBody(CellAction):
     kind: str = Field(
-        ..., description="farm | factory | defense | missile_base"
+        ...,
+        description=(
+            "farm | factory | defense | missile_base | harbor | shipyard"
+        ),
     )
+
+
+class ExportBody(BaseModel):
+    lots: int = Field(1, ge=1, description="food export batches (100 t each)")
 
 
 class ActionResult(BaseModel):
@@ -153,6 +160,14 @@ def fire_missile(body: CellAction) -> ActionResult:
 @app.post("/api/v1/island/wait", response_model=ActionResult, dependencies=[Depends(require_api_key)])
 def wait_monster() -> ActionResult:
     msg, island = store.wait_monster()
+    if msg != "ok":
+        return ActionResult(ok=False, error=msg, island=island)
+    return ActionResult(ok=True, island=island)
+
+
+@app.post("/api/v1/island/export", response_model=ActionResult, dependencies=[Depends(require_api_key)])
+def export_food(body: ExportBody) -> ActionResult:
+    msg, island = store.export_food(body.lots)
     if msg != "ok":
         return ActionResult(ok=False, error=msg, island=island)
     return ActionResult(ok=True, island=island)
