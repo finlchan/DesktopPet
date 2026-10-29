@@ -33,6 +33,7 @@ from hakoniwa.model import (
     MAX_GUEST_TEXT,
     IslandState,
 )
+from hakoniwa.demos import island_summary, local_demo_islands, make_demo_coral, make_demo_pine
 from hakoniwa.remote import HakoniwaRemoteError, normalize_base_url
 from hakoniwa.save import load_island, save_island
 
@@ -216,6 +217,24 @@ def test_remote_url_normalize():
         pass
 
 
+def test_local_demos():
+    demos = local_demo_islands()
+    assert len(demos) == 2
+    ids = {d.island_id for d in demos}
+    assert ids == {"demo-coral", "demo-pine"}
+    coral = make_demo_coral()
+    pine = make_demo_pine()
+    assert coral.land_count() >= 7
+    assert pine.land_count() >= 5
+    assert coral.name == "珊瑚灘島"
+    assert pine.name == "松風島"
+    row = island_summary(coral)
+    assert row["id"] == "demo-coral"
+    assert row["land"] == coral.land_count()
+    # Round-trip keeps id.
+    assert IslandState.from_dict(coral.to_dict()).island_id == "demo-coral"
+
+
 def test_dialog_import_offscreen():
     """Instantiate dialog under offscreen Qt if available."""
     import os
@@ -227,6 +246,7 @@ def test_dialog_import_offscreen():
     # Minimal stub so dialog chrome can resolve.
     import desktop_pet  # noqa: F401
     from hakoniwa import HakoniwaIslandDialog
+    from hakoniwa.dialog import TourismIslandDialog, TourismListDialog
 
     dlg = HakoniwaIslandDialog(None, None)
     assert dlg.windowTitle() == "箱庭島"
@@ -239,6 +259,25 @@ def test_dialog_import_offscreen():
     dlg.state.add_comment("Smoke", "panel ok")
     dlg._refresh_ui()
     assert "Smoke" in dlg.guestbook_view.toPlainText()
+
+    catalog = dlg._tourism_catalog()
+    assert len(catalog) >= 2
+    assert any(r.get("id") == "demo-coral" for r in catalog)
+    picker = TourismListDialog(catalog, parent=dlg)
+    assert picker.list.count() == len(catalog)
+    picker.close()
+
+    island = dlg._load_tourism_island("demo-pine")
+    assert island is not None
+    assert island.island_id == "demo-pine"
+    tour = TourismIslandDialog(island, remote=None, parent=dlg)
+    assert "觀光" in tour.windowTitle()
+    assert tour.guestbook_view is not None
+    tour.state.add_comment("Tourist", "nice pines")
+    tour._show_guestbook(tour.state.list_comments())
+    assert "Tourist" in tour.guestbook_view.toPlainText()
+    tour.close()
+
     dlg.close()
     del app
 
@@ -328,6 +367,35 @@ def test_server_api_if_available():
         # Island snapshot also carries guestbook.
         snap = client.get("/api/v1/island").json()
         assert len(snap.get("comments") or []) == 1
+        assert snap.get("id") == "home"
+
+        # Multi-island tourism catalog (seeded demos).
+        catalog = client.get("/api/v1/islands").json()
+        assert "islands" in catalog
+        ids = {row["id"] for row in catalog["islands"]}
+        assert "home" in ids
+        assert "demo-coral" in ids
+        assert "demo-pine" in ids
+        assert h.json().get("islands") == len(catalog["islands"])
+
+        coral = client.get("/api/v1/islands/demo-coral").json()
+        assert coral["id"] == "demo-coral"
+        assert coral["name"] == "珊瑚灘島"
+        assert len(coral["cells"]) == 20
+
+        missing = client.get("/api/v1/islands/no-such-island")
+        assert missing.status_code == 404
+
+        pine_comments = client.get("/api/v1/islands/demo-pine/comments").json()
+        assert pine_comments["comments"] == []
+        posted_tour = client.post(
+            "/api/v1/islands/demo-pine/comments",
+            json={"name": "Tourist", "text": "松風好美"},
+        ).json()
+        assert posted_tour["ok"] is True
+        assert len(posted_tour["comments"]) == 1
+        listed_pine = client.get("/api/v1/islands/demo-pine/comments").json()
+        assert listed_pine["comments"][0]["text"] == "松風好美"
 
 
 def main():
@@ -335,6 +403,7 @@ def main():
     test_catalog_costs()
     test_new_island_and_loop()
     test_guestbook_local()
+    test_local_demos()
     test_save_load_roundtrip()
     test_remote_url_normalize()
     test_dialog_import_offscreen()

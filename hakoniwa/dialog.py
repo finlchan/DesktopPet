@@ -1,9 +1,9 @@
-"""箱庭島 window — FramelessCalcDialog chrome + map + turn / terrain / guestbook."""
+"""箱庭島 window — FramelessCalcDialog chrome + map + turn / terrain / guestbook / 觀光."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List
+from typing import Any, Dict, List, Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -11,6 +11,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QPushButton,
     QPlainTextEdit,
@@ -18,6 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .demos import island_summary, local_demo_islands
 from .model import (
     BUILDINGS,
     COST_AFFOREST,
@@ -154,6 +157,12 @@ class HakoniwaIslandDialog(QDialog):
         turn_btn.setObjectName("calcAction")
         turn_btn.clicked.connect(self._next_turn)
         side.addWidget(turn_btn)
+
+        tour_btn = QPushButton("觀光")
+        tour_btn.setObjectName("calcAction")
+        tour_btn.setToolTip("瀏覽諸島地圖（唯讀）；留言板仍可用")
+        tour_btn.clicked.connect(self._open_tourism)
+        side.addWidget(tour_btn)
 
         save_btn = QPushButton("存檔")
         save_btn.setObjectName("calcAction")
@@ -511,3 +520,310 @@ class HakoniwaIslandDialog(QDialog):
         self.map.set_state(self.state)
         self.selected = None
         self._refresh_ui()
+
+    def _tourism_catalog(self) -> List[Dict[str, Any]]:
+        """Online: server list. Offline: home snapshot + seeded demos."""
+        if self._online and self.remote is not None:
+            try:
+                return self.remote.list_islands()
+            except HakoniwaRemoteError as e:
+                self._drop_to_local_on_error(e)
+        rows = [island_summary(self.state)]
+        for demo in local_demo_islands():
+            if demo.island_id == self.state.island_id:
+                continue
+            rows.append(island_summary(demo))
+        return rows
+
+    def _load_tourism_island(self, island_id: str) -> Optional[IslandState]:
+        if self._online and self.remote is not None:
+            try:
+                return self.remote.get_island_by_id(island_id)
+            except HakoniwaRemoteError as e:
+                self._drop_to_local_on_error(e)
+        if island_id == self.state.island_id or island_id == "home":
+            # Snapshot of the player's current island (read-only view).
+            return IslandState.from_dict(self.state.to_dict())
+        for demo in local_demo_islands():
+            if demo.island_id == island_id:
+                return demo
+        return None
+
+    def _open_tourism(self) -> None:
+        catalog = self._tourism_catalog()
+        if not catalog:
+            QMessageBox.information(self, "觀光", "目前沒有可觀光的島。")
+            return
+        picker = TourismListDialog(catalog, parent=self)
+        if picker.exec() != QDialog.DialogCode.Accepted:
+            return
+        island_id = picker.selected_id
+        if not island_id:
+            return
+        island = self._load_tourism_island(island_id)
+        if island is None:
+            QMessageBox.warning(self, "觀光", f"找不到島：{island_id}")
+            return
+        visitor = TourismIslandDialog(
+            island,
+            remote=self.remote if self._online else None,
+            parent=self,
+        )
+        visitor.exec()
+        # If we visited home online, refresh guestbook in case we posted there.
+        if island_id in (self.state.island_id, "home"):
+            self._reload_guestbook()
+            self._refresh_ui()
+
+
+class TourismListDialog(QDialog):
+    """Pick an island from the 諸島 list (server or local demos)."""
+
+    def __init__(self, islands: List[Dict[str, Any]], parent=None):
+        dp = _dp()
+        super().__init__(parent)
+        self.selected_id: Optional[str] = None
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.Dialog
+            | Qt.WindowType.WindowStaysOnTopHint
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.setAutoFillBackground(False)
+        self._drag_grips = []
+        self.setWindowTitle("觀光 — 諸島列表")
+        self.setMinimumSize(420, 360)
+        self.resize(480, 420)
+        self.setStyleSheet(dp.CALC_DIALOG_STYLE + getattr(dp, "MINI_PROGRAM_STYLE", ""))
+
+        root = dp.install_ornate_calc_frame(self)
+        root.setSpacing(6)
+        root.addWidget(dp.make_draggable_title(self, "觀光 — 諸島列表"))
+
+        hint = QLabel("選擇一座島以唯讀瀏覽地圖；留言板仍可使用。")
+        hint.setObjectName("calcResult")
+        hint.setWordWrap(True)
+        root.addWidget(hint)
+
+        self.list = QListWidget()
+        for row in islands:
+            iid = str(row.get("id") or "")
+            name = str(row.get("name") or iid or "（未命名）")
+            pop = row.get("population", "?")
+            land = row.get("land", "?")
+            turn = row.get("turn", "?")
+            label = f"{name}  ·  人口 {pop}  ·  陸地 {land}  ·  回合 {turn}"
+            if iid == "home":
+                label += "  （本島）"
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, iid)
+            self.list.addItem(item)
+        self.list.itemDoubleClicked.connect(self._accept_item)
+        root.addWidget(self.list, stretch=1)
+
+        row = QHBoxLayout()
+        row.addStretch()
+        cancel = QPushButton("取消")
+        cancel.clicked.connect(self.reject)
+        row.addWidget(cancel)
+        go = QPushButton("觀光")
+        go.setObjectName("calcAction")
+        go.clicked.connect(self._accept_current)
+        row.addWidget(go)
+        root.addLayout(row)
+
+    def _accept_item(self, item: QListWidgetItem) -> None:
+        self.selected_id = str(item.data(Qt.ItemDataRole.UserRole) or "")
+        if self.selected_id:
+            self.accept()
+
+    def _accept_current(self) -> None:
+        item = self.list.currentItem()
+        if item is None:
+            QMessageBox.information(self, "觀光", "請先選一座島。")
+            return
+        self._accept_item(item)
+
+
+class TourismIslandDialog(QDialog):
+    """Read-only 箱庭斜視 map of another (or home) island; guestbook still works."""
+
+    def __init__(
+        self,
+        island: IslandState,
+        remote: Optional[HakoniwaRemote] = None,
+        parent=None,
+    ):
+        dp = _dp()
+        super().__init__(parent)
+        self.state = island
+        self.remote = remote
+        self.selected = None
+        self._island_id = island.island_id or "home"
+
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.Dialog
+            | Qt.WindowType.WindowStaysOnTopHint
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.setAutoFillBackground(False)
+        self._drag_grips = []
+
+        title = f"觀光 — {island.name}"
+        self.setWindowTitle(title)
+        self.setMinimumSize(720, 640)
+        self.resize(880, 720)
+        self.setStyleSheet(dp.CALC_DIALOG_STYLE + getattr(dp, "MINI_PROGRAM_STYLE", ""))
+
+        root = dp.install_ornate_calc_frame(self)
+        root.setSpacing(6)
+        root.addWidget(dp.make_draggable_title(self, title))
+
+        hint = QLabel(
+            "箱庭斜視 · 觀光模式（唯讀地圖）· 色塊佔位　"
+            "可瀏覽格子與留言；建設／地形／回合已鎖定"
+        )
+        hint.setObjectName("calcResult")
+        hint.setWordWrap(True)
+        root.addWidget(hint)
+
+        mode = "連線" if remote is not None else "本機示範"
+        self.stats = QLabel(
+            f"[{mode}觀光] {island.name}（{self._island_id}）　"
+            f"資金 {island.funds}　糧食 {island.food}　人口 {island.population}　"
+            f"回合 {island.turn}　陸地 {island.land_count()} 格"
+        )
+        self.stats.setObjectName("calcSectionTitle")
+        root.addWidget(self.stats)
+
+        body = QHBoxLayout()
+        body.setSpacing(8)
+
+        self.map = HakoniwaMapWidget(self.state)
+        self.map.cell_clicked.connect(self._on_cell_clicked)
+        body.addWidget(self.map, stretch=1)
+
+        side = QVBoxLayout()
+        side.setSpacing(4)
+        self.sel_label = QLabel("未選取格子")
+        self.sel_label.setObjectName("calcResult")
+        self.sel_label.setWordWrap(True)
+        side.addWidget(self.sel_label)
+        side.addStretch(1)
+        note = QLabel("建設與地形指令在觀光中不可用。")
+        note.setObjectName("calcFieldCaption")
+        note.setWordWrap(True)
+        side.addWidget(note)
+        side_wrap = QWidget()
+        side_wrap.setLayout(side)
+        side_wrap.setFixedWidth(220)
+        body.addWidget(side_wrap)
+        root.addLayout(body, stretch=1)
+
+        gb_cap = QLabel("訪客留言板")
+        gb_cap.setObjectName("calcSectionTitle")
+        root.addWidget(gb_cap)
+
+        self.guestbook_view = QPlainTextEdit()
+        self.guestbook_view.setReadOnly(True)
+        self.guestbook_view.setMinimumHeight(90)
+        self.guestbook_view.setMaximumHeight(140)
+        self.guestbook_view.setPlaceholderText("尚無留言")
+        root.addWidget(self.guestbook_view)
+
+        gb_form = QHBoxLayout()
+        gb_form.setSpacing(6)
+        name_cap = QLabel("名字")
+        name_cap.setObjectName("calcFieldCaption")
+        gb_form.addWidget(name_cap)
+        self.guest_name = QLineEdit()
+        self.guest_name.setPlaceholderText("訪客名")
+        self.guest_name.setMaxLength(MAX_GUEST_NAME)
+        self.guest_name.setFixedWidth(120)
+        gb_form.addWidget(self.guest_name)
+        text_cap = QLabel("留言")
+        text_cap.setObjectName("calcFieldCaption")
+        gb_form.addWidget(text_cap)
+        self.guest_text = QLineEdit()
+        self.guest_text.setPlaceholderText("寫點什麼…")
+        self.guest_text.setMaxLength(MAX_GUEST_TEXT)
+        gb_form.addWidget(self.guest_text, stretch=1)
+        post_btn = QPushButton("留言")
+        post_btn.setObjectName("calcAction")
+        post_btn.clicked.connect(self._post_guestbook)
+        gb_form.addWidget(post_btn)
+        refresh_gb = QPushButton("重新整理")
+        refresh_gb.setObjectName("calcAction")
+        refresh_gb.clicked.connect(self._reload_guestbook)
+        gb_form.addWidget(refresh_gb)
+        root.addLayout(gb_form)
+
+        close_row = QHBoxLayout()
+        close_row.addStretch()
+        close_btn = QPushButton("返回")
+        close_btn.clicked.connect(self.accept)
+        close_row.addWidget(close_btn)
+        root.addLayout(close_row)
+
+        self._show_guestbook(self.state.list_comments())
+
+    def _format_guestbook(self, comments: List[GuestbookEntry]) -> str:
+        if not comments:
+            return "（尚無留言）"
+        lines = []
+        for c in comments:
+            stamp = c.at.replace("T", " ").rstrip("Z")
+            lines.append(f"[{stamp}] {c.name}：{c.text}")
+        return "\n".join(lines)
+
+    def _show_guestbook(self, comments: List[GuestbookEntry]) -> None:
+        self.guestbook_view.setPlainText(self._format_guestbook(comments))
+        bar = self.guestbook_view.verticalScrollBar()
+        bar.setValue(bar.maximum())
+
+    def _reload_guestbook(self) -> None:
+        if self.remote is not None:
+            try:
+                comments = self.remote.list_island_comments(self._island_id)
+                self.state.comments = list(comments)
+                self._show_guestbook(comments)
+                return
+            except HakoniwaRemoteError as e:
+                QMessageBox.warning(self, "觀光", f"無法重新整理留言：{e}")
+        self._show_guestbook(self.state.list_comments())
+
+    def _post_guestbook(self) -> None:
+        name = self.guest_name.text()
+        text = self.guest_text.text()
+        if self.remote is not None:
+            try:
+                ok, err, comments = self.remote.post_island_comment(
+                    self._island_id, name, text
+                )
+                self.state.comments = list(comments)
+                self._show_guestbook(comments)
+                if not ok:
+                    QMessageBox.information(self, "觀光", err or "留言失敗")
+                    return
+                self.guest_text.clear()
+                return
+            except HakoniwaRemoteError as e:
+                QMessageBox.warning(self, "觀光", f"留言失敗：{e}")
+                return
+        msg = self.state.add_comment(name, text)
+        if msg != "ok":
+            QMessageBox.information(self, "觀光", msg)
+            return
+        self.guest_text.clear()
+        self._show_guestbook(self.state.list_comments())
+
+    def _on_cell_clicked(self, i: int, j: int) -> None:
+        self.selected = (i, j)
+        c = self.state.cell(i, j)
+        t = TERRAIN[c.terrain]["label"]
+        b = BUILDINGS[c.building]["label"] if c.building else "（無）"
+        self.sel_label.setText(f"格子 ({i},{j})\n地形：{t}\n建築：{b}\n（觀光唯讀）")
+        self.map.select(i, j)

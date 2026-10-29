@@ -194,6 +194,51 @@ class HakoniwaRemote:
         err = str(data["error"]) if data.get("error") else None
         return ok, err, comments
 
+    def _parse_comments_payload(self, data: Any) -> List[GuestbookEntry]:
+        if not isinstance(data, dict) or not isinstance(data.get("comments"), list):
+            raise HakoniwaRemoteError("留言板格式錯誤")
+        out: List[GuestbookEntry] = []
+        for item in data["comments"]:
+            if not isinstance(item, dict):
+                continue
+            entry = GuestbookEntry.from_dict(item)
+            if entry is not None:
+                out.append(entry)
+        return out
+
+    def list_islands(self) -> List[Dict[str, Any]]:
+        data = self._request("GET", "/api/v1/islands")
+        if not isinstance(data, dict) or not isinstance(data.get("islands"), list):
+            raise HakoniwaRemoteError("諸島列表格式錯誤")
+        out: List[Dict[str, Any]] = []
+        for item in data["islands"]:
+            if isinstance(item, dict) and item.get("id"):
+                out.append(item)
+        return out
+
+    def get_island_by_id(self, island_id: str) -> IslandState:
+        data = self._request("GET", f"/api/v1/islands/{island_id}")
+        if not isinstance(data, dict):
+            raise HakoniwaRemoteError("島資料格式錯誤")
+        return IslandState.from_dict(data)
+
+    def list_island_comments(self, island_id: str) -> List[GuestbookEntry]:
+        data = self._request("GET", f"/api/v1/islands/{island_id}/comments")
+        return self._parse_comments_payload(data)
+
+    def post_island_comment(
+        self, island_id: str, name: str, text: str
+    ) -> Tuple[bool, Optional[str], List[GuestbookEntry]]:
+        data = self._request(
+            "POST",
+            f"/api/v1/islands/{island_id}/comments",
+            {"name": name, "text": text},
+        )
+        comments = self._parse_comments_payload(data)
+        ok = bool(data.get("ok"))
+        err = str(data["error"]) if data.get("error") else None
+        return ok, err, comments
+
 
 def try_connect(
     url: str, api_key: str = "", timeout: float = 8.0
