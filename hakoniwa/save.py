@@ -1,4 +1,4 @@
-"""JSON save/load for local scaffold (online NAS sync comes later)."""
+"""JSON save/load for local fallback (NAS sync via hakoniwa.remote)."""
 
 from __future__ import annotations
 

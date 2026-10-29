@@ -31,6 +31,7 @@ from hakoniwa.model import (
     FUNDS_PER_FACTORY,
     IslandState,
 )
+from hakoniwa.remote import HakoniwaRemoteError, normalize_base_url
 from hakoniwa.save import load_island, save_island
 
 
@@ -183,6 +184,16 @@ def test_save_load_roundtrip():
         assert loaded.land_count() == 7
 
 
+def test_remote_url_normalize():
+    assert normalize_base_url("http://192.168.1.10:8787/") == "http://192.168.1.10:8787"
+    assert normalize_base_url("192.168.1.10:8787") == "http://192.168.1.10:8787"
+    try:
+        normalize_base_url("not a url")
+        assert False, "expected HakoniwaRemoteError"
+    except HakoniwaRemoteError:
+        pass
+
+
 def test_dialog_import_offscreen():
     """Instantiate dialog under offscreen Qt if available."""
     import os
@@ -198,8 +209,82 @@ def test_dialog_import_offscreen():
     dlg = HakoniwaIslandDialog(None, None)
     assert dlg.windowTitle() == "箱庭島"
     assert dlg.state.land_count() == 7
+    assert dlg._online is False
+    assert "本機" in dlg.conn_status.text()
     dlg.close()
     del app
+
+
+def test_server_api_if_available():
+    """Exercise FastAPI endpoints when hakoniwa_server deps are installed."""
+    import os
+    import tempfile
+
+    try:
+        from fastapi.testclient import TestClient
+    except ImportError:
+        print("hakoniwa_server deps missing — skip API smoke")
+        return
+
+    with tempfile.TemporaryDirectory() as tmp:
+        os.environ["HAKONIWA_DATA_DIR"] = tmp
+        os.environ.pop("HAKONIWA_API_KEY", None)
+        # Reload store/app against temp dir.
+        import importlib
+
+        import hakoniwa_server.store as store_mod
+        import hakoniwa_server.app as app_mod
+
+        importlib.reload(store_mod)
+        importlib.reload(app_mod)
+        client = TestClient(app_mod.app)
+
+        h = client.get("/health")
+        assert h.status_code == 200
+        assert h.json()["ok"] is True
+
+        island = client.get("/api/v1/island").json()
+        assert island["size"] == 20
+        assert island["version"] == 2
+
+        # Find a grass cell (or level dirt) then place farm.
+        cells = island["cells"]
+        target = None
+        for i, row in enumerate(cells):
+            for j, c in enumerate(row):
+                if c["terrain"] == "grass" and not c.get("building"):
+                    target = (i, j)
+                    break
+            if target:
+                break
+        if target is None:
+            for i, row in enumerate(cells):
+                for j, c in enumerate(row):
+                    if c["terrain"] == "dirt":
+                        r = client.post("/api/v1/island/level", json={"i": i, "j": j})
+                        assert r.status_code == 200 and r.json()["ok"]
+                        target = (i, j)
+                        break
+                if target:
+                    break
+        assert target is not None
+        i, j = target
+        placed = client.post(
+            "/api/v1/island/place", json={"i": i, "j": j, "kind": "farm"}
+        ).json()
+        assert placed["ok"] is True
+        assert placed["island"]["cells"][i][j]["building"] == "farm"
+
+        turned = client.post("/api/v1/island/turn").json()
+        assert turned["ok"] is True
+        assert turned["island"]["turn"] == 2
+        assert turned["notes"]
+
+        removed = client.post(
+            "/api/v1/island/remove", json={"i": i, "j": j}
+        ).json()
+        assert removed["ok"] is True
+        assert removed["island"]["cells"][i][j]["building"] is None
 
 
 def main():
@@ -207,7 +292,9 @@ def main():
     test_catalog_costs()
     test_new_island_and_loop()
     test_save_load_roundtrip()
+    test_remote_url_normalize()
     test_dialog_import_offscreen()
+    test_server_api_if_available()
     print("hakoniwa smoke_test: OK")
 
 

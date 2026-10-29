@@ -1,0 +1,27 @@
+# NAS-friendly compose for 箱庭島.
+# From this directory:  docker compose up -d --build
+# Or from repo root:    docker compose -f hakoniwa_server/docker-compose.yml up -d --build
+#
+# Optional LAN API key (leave empty for open LAN / single-player):
+#   HAKONIWA_API_KEY=your-secret docker compose up -d
+
+services:
+  hakoniwa-island:
+    build:
+      context: ..
+      dockerfile: hakoniwa_server/Dockerfile
+    image: hakoniwa-island:0.1.0
+    container_name: hakoniwa-island
+    ports:
+      - "${HAKONIWA_PUBLISH_PORT:-8787}:8787"
+    environment:
+      HAKONIWA_DATA_DIR: /data
+      HAKONIWA_API_KEY: "${HAKONIWA_API_KEY:-}"
+      HAKONIWA_HOST: "0.0.0.0"
+      HAKONIWA_PORT: "8787"
+    volumes:
+      - hakoniwa-data:/data
+    restart: unless-stopped
+
+volumes:
+  hakoniwa-data:
