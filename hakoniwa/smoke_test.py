@@ -28,7 +28,9 @@ from hakoniwa.model import (
     COST_LANDFILL,
     COST_LEVEL,
     COST_MISSILE,
+    FIRE_BASE_CHANCE,
     FOOD_PER_FARM,
+    FOREST_FIRE_FACTOR,
     FUNDS_PER_FACTORY,
     MAX_GUEST_NAME,
     MAX_GUEST_TEXT,
@@ -36,6 +38,8 @@ from hakoniwa.model import (
     MONSTER_MIN_TURN,
     MONSTER_REWARD,
     SAVE_VERSION,
+    TOWN_TO_CITY_POP,
+    VILLAGE_TO_TOWN_POP,
     IslandState,
 )
 from hakoniwa.demos import island_summary, local_demo_islands, make_demo_coral, make_demo_pine
@@ -241,6 +245,130 @@ def test_local_demos():
     assert row["land"] == coral.land_count()
     # Round-trip keeps id.
     assert IslandState.from_dict(coral.to_dict()).island_id == "demo-coral"
+
+
+def test_settlements_and_disasters():
+    """Village/town/city evolution + fire/typhoon/quake stubs (local-first)."""
+    import random
+
+    import hakoniwa.model as model_mod
+
+    state = IslandState.new_game()
+    land = [(i, j) for i in range(20) for j in range(20) if state.is_land(i, j)]
+    # Ensure grass cells: farm + empty neighbor for village spawn.
+    for i, j in land:
+        if state.cell(i, j).terrain == "dirt":
+            assert state.level_land(i, j) == "ok"
+    grass = [
+        (i, j)
+        for i, j in land
+        if state.cell(i, j).terrain == "grass" and state.cell(i, j).building is None
+    ]
+    assert len(grass) >= 3
+    fi, fj = grass[0]
+    assert state.place_building(fi, fj, "farm") == "ok"
+    spawn = next(
+        (
+            (ni, nj)
+            for ni, nj in neighbors(fi, fj)
+            if state.cell(ni, nj).terrain == "grass"
+            and state.cell(ni, nj).building is None
+        ),
+        None,
+    )
+    assert spawn is not None
+    si, sj = spawn
+    assert state._near_farm_or_settlement(si, sj)
+
+    orig_random = random.random
+    old_fire = model_mod.FIRE_BASE_CHANCE
+    old_typhoon = model_mod.TYPHOON_BASE_CHANCE
+    old_quake = model_mod.QUAKE_BASE_CHANCE
+    try:
+        # Force spawn (random < 0.20).
+        random.random = lambda: 0.0  # type: ignore[assignment]
+        notes = state._evolve_settlements()
+        assert state.cell(si, sj).terrain == "village"
+        assert any("村落" in n for n in notes)
+
+        state.population = VILLAGE_TO_TOWN_POP
+        notes = state._evolve_settlements()
+        assert state.cell(si, sj).terrain == "town"
+        assert any("村→町" in n for n in notes)
+
+        state.population = TOWN_TO_CITY_POP
+        notes = state._evolve_settlements()
+        assert state.cell(si, sj).terrain == "city"
+        assert any("町→都市" in n for n in notes)
+
+        assert state.can_level(si, sj)
+        assert state.level_land(si, sj) == "ok"
+        assert state.cell(si, sj).terrain == "grass"
+
+        # Fire on town (no forest neighbor); silence typhoon/quake for a clean assert.
+        model_mod.TYPHOON_BASE_CHANCE = 0.0
+        model_mod.QUAKE_BASE_CHANCE = 0.0
+        state.cell(si, sj).terrain = "town"
+        assert not state._has_forest_neighbor(si, sj)
+        notes = state._apply_disasters()
+        assert state.cell(si, sj).terrain == "dirt"
+        assert any("火災" in n for n in notes)
+
+        # Forest neighbor mitigates fire: mid-roll between reduced and base → no burn.
+        state.cell(si, sj).terrain = "town"
+        forest_spot = next(
+            (
+                (ni, nj)
+                for ni, nj in neighbors(si, sj)
+                if (ni, nj) != (fi, fj) and state.is_land(ni, nj)
+            ),
+            None,
+        )
+        assert forest_spot is not None
+        fxi, fxj = forest_spot
+        state.cell(fxi, fxj).building = None
+        state.cell(fxi, fxj).terrain = "forest"
+        assert state._has_forest_neighbor(si, sj)
+        reduced = FIRE_BASE_CHANCE * FOREST_FIRE_FACTOR
+        mid = (reduced + FIRE_BASE_CHANCE) / 2.0
+        assert reduced < mid < FIRE_BASE_CHANCE
+        random.random = lambda: mid  # type: ignore[assignment]
+        notes = state._apply_disasters()
+        assert state.cell(si, sj).terrain == "town"
+        assert not any("火災" in n and f"({si},{sj})" in n for n in notes)
+
+        # Typhoon: farm → plain (silence fire/quake).
+        model_mod.FIRE_BASE_CHANCE = 0.0
+        model_mod.TYPHOON_BASE_CHANCE = old_typhoon
+        model_mod.QUAKE_BASE_CHANCE = 0.0
+        random.random = lambda: 0.0  # type: ignore[assignment]
+        assert state.cell(fi, fj).building == "farm"
+        notes = state._apply_disasters()
+        assert state.cell(fi, fj).building is None
+        assert any("颱風" in n for n in notes)
+
+        # Quake: factory → wasteland (silence fire/typhoon).
+        model_mod.FIRE_BASE_CHANCE = 0.0
+        model_mod.TYPHOON_BASE_CHANCE = 0.0
+        model_mod.QUAKE_BASE_CHANCE = old_quake
+        gi, gj = grass[1] if grass[1] != (fi, fj) else grass[2]
+        state.cell(gi, gj).terrain = "grass"
+        state.cell(gi, gj).building = "factory"
+        notes = state._apply_disasters()
+        assert state.cell(gi, gj).building is None
+        assert state.cell(gi, gj).terrain == "dirt"
+        assert any("地震" in n for n in notes)
+
+        state.cell(si, sj).terrain = "village"
+        data = state.to_dict()
+        assert data["version"] == SAVE_VERSION
+        loaded = IslandState.from_dict(data)
+        assert loaded.cell(si, sj).terrain == "village"
+    finally:
+        random.random = orig_random  # type: ignore[assignment]
+        model_mod.FIRE_BASE_CHANCE = old_fire
+        model_mod.TYPHOON_BASE_CHANCE = old_typhoon
+        model_mod.QUAKE_BASE_CHANCE = old_quake
 
 
 def test_monster_events():
@@ -592,6 +720,7 @@ def main():
     test_catalog_costs()
     test_new_island_and_loop()
     test_guestbook_local()
+    test_settlements_and_disasters()
     test_monster_events()
     test_local_demos()
     test_save_load_roundtrip()
