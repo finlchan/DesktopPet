@@ -42,7 +42,9 @@ class CellAction(BaseModel):
 
 
 class PlaceBody(CellAction):
-    kind: str = Field(..., description="farm | factory")
+    kind: str = Field(
+        ..., description="farm | factory | defense | missile_base"
+    )
 
 
 class ActionResult(BaseModel):
