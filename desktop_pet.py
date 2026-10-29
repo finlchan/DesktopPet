@@ -54,7 +54,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261028.01"
+APP_VERSION = "261029.01"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -113,6 +113,11 @@ DEFAULT_CONFIG = {
     # Free Station dialog: stored backsight records for auto-fill.
     # Shape: {name, easting, northing, rl}. Optional; older configs omit it.
     "free_station_stations": [],
+    # 箱庭島: optional NAS server URL (empty = local JSON only).
+    "hakoniwa": {
+        "server_url": "",
+        "api_key": "",
+    },
 }
 
 
@@ -4600,6 +4605,7 @@ class MiniProgramsSubMenu(PopupPanel):
         self.operations_submenu = None
         self.pomodoro_dialog = None
         self.translate_dialog = None
+        self.hakoniwa_dialog = None
         self.build_ui()
 
     def build_ui(self):
@@ -4667,6 +4673,11 @@ class MiniProgramsSubMenu(PopupPanel):
         btn_translate.clicked.connect(self.open_translate)
         layout.addWidget(btn_translate)
 
+        btn_hakoniwa = QPushButton("箱庭島")
+        btn_hakoniwa.setStyleSheet(menu_button_style("#2a4a6e"))
+        btn_hakoniwa.clicked.connect(self.open_hakoniwa)
+        layout.addWidget(btn_hakoniwa)
+
         self.setStyleSheet(MENU_STYLE + """
             MiniProgramsSubMenu { background-color: transparent; }
         """)
@@ -4725,6 +4736,17 @@ class MiniProgramsSubMenu(PopupPanel):
         self.translate_dialog.activateWindow()
         QTimer.singleShot(300, self._release_suppress)
 
+    def open_hakoniwa(self):
+        self._suppress_hide = True
+        if self.hakoniwa_dialog is None:
+            from hakoniwa import HakoniwaIslandDialog
+
+            self.hakoniwa_dialog = HakoniwaIslandDialog(self.cfg, None)
+        self.hakoniwa_dialog.show()
+        self.hakoniwa_dialog.raise_()
+        self.hakoniwa_dialog.activateWindow()
+        QTimer.singleShot(300, self._release_suppress)
+
     def _release_suppress(self):
         self._suppress_hide = False
 
@@ -4749,6 +4771,10 @@ class MiniProgramsSubMenu(PopupPanel):
         ):
             return
         active = QApplication.activeWindow()
+        try:
+            from hakoniwa import HakoniwaIslandDialog as _HakoniwaIslandDialog
+        except Exception:
+            _HakoniwaIslandDialog = type(None)
         if isinstance(
             active,
             (
@@ -4759,6 +4785,7 @@ class MiniProgramsSubMenu(PopupPanel):
                 SlopeCalcDialog,
                 PomodoroDialog,
                 TranslateDialog,
+                _HakoniwaIslandDialog,
             ),
         ):
             return
@@ -5025,6 +5052,10 @@ class PetMenu(PopupPanel):
         ):
             return
         active = QApplication.activeWindow()
+        try:
+            from hakoniwa import HakoniwaIslandDialog as _HakoniwaIslandDialog
+        except Exception:
+            _HakoniwaIslandDialog = type(None)
         if isinstance(
             active,
             (
@@ -5039,6 +5070,7 @@ class PetMenu(PopupPanel):
                 SlopeCalcDialog,
                 PomodoroDialog,
                 TranslateDialog,
+                _HakoniwaIslandDialog,
             ),
         ):
             return

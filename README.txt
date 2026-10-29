@@ -1,8 +1,8 @@
 Desktop Pet
 ==================
 
-Version: 261028.01
-Published: 2026-10-28
+Version: 261029.01
+Published: 2026-10-29
 
 A floating shortcut menu and document record gadget on the Windows desktop.
 
@@ -19,7 +19,8 @@ Features
 5. The middle section shows "Document record"; click the ">>" button to open the submenu and browse/search files.
    The Document record submenu header has an "Open folder" button to open storage folder(s) in the file manager.
 6. Below Document record, "Mini programs"; click ">>" for Text records and Calculations
-   (Level calc / Slope calc / Free station), plus the Pomodoro timer and Translate.
+   (Level calc / Slope calc / Free station), plus Pomodoro, Translate, and 箱庭島
+   (local island scaffold: oblique diamond map, place/remove buildings, turn loop).
 7. Drag files, folders, or URLs onto the pet to add shortcuts (prompt for name/description).
 8. The bottom has a "Settings" button to edit all configurations.
 9. Window level can be set to Normal, Always on top, or Always on bottom.
@@ -69,7 +70,7 @@ Free_Station_FAI.xls / .xlsm survey spreadsheet:
   residual ΔHD per accepted pair, plus an Average (mean E / N / RL) of those
   pair results. Copy button copies the result block.
 
-What's new in 261028.01 (2026-10-28)
+What's new in 261029.01 (2026-10-29)
 --------
 1. Free Station: IMPORT button (left of Calculate) reads the Free Station
    sheet from .xlsm / .xlsx / .xls into standing station, instrument height,
@@ -78,7 +79,10 @@ What's new in 261028.01 (2026-10-28)
 2. Free Station green results: Average line (mean E, N, RL of accepted pair
    solutions) after the per-pair coordinate lines.
 3. requirements.txt / PyInstaller / Windows CI: openpyxl + xlrd for Excel
-   import (lazy import at runtime; collected explicitly for the EXE).
+   import (lazy import at runtime; collected explicitly for the EXE), plus
+   hakoniwa hidden-imports for the Mini programs 箱庭島 entry.
+4. 箱庭島 (Hakoniwa Island) is available under Mini programs → 箱庭島
+   (already on main via earlier merges; included in this combined release EXE).
 
 What's new in 261027.02 (2026-10-27)
 --------
