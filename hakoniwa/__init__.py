@@ -1,4 +1,4 @@
-"""箱庭島 — Desktop Pet mini-program (scaffold).
+"""箱庭島 — Desktop Pet mini-program (箱庭斜視 + simplified v1 loop).
 
 Public entry: HakoniwaIslandDialog (lazy-imported from .dialog).
 """
