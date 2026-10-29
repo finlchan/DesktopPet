@@ -798,11 +798,11 @@ class HakoniwaIslandDialog(QDialog):
         if s.monsters:
             m = s.monsters[0]
             monster_bit = f" | 怪獸 {m.label()}({m.i},{m.j})"
-        # One line only — compact separators so the strip stays single-row.
+        # One line, locked order: 狀態 → 資金 → 糧食 → 人口 → 回合 → 格數.
         self.stats.setText(
             f"狀態 | 資金 {s.funds} | 糧食 {s.food} | "
-            f"回合 {s.turn} | 陸地 {s.land_count()} 格 | "
-            f"人口 {s.population}{monster_bit}"
+            f"人口 {s.population} | 回合 {s.turn} | "
+            f"格數 {s.land_count()}{monster_bit}"
         )
         self.log_view.setPlainText("\n".join(s.log[-30:]))
         bar = self.log_view.verticalScrollBar()
@@ -1192,7 +1192,7 @@ class TourismIslandDialog(QDialog):
         self.stats.setText(
             f"[{mode}觀光] {island.name}（{self._island_id}） | "
             f"資金 {island.funds} | 糧食 {island.food} | 人口 {island.population} | "
-            f"回合 {island.turn} | 陸地 {island.land_count()} 格"
+            f"回合 {island.turn} | 格數 {island.land_count()}"
         )
         self.hud.log_view.setPlainText("觀光模式：建設與地形指令已鎖定。")
         root.addWidget(self.hud, stretch=1)

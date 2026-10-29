@@ -757,16 +757,20 @@ def test_dialog_import_offscreen():
     # No selection → tools disabled.
     dlg._refresh_toolbar()
     assert all(not b.isEnabled() for b in dlg.tool_buttons.values())
-    # Status overlay carries the four core fields; connection mode is NOT here.
-    assert "資金" in dlg.stats.text()
-    assert "糧食" in dlg.stats.text()
-    assert "回合" in dlg.stats.text()
-    assert "陸地" in dlg.stats.text()
-    assert "[本機]" not in dlg.stats.text()
-    assert "[連線]" not in dlg.stats.text()
+    # Status overlay: locked order 狀態→資金→糧食→人口→回合→格數; no connection mode.
+    st = dlg.stats.text()
+    assert "資金" in st and "糧食" in st and "人口" in st
+    assert "回合" in st and "格數" in st
+    assert "狀態" in st
+    assert "[本機]" not in st and "[連線]" not in st
+    # Exact field order (indices increase left→right).
+    i_status, i_funds = st.index("狀態"), st.index("資金")
+    i_food, i_pop = st.index("糧食"), st.index("人口")
+    i_turn, i_cells = st.index("回合"), st.index("格數")
+    assert i_status < i_funds < i_food < i_pop < i_turn < i_cells, st
     # Status HUD is a single horizontal line (no wrap / multi-line).
     assert dlg.stats.wordWrap() is False
-    assert "\n" not in dlg.stats.text()
+    assert "\n" not in st
     dlg.show()
     dlg.resize(960, 780)
     dlg._refresh_ui()
