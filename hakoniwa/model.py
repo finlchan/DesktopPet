@@ -147,6 +147,7 @@ class IslandState:
     cells: List[List[Cell]] = field(default_factory=list)
     log: List[str] = field(default_factory=list)
     comments: List[GuestbookEntry] = field(default_factory=list)
+    island_id: str = "home"  # multi-island catalog id (home | demo-* | …)
 
     def __post_init__(self) -> None:
         if not self.cells:
@@ -370,6 +371,7 @@ class IslandState:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "version": 2,
+            "id": self.island_id,
             "name": self.name,
             "size": self.size,
             "turn": self.turn,
@@ -398,6 +400,7 @@ class IslandState:
                         for c in row
                     ]
                 )
+        raw_id = data.get("id") or data.get("island_id") or "home"
         state = cls(
             size=size,
             turn=int(data.get("turn") or 1),
@@ -412,9 +415,10 @@ class IslandState:
             cells=parsed if ok else [],
             log=[str(x) for x in (data.get("log") or [])][-80:],
             comments=_parse_comments(data.get("comments")),
+            island_id=str(raw_id).strip() or "home",
         )
         return state
 
     @classmethod
-    def new_game(cls) -> "IslandState":
-        return cls()
+    def new_game(cls, island_id: str = "home", name: str = "箱庭島") -> "IslandState":
+        return cls(island_id=island_id, name=name)
