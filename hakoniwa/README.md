@@ -16,6 +16,8 @@ not a flat top-down square grid rotated 45°.
 | Mountain | 造山 100／噴火→山；整地山→荒地；採掘場 300（僅山上色塊）產資 |
 | Labor | 回合勞動：農場優先，再工場、採掘場；產能依就業比例 |
 | Harbor | 港灣 800／造船所 500（臨海平地色塊）；有其一可貿易輸出 100噸≈5資金 |
+| Breakwater | 防波堤 200（臨海平地色塊）；鄰格減海嘯；自身不被海嘯摧毀 |
+| Oilfield | 掘削 200：陸→淺灘／淺灘→海／海→探油；油田被動產資；機率枯竭→海 |
 | Monument | 紀念碑 9999（平地色塊）；加島分數／安穩；抗怪獸踩踏；鄰格抑火災如森 |
 | Forbidden | Orthographic-only / pure `rotate(45°)` (equal diamond W/H on screen) |
 | No | Under-tile thickness / skirts |

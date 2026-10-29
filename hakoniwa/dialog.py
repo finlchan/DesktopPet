@@ -38,7 +38,9 @@ from .model import (
     BUILDINGS,
     COASTAL_BUILDINGS,
     COST_AFFOREST,
+    COST_BREAKWATER,
     COST_DEFENSE,
+    COST_EXCAVATE,
     COST_FACTORY,
     COST_FARM,
     COST_HARBOR,
@@ -344,6 +346,8 @@ TOOL_SPECS: Tuple[Tuple[str, str, Optional[int], str], ...] = (
     ("level", "整地", COST_LEVEL, "5"),
     ("raise", "造山", COST_RAISE, "R"),
     ("quarry", "建設採掘場", COST_QUARRY, "Q"),
+    ("excavate", "掘削／探油", COST_EXCAVATE, "X"),
+    ("breakwater", "建設防波堤", COST_BREAKWATER, "W"),
     ("afforest", "植林", COST_AFFOREST, "6"),
     ("harvest", "伐採", COST_HARVEST if COST_HARVEST else None, "C"),
     ("missile", "發射飛彈", COST_MISSILE, "7"),
@@ -404,7 +408,7 @@ def tool_enabled(
         elif c.terrain not in BUILDABLE:
             return False, "須在平地建設"
         if kind in COASTAL_BUILDINGS and not state._adjacent_to_sea(i, j):
-            return False, "須臨海平地（鄰海／淺灘）"
+            return False, "須臨海平地（鄰海／淺灘／油田）"
         if state.funds < cost:
             return False, f"資金不足（需 {cost}）"
         return True, ""
@@ -437,6 +441,15 @@ def tool_enabled(
             return False, "須空的荒地或平地"
         if state.funds < COST_RAISE:
             return False, f"資金不足（需 {COST_RAISE}）"
+        return True, ""
+
+    if kind == "excavate":
+        if not state.can_excavate(i, j):
+            if state.monster_at(i, j) is not None:
+                return False, "此格有怪獸"
+            return False, "須空陸／淺灘／海"
+        if state.funds < COST_EXCAVATE:
+            return False, f"資金不足（需 {COST_EXCAVATE}）"
         return True, ""
 
     if kind == "afforest":
@@ -912,6 +925,10 @@ class HakoniwaIslandDialog(QDialog):
                 tip += "\n空荒地／平地→山（可再建採掘場；噴火亦會生山）"
             elif key == "quarry":
                 tip += "\n僅山上可建；勞動產資（農場優先後填採掘）"
+            elif key == "excavate":
+                tip += "\n陸→淺灘／淺灘→海／海→探油（機率發現海底油田）"
+            elif key == "breakwater":
+                tip += "\n臨海平地→防波堤色塊；鄰格減海嘯"
             elif self.selected is not None:
                 tip += f"\n選格 {self.selected[0]},{self.selected[1]}"
             tip += f"\n快捷鍵 {digit}"
@@ -943,6 +960,11 @@ class HakoniwaIslandDialog(QDialog):
             hints.append("可整地")
         if self.state.can_raise_mountain(i, j):
             hints.append("可造山")
+        if self.state.can_excavate(i, j):
+            if c.terrain == "sea":
+                hints.append("可掘削探油")
+            else:
+                hints.append("可掘削")
         if self.state.can_afforest(i, j):
             hints.append("可植林")
         if self.state.can_harvest(i, j):
@@ -954,6 +976,8 @@ class HakoniwaIslandDialog(QDialog):
             hints.append("可建港灣")
         if self.state.can_place_building(i, j, "shipyard"):
             hints.append("可建造船所")
+        if self.state.can_place_building(i, j, "breakwater"):
+            hints.append("可建防波堤")
         if self.state.can_place_building(i, j, "monument"):
             hints.append("可建紀念碑")
         tree_line = ""
@@ -1006,6 +1030,8 @@ class HakoniwaIslandDialog(QDialog):
                     out = self.remote.level(i, j)
                 elif kind == "raise":
                     out = self.remote.raise_mountain(i, j)
+                elif kind == "excavate":
+                    out = self.remote.excavate(i, j)
                 elif kind == "afforest":
                     out = self.remote.afforest(i, j)
                 elif kind == "harvest":
@@ -1039,6 +1065,8 @@ class HakoniwaIslandDialog(QDialog):
             msg = self.state.level_land(i, j)
         elif kind == "raise":
             msg = self.state.raise_mountain(i, j)
+        elif kind == "excavate":
+            msg = self.state.excavate(i, j)
         elif kind == "afforest":
             msg = self.state.afforest(i, j)
         elif kind == "harvest":

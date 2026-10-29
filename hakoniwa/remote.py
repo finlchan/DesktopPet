@@ -161,6 +161,9 @@ class HakoniwaRemote:
     def raise_mountain(self, i: int, j: int) -> ActionOutcome:
         return self._action("/api/v1/island/raise", {"i": i, "j": j})
 
+    def excavate(self, i: int, j: int) -> ActionOutcome:
+        return self._action("/api/v1/island/excavate", {"i": i, "j": j})
+
     def afforest(self, i: int, j: int) -> ActionOutcome:
         return self._action("/api/v1/island/afforest", {"i": i, "j": j})
 

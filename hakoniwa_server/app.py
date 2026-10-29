@@ -46,7 +46,7 @@ class PlaceBody(CellAction):
         ...,
         description=(
             "farm | factory | quarry | defense | missile_base | "
-            "harbor | shipyard | monument"
+            "harbor | shipyard | breakwater | monument"
         ),
     )
 
@@ -137,6 +137,14 @@ def level(body: CellAction) -> ActionResult:
 @app.post("/api/v1/island/raise", response_model=ActionResult, dependencies=[Depends(require_api_key)])
 def raise_mountain(body: CellAction) -> ActionResult:
     msg, island = store.raise_mountain(body.i, body.j)
+    if msg != "ok":
+        return ActionResult(ok=False, error=msg, island=island)
+    return ActionResult(ok=True, island=island)
+
+
+@app.post("/api/v1/island/excavate", response_model=ActionResult, dependencies=[Depends(require_api_key)])
+def excavate(body: CellAction) -> ActionResult:
+    msg, island = store.excavate(body.i, body.j)
     if msg != "ok":
         return ActionResult(ok=False, error=msg, island=island)
     return ActionResult(ok=True, island=island)

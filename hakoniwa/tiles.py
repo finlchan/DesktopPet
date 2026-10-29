@@ -21,6 +21,7 @@ OCEAN_BACKGROUND = ASSETS_DIR / "ocean-background.png"
 TERRAIN_TILE_FILES: Dict[str, str] = {
     "sea": "sea-01.png",
     "shallow": "sea-01.png",
+    "oilfield": "sea-01.png",  # reuse sea top + dark wash（色塊；用戶後補平台圖）
     "dirt": "dirt-01.png",
     "grass": "grass-01.png",
     "forest": "grass-01.png",
@@ -34,6 +35,7 @@ TERRAIN_TILE_FILES: Dict[str, str] = {
 # Forest uses grass top + deeper green wash (flat top only; no skirts).
 TERRAIN_TINT: Dict[str, tuple] = {
     "shallow": (90, 180, 200, 70),
+    "oilfield": (30, 28, 24, 150),  # 海底油田／石油平台色塊洗
     "forest": (12, 58, 24, 120),
     "mountain": (90, 85, 75, 110),
     "village": (200, 170, 100, 55),

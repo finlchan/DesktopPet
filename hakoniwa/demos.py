@@ -62,15 +62,44 @@ def make_demo_coral() -> IslandState:
     mountains = [(i, j) for i, j in land if cells[i][j].terrain == "mountain"]
     if mountains:
         cells[mountains[0][0]][mountains[0][1]].building = "quarry"
-    # One shallow ring touch.
+    # One shallow ring touch + one coastal breakwater + one oilfield offshore.
+    shallow_hit = None
     for i, j in land:
         for ni, nj in neighbors(i, j, GRID_SIZE):
             if cells[ni][nj].terrain == "sea":
                 cells[ni][nj] = Cell("shallow")
+                shallow_hit = (ni, nj)
                 break
         else:
             continue
         break
+    # Place breakwater on a coastal grass cell.
+    for i, j in land:
+        if cells[i][j].terrain != "grass" or cells[i][j].building is not None:
+            continue
+        if any(
+            cells[ni][nj].terrain in ("sea", "shallow")
+            for ni, nj in neighbors(i, j, GRID_SIZE)
+        ):
+            cells[i][j].building = "breakwater"
+            break
+    # Oilfield near the shallow touch (or any sea neighbor of land).
+    oil_placed = False
+    if shallow_hit is not None:
+        for ni, nj in neighbors(*shallow_hit, GRID_SIZE):
+            if cells[ni][nj].terrain == "sea":
+                cells[ni][nj] = Cell("oilfield")
+                oil_placed = True
+                break
+    if not oil_placed:
+        for i, j in land:
+            for ni, nj in neighbors(i, j, GRID_SIZE):
+                if cells[ni][nj].terrain == "sea":
+                    cells[ni][nj] = Cell("oilfield")
+                    oil_placed = True
+                    break
+            if oil_placed:
+                break
 
     state = IslandState(
         size=GRID_SIZE,
@@ -80,7 +109,7 @@ def make_demo_coral() -> IslandState:
         population=180,
         name="珊瑚灘島",
         cells=cells,
-        log=["示範島：珊瑚灘（觀光唯讀）"],
+        log=["示範島：珊瑚灘（觀光唯讀；防波堤／油田）"],
         comments=[
             GuestbookEntry(
                 id="demo-coral-1",
