@@ -47,7 +47,7 @@ class PlaceBody(CellAction):
         description=(
             "farm | factory | quarry | defense | missile_base | "
             "harbor | shipyard | breakwater | monument | "
-            "bank | supermarket | shrine | park | airport"
+            "bank | supermarket | shrine | park | airport | rocket_base"
         ),
     )
 
@@ -226,6 +226,18 @@ def withdraw_funds(body: BankTransferBody) -> ActionResult:
 @app.post("/api/v1/island/attract", response_model=ActionResult, dependencies=[Depends(require_api_key)])
 def attract_population() -> ActionResult:
     msg, island = store.attract_population()
+    if msg != "ok":
+        return ActionResult(ok=False, error=msg, island=island)
+    return ActionResult(ok=True, island=island)
+
+
+@app.post(
+    "/api/v1/island/rocket-launch",
+    response_model=ActionResult,
+    dependencies=[Depends(require_api_key)],
+)
+def launch_rocket() -> ActionResult:
+    msg, island = store.launch_rocket()
     if msg != "ok":
         return ActionResult(ok=False, error=msg, island=island)
     return ActionResult(ok=True, island=island)

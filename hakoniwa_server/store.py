@@ -234,6 +234,13 @@ class IslandStore:
                 self._persist_home_unlocked()
             return msg, self._state.to_dict()
 
+    def launch_rocket(self) -> tuple[str, dict]:
+        with self._lock:
+            msg = self._state.launch_rocket()
+            if msg == "ok":
+                self._persist_home_unlocked()
+            return msg, self._state.to_dict()
+
     def next_turn(self) -> tuple[list[str], dict]:
         with self._lock:
             notes = self._state.next_turn()
