@@ -12,7 +12,8 @@ buildings (spawn/stomp/missile stubs), 港灣／造船所／貿易輸出（臨�
 銀行／超市／神社色塊（變體：資金緩衝、買糧、分數／安穩加成）,
 公園色塊＋誘致活動（都市計畫：安穩／生村加成；定本誘致 1000）,
 空港色塊＋觀光訪客增益（交通／觀光收入／留言小費／誘致加成）,
-ロケット基地色塊＋觀測衛星發射（減震／海嘯／噴火；變體啟發費用）.
+ロケット基地色塊＋觀測衛星發射（減震／海嘯／噴火；變體啟發費用）,
+酒店／賭場色塊＋娛樂觀光收入（變體：住宿／賭場觀光名所；費用估算見常數）.
 Color-block placeholders only — user art later.
 """
 
@@ -65,6 +66,12 @@ COST_AIRPORT = 1500     # 空港（交通／觀光樞紐色塊；平地）
 COST_ROCKET_BASE = 2000  # ロケット基地（平地色塊；解鎖衛星發射）
 # 發射：箱庭諸島2 Ex「觀測衛星」800（需基地）；本機同額發射指令。
 COST_ROCKET_LAUNCH = 800  # 觀測衛星發射（不推進回合；需 ≥1 ロケット基地）
+# 酒店：目錄「海之家／民宿／度假村」費用為「?」。本機估算：
+# 高於公園(250)／超市(300)、低於神社(800)／港灣(800) → 600。
+COST_HOTEL = 600  # 酒店（住宿觀光色塊；平地）
+# 賭場：目錄「賭場／觀光名所」「遊樂園」費用為「?」。本機採賭場色塊：
+# 高於酒店(600)／神社(800)、低於空港(1500)／ロケット(2000) → 1100。
+COST_CASINO = 1100  # 賭場（娛樂觀光色塊；平地；依人口加碼收入）
 
 # Forest tree stock (catalog 木 100～20000；+100／回合；新植林 100).
 TREE_MIN = 100
@@ -109,6 +116,8 @@ PLACEABLE_BUILDINGS = frozenset(
         "park",
         "airport",
         "rocket_base",
+        "hotel",
+        "casino",
     }
 )
 COASTAL_BUILDINGS = frozenset({"harbor", "shipyard", "breakwater"})
@@ -140,6 +149,8 @@ SCORE_PER_PARK = 150
 SCORE_PER_AIRPORT = 500  # 交通設施：島分數權重高於港灣
 SCORE_PER_ROCKET_BASE = 400  # 宇宙設施：略低於空港
 SCORE_PER_SATELLITE = 300  # 在軌觀測衛星（發射後）
+SCORE_PER_HOTEL = 200  # 住宿觀光：低於空港／賭場
+SCORE_PER_CASINO = 320  # 娛樂觀光：介於公園與空港之間
 SCORE_PER_VILLAGE = 30
 SCORE_PER_TOWN = 80
 SCORE_PER_CITY = 150
@@ -158,7 +169,13 @@ ATTRACT_AIRPORT_EXTRA = 20
 # 空港觀光收入（每座／回合；再依人口加碼）與訪客留言小費.
 TOURISM_FUNDS_BASE = 12
 TOURISM_FUNDS_PER_100_POP = 3
-VISITOR_TIP_FUNDS = 20  # 留言板小費（需 ≥1 空港）
+VISITOR_TIP_FUNDS = 20  # 留言板小費（需 ≥1 空港或酒店）
+# 酒店住宿觀光收入（每座／回合；再依人口加碼；低於空港）.
+HOTEL_TOURISM_BASE = 8
+HOTEL_TOURISM_PER_100_POP = 2
+# 賭場娛樂觀光收入（每座／回合；再依人口加碼；高於酒店）.
+CASINO_TOURISM_BASE = 18
+CASINO_TOURISM_PER_100_POP = 5
 # 觀測衛星：地震／海嘯／噴火機率 × 此係數（Ex 約 1/4；本機同量級）.
 SATELLITE_DISASTER_FACTOR = 0.25
 
@@ -253,6 +270,9 @@ BUILDINGS = {
         "color": (64, 108, 128),
         "cost": COST_ROCKET_BASE,
     },
+    # 住宿／娛樂觀光色塊（酒店・賭場：分數＋回合觀光收入；美術後補）
+    "hotel": {"label": "酒店", "color": (196, 128, 88), "cost": COST_HOTEL},
+    "casino": {"label": "賭場", "color": (168, 72, 96), "cost": COST_CASINO},
 }
 
 # Monsters as solid color-block placeholders (squares on map; art later).
@@ -271,7 +291,7 @@ Coord = Tuple[int, int]
 LAND_TERRAINS = frozenset(k for k, v in TERRAIN.items() if v["land"])
 SETTLEMENT_TERRAINS = frozenset({"village", "town", "city"})
 BUILDABLE = frozenset({"grass"})  # 平地 only（村／町／都市請先整地；採掘場除外）
-SAVE_VERSION = 13
+SAVE_VERSION = 14
 
 
 def timber_funds(trees: int) -> int:
@@ -291,13 +311,28 @@ def food_buy_cost(lots: int) -> int:
     return max(0, int(lots)) * FUNDS_PER_FOOD_BUY
 
 
-def tourism_funds(airports: int, population: int) -> int:
-    """Per-turn tourism income from 空港 (base + pop tier)."""
-    n = max(0, int(airports))
-    if n <= 0:
-        return 0
-    pop_tier = (max(0, int(population)) // 100) * TOURISM_FUNDS_PER_100_POP
-    return n * (TOURISM_FUNDS_BASE + pop_tier)
+def tourism_funds(
+    airports: int,
+    population: int,
+    hotels: int = 0,
+    casinos: int = 0,
+) -> int:
+    """Per-turn tourism income from 空港／酒店／賭場 (base + pop tier)."""
+    pop = max(0, int(population))
+    total = 0
+    n_air = max(0, int(airports))
+    if n_air > 0:
+        pop_tier = (pop // 100) * TOURISM_FUNDS_PER_100_POP
+        total += n_air * (TOURISM_FUNDS_BASE + pop_tier)
+    n_hotel = max(0, int(hotels))
+    if n_hotel > 0:
+        pop_tier = (pop // 100) * HOTEL_TOURISM_PER_100_POP
+        total += n_hotel * (HOTEL_TOURISM_BASE + pop_tier)
+    n_casino = max(0, int(casinos))
+    if n_casino > 0:
+        pop_tier = (pop // 100) * CASINO_TOURISM_PER_100_POP
+        total += n_casino * (CASINO_TOURISM_BASE + pop_tier)
+    return total
 
 
 def clamp_trees(trees: int) -> int:
@@ -364,10 +399,12 @@ def compute_island_score(
     parks: int = 0,
     airports: int = 0,
     rocket_bases: int = 0,
+    hotels: int = 0,
+    casinos: int = 0,
     satellite_active: bool = False,
     bank_deposit: int = 0,
 ) -> int:
-    """簡易島分數（順位／國威 stub；紀念碑／神社／公園／空港／宇宙權重大）."""
+    """簡易島分數（順位／國威 stub；紀念碑／神社／公園／空港／宇宙／觀光權重大）."""
     liquid = max(0, int(funds)) + max(0, int(bank_deposit))
     return (
         max(0, int(population)) * SCORE_PER_POP
@@ -390,6 +427,8 @@ def compute_island_score(
         + max(0, int(airports)) * SCORE_PER_AIRPORT
         + max(0, int(rocket_bases)) * SCORE_PER_ROCKET_BASE
         + (SCORE_PER_SATELLITE if satellite_active else 0)
+        + max(0, int(hotels)) * SCORE_PER_HOTEL
+        + max(0, int(casinos)) * SCORE_PER_CASINO
         + max(0, int(villages)) * SCORE_PER_VILLAGE
         + max(0, int(towns)) * SCORE_PER_TOWN
         + max(0, int(cities)) * SCORE_PER_CITY
@@ -674,6 +713,18 @@ class IslandState:
     def has_rocket_base(self) -> bool:
         return self.rocket_base_count() > 0
 
+    def hotel_count(self) -> int:
+        return self.building_count("hotel")
+
+    def has_hotel(self) -> bool:
+        return self.hotel_count() > 0
+
+    def casino_count(self) -> int:
+        return self.building_count("casino")
+
+    def has_casino(self) -> bool:
+        return self.casino_count() > 0
+
     def has_satellite(self) -> bool:
         return bool(self.satellite_active)
 
@@ -719,6 +770,8 @@ class IslandState:
             parks=self.park_count(),
             airports=self.airport_count(),
             rocket_bases=self.rocket_base_count(),
+            hotels=self.hotel_count(),
+            casinos=self.casino_count(),
             satellite_active=self.has_satellite(),
             bank_deposit=self.bank_deposit,
         )
@@ -1605,12 +1658,23 @@ class IslandState:
         # 海底油田：被動產資（無勞動）＋枯竭機率.
         notes.extend(self._oilfield_income_and_depletion())
 
-        # 空港觀光收入（交通樞紐 stub；依人口加碼）.
+        # 觀光收入（空港／酒店／賭場；依人口加碼）.
         airports = self.airport_count()
-        tour_gain = tourism_funds(airports, self.population)
+        hotels = self.hotel_count()
+        casinos = self.casino_count()
+        tour_gain = tourism_funds(
+            airports, self.population, hotels=hotels, casinos=casinos
+        )
         if tour_gain > 0:
             self.funds += tour_gain
-            notes.append(f"空港×{airports} 觀光收入 +{tour_gain}")
+            tour_bits = []
+            if airports:
+                tour_bits.append(f"空港×{airports}")
+            if hotels:
+                tour_bits.append(f"酒店×{hotels}")
+            if casinos:
+                tour_bits.append(f"賭場×{casinos}")
+            notes.append(f"{'／'.join(tour_bits)} 觀光收入 +{tour_gain}")
 
         # 流動資金軟上限：有銀行緩衝／無銀行捨棄.
         notes.extend(self._apply_funds_cap())
@@ -1680,6 +1744,8 @@ class IslandState:
         parks = self.park_count()
         airports_n = self.airport_count()
         rockets_n = self.rocket_base_count()
+        hotels_n = self.hotel_count()
+        casinos_n = self.casino_count()
         score_bits = []
         if monuments:
             score_bits.append(f"紀念碑×{monuments}")
@@ -1693,6 +1759,10 @@ class IslandState:
             score_bits.append(f"ロケット基地×{rockets_n}")
         if self.satellite_active:
             score_bits.append("觀測衛星")
+        if hotels_n:
+            score_bits.append(f"酒店×{hotels_n}")
+        if casinos_n:
+            score_bits.append(f"賭場×{casinos_n}")
         notes.append(
             f"島分數 {score}"
             + (f"（{'／'.join(score_bits)}）" if score_bits else "")
@@ -1731,11 +1801,12 @@ class IslandState:
         if len(self.comments) > MAX_GUEST_COMMENTS:
             self.comments = self.comments[-MAX_GUEST_COMMENTS:]
         tip = 0
-        if self.has_airport():
+        if self.has_airport() or self.has_hotel():
             tip = VISITOR_TIP_FUNDS
             self.funds += tip
+            hub = "空港" if self.has_airport() else "酒店"
             self._log(
-                f"訪客留言：{clean_name}（空港觀光小費 +{tip}）"
+                f"訪客留言：{clean_name}（{hub}觀光小費 +{tip}）"
             )
         else:
             self._log(f"訪客留言：{clean_name}")

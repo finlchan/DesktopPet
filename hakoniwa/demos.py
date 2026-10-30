@@ -107,7 +107,16 @@ def make_demo_coral() -> IslandState:
         if cells[i][j].terrain == "grass" and cells[i][j].building is None
     ]
     for idx, kind in enumerate(
-        ("bank", "supermarket", "shrine", "park", "airport", "rocket_base")
+        (
+            "bank",
+            "supermarket",
+            "shrine",
+            "park",
+            "airport",
+            "rocket_base",
+            "hotel",
+            "casino",
+        )
     ):
         if idx >= len(free_grass):
             break
@@ -124,7 +133,7 @@ def make_demo_coral() -> IslandState:
         name="珊瑚灘島",
         cells=cells,
         log=[
-            "示範島：珊瑚灘（觀光唯讀；防波堤／油田／銀行超市神社／公園／空港／ロケット基地）"
+            "示範島：珊瑚灘（觀光唯讀；防波堤／油田／銀行超市神社／公園／空港／ロケット基地／酒店賭場）"
         ],
         comments=[
             GuestbookEntry(

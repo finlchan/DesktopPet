@@ -47,7 +47,8 @@ class PlaceBody(CellAction):
         description=(
             "farm | factory | quarry | defense | missile_base | "
             "harbor | shipyard | breakwater | monument | "
-            "bank | supermarket | shrine | park | airport | rocket_base"
+            "bank | supermarket | shrine | park | airport | rocket_base | "
+            "hotel | casino"
         ),
     )
 
