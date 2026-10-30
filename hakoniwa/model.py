@@ -10,7 +10,8 @@ buildings (spawn/stomp/missile stubs), 港灣／造船所／貿易輸出（臨�
 山岳地形＋採掘場色塊（僅山上；產資）,
 防波堤色塊（臨海；減海嘯）＋海底油田（掘削／探油；被動產資；枯竭）,
 銀行／超市／神社色塊（變體：資金緩衝、買糧、分數／安穩加成）,
-公園色塊＋誘致活動（都市計畫：安穩／生村加成；定本誘致 1000）.
+公園色塊＋誘致活動（都市計畫：安穩／生村加成；定本誘致 1000）,
+空港色塊＋觀光訪客增益（交通／觀光收入／留言小費／誘致加成）.
 Color-block placeholders only — user art later.
 """
 
@@ -55,6 +56,9 @@ COST_SUPERMARKET = 300  # 超市（變體：資金買糧食）
 COST_SHRINE = 800       # 神社（變體：島分數／安穩加成）
 COST_PARK = 250         # 公園（變體／都市計畫：安穩＋誘發村落）
 COST_ATTRACT = 1000     # 誘致活動（定本 1000 億；當回合人口更易增）
+# 空港：目錄費用為「?」（島あげます交通設施）。本機採箱庭2／變體常見區間估算：
+# 高於港灣(800)／神社(800)、近防衛(1000)、遠低於紀念碑(9999) → 1500。
+COST_AIRPORT = 1500     # 空港（交通／觀光樞紐色塊；平地）
 
 # Forest tree stock (catalog 木 100～20000；+100／回合；新植林 100).
 TREE_MIN = 100
@@ -97,6 +101,7 @@ PLACEABLE_BUILDINGS = frozenset(
         "supermarket",
         "shrine",
         "park",
+        "airport",
     }
 )
 COASTAL_BUILDINGS = frozenset({"harbor", "shipyard", "breakwater"})
@@ -125,6 +130,7 @@ SCORE_PER_BANK = 90
 SCORE_PER_SUPERMARKET = 40
 SCORE_PER_SHRINE = 800
 SCORE_PER_PARK = 150
+SCORE_PER_AIRPORT = 500  # 交通設施：島分數權重高於港灣
 SCORE_PER_VILLAGE = 30
 SCORE_PER_TOWN = 80
 SCORE_PER_CITY = 150
@@ -138,6 +144,12 @@ HAPPINESS_POP_PER_PARK = 6
 PARK_SETTLEMENT_SPAWN_BONUS = 0.15
 # 誘致活動：下一次 next_turn 餵飽時額外人頭.
 ATTRACT_POP_BONUS = 40
+# 空港＋誘致：有空港時誘致再加人口（觀光 inbound stub）.
+ATTRACT_AIRPORT_EXTRA = 20
+# 空港觀光收入（每座／回合；再依人口加碼）與訪客留言小費.
+TOURISM_FUNDS_BASE = 12
+TOURISM_FUNDS_PER_100_POP = 3
+VISITOR_TIP_FUNDS = 20  # 留言板小費（需 ≥1 空港）
 
 # Turn yields (simplified short loop; not server-accurate).
 FOOD_PER_FARM = 100     # ~100 人農場 → 100 噸／回合
@@ -222,6 +234,8 @@ BUILDINGS = {
     "shrine": {"label": "神社", "color": (180, 60, 70), "cost": COST_SHRINE},
     # 都市計畫色塊（公園：安穩／生村；美術後補）
     "park": {"label": "公園", "color": (72, 168, 96), "cost": COST_PARK},
+    # 交通／觀光色塊（空港：分數＋觀光收入／訪客小費；美術後補）
+    "airport": {"label": "空港", "color": (88, 148, 200), "cost": COST_AIRPORT},
 }
 
 # Monsters as solid color-block placeholders (squares on map; art later).
@@ -240,7 +254,7 @@ Coord = Tuple[int, int]
 LAND_TERRAINS = frozenset(k for k, v in TERRAIN.items() if v["land"])
 SETTLEMENT_TERRAINS = frozenset({"village", "town", "city"})
 BUILDABLE = frozenset({"grass"})  # 平地 only（村／町／都市請先整地；採掘場除外）
-SAVE_VERSION = 11
+SAVE_VERSION = 12
 
 
 def timber_funds(trees: int) -> int:
@@ -258,6 +272,15 @@ def food_export_funds(lots: int) -> int:
 def food_buy_cost(lots: int) -> int:
     """Funds spent buying ``lots`` supermarket food batches."""
     return max(0, int(lots)) * FUNDS_PER_FOOD_BUY
+
+
+def tourism_funds(airports: int, population: int) -> int:
+    """Per-turn tourism income from 空港 (base + pop tier)."""
+    n = max(0, int(airports))
+    if n <= 0:
+        return 0
+    pop_tier = (max(0, int(population)) // 100) * TOURISM_FUNDS_PER_100_POP
+    return n * (TOURISM_FUNDS_BASE + pop_tier)
 
 
 def clamp_trees(trees: int) -> int:
@@ -322,9 +345,10 @@ def compute_island_score(
     supermarkets: int = 0,
     shrines: int = 0,
     parks: int = 0,
+    airports: int = 0,
     bank_deposit: int = 0,
 ) -> int:
-    """簡易島分數（順位／國威 stub；紀念碑／神社／公園權重大）."""
+    """簡易島分數（順位／國威 stub；紀念碑／神社／公園／空港權重大）."""
     liquid = max(0, int(funds)) + max(0, int(bank_deposit))
     return (
         max(0, int(population)) * SCORE_PER_POP
@@ -344,6 +368,7 @@ def compute_island_score(
         + max(0, int(supermarkets)) * SCORE_PER_SUPERMARKET
         + max(0, int(shrines)) * SCORE_PER_SHRINE
         + max(0, int(parks)) * SCORE_PER_PARK
+        + max(0, int(airports)) * SCORE_PER_AIRPORT
         + max(0, int(villages)) * SCORE_PER_VILLAGE
         + max(0, int(towns)) * SCORE_PER_TOWN
         + max(0, int(cities)) * SCORE_PER_CITY
@@ -615,6 +640,12 @@ class IslandState:
     def park_count(self) -> int:
         return self.building_count("park")
 
+    def airport_count(self) -> int:
+        return self.building_count("airport")
+
+    def has_airport(self) -> bool:
+        return self.airport_count() > 0
+
     def terrain_count(self, kind: str) -> int:
         return sum(1 for row in self.cells for c in row if c.terrain == kind)
 
@@ -655,6 +686,7 @@ class IslandState:
             supermarkets=self.building_count("supermarket"),
             shrines=self.shrine_count(),
             parks=self.park_count(),
+            airports=self.airport_count(),
             bank_deposit=self.bank_deposit,
         )
 
@@ -1512,13 +1544,22 @@ class IslandState:
         # 海底油田：被動產資（無勞動）＋枯竭機率.
         notes.extend(self._oilfield_income_and_depletion())
 
+        # 空港觀光收入（交通樞紐 stub；依人口加碼）.
+        airports = self.airport_count()
+        tour_gain = tourism_funds(airports, self.population)
+        if tour_gain > 0:
+            self.funds += tour_gain
+            notes.append(f"空港×{airports} 觀光收入 +{tour_gain}")
+
         # 流動資金軟上限：有銀行緩衝／無銀行捨棄.
         notes.extend(self._apply_funds_cap())
 
-        # 誘致活動：本回合消耗標記；僅餵飽時生效.
+        # 誘致活動：本回合消耗標記；僅餵飽時生效；有空港再加 inbound.
         attract_bonus = 0
         if self.attract_pending:
             attract_bonus = ATTRACT_POP_BONUS
+            if airports > 0:
+                attract_bonus += ATTRACT_AIRPORT_EXTRA * airports
             self.attract_pending = False
             notes.append(f"誘致活動生效（人口加成 +{attract_bonus}）")
 
@@ -1576,6 +1617,7 @@ class IslandState:
         monuments = self.monument_count()
         shrines = self.shrine_count()
         parks = self.park_count()
+        airports_n = self.airport_count()
         score_bits = []
         if monuments:
             score_bits.append(f"紀念碑×{monuments}")
@@ -1583,6 +1625,8 @@ class IslandState:
             score_bits.append(f"神社×{shrines}")
         if parks:
             score_bits.append(f"公園×{parks}")
+        if airports_n:
+            score_bits.append(f"空港×{airports_n}")
         notes.append(
             f"島分數 {score}"
             + (f"（{'／'.join(score_bits)}）" if score_bits else "")
@@ -1620,7 +1664,15 @@ class IslandState:
         self.comments.append(entry)
         if len(self.comments) > MAX_GUEST_COMMENTS:
             self.comments = self.comments[-MAX_GUEST_COMMENTS:]
-        self._log(f"訪客留言：{clean_name}")
+        tip = 0
+        if self.has_airport():
+            tip = VISITOR_TIP_FUNDS
+            self.funds += tip
+            self._log(
+                f"訪客留言：{clean_name}（空港觀光小費 +{tip}）"
+            )
+        else:
+            self._log(f"訪客留言：{clean_name}")
         return "ok"
 
     def to_dict(self) -> Dict[str, Any]:
