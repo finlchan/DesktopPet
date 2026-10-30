@@ -1795,6 +1795,22 @@ def test_dialog_import_offscreen():
     assert dlg.server_url.parent() is dlg.hud.settings_body
     assert dlg.conn_status.parent() is dlg.hud.settings_body
     assert not dlg.hud.tools_drawer.isVisible()
+    # No top instruction banner (「點選格子…」/ shortcut strip) on open.
+    from PySide6.QtWidgets import QLabel
+
+    banner_bits = ("點選格子", "快捷鍵：", "滾輪縮放")
+    for lab in dlg.findChildren(QLabel):
+        t = lab.text() or ""
+        assert not any(b in t for b in banner_bits), t
+    # Tools button geometry is correct even before the dialog is shown
+    # (isHidden()-based layout; was stuck at top-left with isVisible()).
+    assert not dlg.hud.tools_btn.isHidden()
+    btn_geo = dlg.hud.tools_btn.geometry()
+    assert btn_geo.y() >= dlg.hud.height() // 2, (
+        btn_geo,
+        dlg.hud.size(),
+    )
+    assert btn_geo.x() <= 16, btn_geo
     # No selection → cell tools disabled；誘致不需選格（資金足夠時可點）.
     dlg._refresh_toolbar()
     for key, btn in dlg.tool_buttons.items():
@@ -1821,6 +1837,12 @@ def test_dialog_import_offscreen():
     dlg.resize(960, 780)
     dlg._refresh_ui()
     app.processEvents()
+    # After show: tools button still bottom-left without needing a click.
+    btn_geo = dlg.hud.tools_btn.geometry()
+    assert btn_geo.y() >= dlg.hud.height() - btn_geo.height() - 24, (
+        btn_geo,
+        dlg.hud.size(),
+    )
     status_h = dlg.stats.height()
     line_h = dlg.stats.fontMetrics().height()
     assert status_h <= line_h + 16, (status_h, line_h, dlg.stats.text())

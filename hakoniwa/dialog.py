@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from PySide6.QtCore import Qt, QEvent
-from PySide6.QtGui import QKeySequence, QShortcut, QResizeEvent
+from PySide6.QtGui import QKeySequence, QShortcut, QResizeEvent, QShowEvent
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
@@ -262,6 +262,12 @@ class HakoniwaMapHud(QWidget):
         super().resizeEvent(event)
         self._layout_overlays()
 
+    def showEvent(self, event: QShowEvent) -> None:  # noqa: N802
+        # Parent show can leave overlay geometry stale if resize did not fire
+        # after isHidden()-safe layout (tools btn would stick at 0,0).
+        super().showEvent(event)
+        self._layout_overlays()
+
     def eventFilter(self, watched, event):  # noqa: N802
         # Keep overlays above the map if something re-raises the map.
         if watched is self.map and event.type() == QEvent.Type.Show:
@@ -277,7 +283,8 @@ class HakoniwaMapHud(QWidget):
             self.tools_drawer,
             self.tools_btn,
         ):
-            if w.isVisible():
+            # isHidden() = explicit hide; isVisible() is false before ancestors show.
+            if not w.isHidden():
                 w.raise_()
 
     def _layout_overlays(self) -> None:
@@ -303,9 +310,12 @@ class HakoniwaMapHud(QWidget):
             margin, margin + status_h + 6, tile_w, tile_h
         )
 
-        # Tools button — bottom-left (hidden in tourism / read-only)
+        # Tools button — bottom-left (hidden in tourism / read-only).
+        # Use isHidden(), not isVisible(): during __init__ / pre-show layout,
+        # isVisible() is False for every child, so the btn stayed at (0,0)
+        # until the first click re-ran layout.
         btn_x = margin
-        if self.tools_btn.isVisible():
+        if not self.tools_btn.isHidden():
             self.tools_btn.adjustSize()
             btn_w = max(self.tools_btn.sizeHint().width() + 8, 100)
             btn_h = max(self.tools_btn.sizeHint().height(), 28)
@@ -319,7 +329,7 @@ class HakoniwaMapHud(QWidget):
         # Tools drawer — above the button, left side
         drawer_w = min(280, max(200, w // 3))
         drawer_h = min(h - 2 * margin - btn_h - 8, max(220, int(h * 0.62)))
-        if self.tools_drawer.isVisible():
+        if not self.tools_drawer.isHidden():
             self.tools_drawer.setGeometry(
                 margin,
                 max(margin, btn_y - 6 - drawer_h),
@@ -571,16 +581,8 @@ class HakoniwaIslandDialog(QDialog):
         root.setSpacing(4)
         root.addWidget(dp.make_draggable_title(self, "箱庭島"))
 
-        hint = QLabel(
-            "箱庭斜視 · 點選格子 → 左下「工具／設定」建設／地形／飛彈 · 下回合結算　"
-            "（色塊佔位）· 滾輪縮放 · 中／右鍵平移　"
-            "快捷鍵：1–9／B／C 工具 · T 下回合 · S 存檔 · Esc 取消選取 · 0 重置視圖"
-        )
-        hint.setObjectName("calcResult")
-        hint.setWordWrap(True)
-        root.addWidget(hint)
-
         # Map fills the body; all numeric/function UI is in-viewport HUD.
+        # (No top instruction banner — controls live in 工具／設定.)
         self.map = HakoniwaMapWidget(self.state)
         self.map.cell_clicked.connect(self._on_cell_clicked)
         self.hud = HakoniwaMapHud(self.map)
