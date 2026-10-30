@@ -50,6 +50,8 @@ from hakoniwa.model import (
     COST_PARK,
     COST_QUARRY,
     COST_RAISE,
+    COST_ROCKET_BASE,
+    COST_ROCKET_LAUNCH,
     COST_SHIPYARD,
     COST_SHRINE,
     COST_SUPERMARKET,
@@ -83,6 +85,7 @@ from hakoniwa.model import (
     OIL_DISCOVER_CHANCE,
     PARK_SETTLEMENT_SPAWN_BONUS,
     SAVE_VERSION,
+    SATELLITE_DISASTER_FACTOR,
     SCORE_PER_AIRPORT,
     SCORE_PER_BANK,
     SCORE_PER_BREAKWATER,
@@ -90,6 +93,8 @@ from hakoniwa.model import (
     SCORE_PER_OILFIELD,
     SCORE_PER_PARK,
     SCORE_PER_QUARRY,
+    SCORE_PER_ROCKET_BASE,
+    SCORE_PER_SATELLITE,
     SCORE_PER_SHRINE,
     SCORE_PER_SUPERMARKET,
     TIMBER_LOT,
@@ -219,6 +224,8 @@ def test_catalog_costs():
     assert COST_PARK == 250
     assert COST_ATTRACT == 1000
     assert COST_AIRPORT == 1500
+    assert COST_ROCKET_BASE == 2000
+    assert COST_ROCKET_LAUNCH == 800
     assert SCORE_PER_MONUMENT == 2000
     assert SCORE_PER_QUARRY == 70
     assert SCORE_PER_BREAKWATER == 50
@@ -228,6 +235,8 @@ def test_catalog_costs():
     assert SCORE_PER_SHRINE == 800
     assert SCORE_PER_PARK == 150
     assert SCORE_PER_AIRPORT == 500
+    assert SCORE_PER_ROCKET_BASE == 400
+    assert SCORE_PER_SATELLITE == 300
     assert HAPPINESS_POP_PER_MONUMENT == 5
     assert HAPPINESS_POP_PER_SHRINE == 8
     assert HAPPINESS_POP_PER_PARK == 6
@@ -241,6 +250,7 @@ def test_catalog_costs():
     assert tourism_funds(1, 180) == TOURISM_FUNDS_BASE + TOURISM_FUNDS_PER_100_POP
     assert tourism_funds(2, 250) == 2 * (TOURISM_FUNDS_BASE + 2 * TOURISM_FUNDS_PER_100_POP)
     assert 0 < PARK_SETTLEMENT_SPAWN_BONUS < 1
+    assert 0 < SATELLITE_DISASTER_FACTOR < 1
     assert FUNDS_SOFT_CAP == 9999
     assert BANK_TRANSFER_LOT == 100
     assert FOOD_EXPORT_LOT == 100
@@ -249,7 +259,7 @@ def test_catalog_costs():
     assert FUNDS_PER_FOOD_BUY == 8
     assert FUNDS_PER_QUARRY == 8
     assert FUNDS_PER_OILFIELD == 50
-    assert SAVE_VERSION == 12
+    assert SAVE_VERSION == 13
     assert 0 < OIL_DISCOVER_CHANCE <= 1
     assert 0 < OIL_DEPLETION_CHANCE < 1
     assert TSUNAMI_BASE_CHANCE > 0
@@ -1468,6 +1478,116 @@ def test_airport_and_tourism_buffs():
     assert coral.airport_count() >= 1
 
 
+def test_rocket_base_and_launch():
+    """ロケット基地色塊＋觀測衛星發射（減震／海嘯／噴火；SAVE round-trip）."""
+    import random
+
+    import hakoniwa.model as model_mod
+
+    state = IslandState.new_game()
+    land = [(i, j) for i in range(20) for j in range(20) if state.is_land(i, j)]
+    for i, j in land:
+        if state.cell(i, j).terrain == "dirt":
+            assert state.level_land(i, j) == "ok"
+    grass = [
+        (i, j)
+        for i, j in land
+        if state.cell(i, j).terrain == "grass" and state.cell(i, j).building is None
+    ]
+    assert len(grass) >= 1
+    ri, rj = grass[0]
+
+    # Launch without base → fail.
+    assert state.launch_rocket() != "ok"
+    ok, reason = tool_enabled(state, "rocket_launch", None)
+    assert ok is False
+    assert "ロケット" in reason or "基地" in reason
+
+    # Too poor → cannot place base.
+    state.funds = COST_ROCKET_BASE - 1
+    assert state.place_building(ri, rj, "rocket_base") != "ok"
+    state.funds = COST_ROCKET_BASE + COST_ROCKET_LAUNCH + 50
+    before = state.funds
+    assert state.can_place_building(ri, rj, "rocket_base")
+    assert state.place_building(ri, rj, "rocket_base") == "ok"
+    assert state.cell(ri, rj).building == "rocket_base"
+    assert state.funds == before - COST_ROCKET_BASE
+    assert state.rocket_base_count() == 1
+    assert state.has_rocket_base()
+    assert state.island_score() >= SCORE_PER_ROCKET_BASE
+
+    keys = {k for k, *_ in TOOL_SPECS}
+    assert "rocket_base" in keys and "rocket_launch" in keys
+    ok, _ = tool_enabled(state, "rocket_base", (ri, rj))
+    assert ok is False  # occupied
+
+    # Launch success → satellite_active.
+    funds_pre = state.funds
+    ok, _ = tool_enabled(state, "rocket_launch", None)
+    assert ok is True
+    assert state.launch_rocket() == "ok"
+    assert state.funds == funds_pre - COST_ROCKET_LAUNCH
+    assert state.has_satellite()
+    assert state.satellite_active is True
+    assert state.island_score() >= SCORE_PER_ROCKET_BASE + SCORE_PER_SATELLITE
+    assert any("衛星" in line for line in state.log)
+
+    # Second launch blocked.
+    assert state.launch_rocket() != "ok"
+    ok, reason = tool_enabled(state, "rocket_launch", None)
+    assert ok is False
+    assert "在軌" in reason or "衛星" in reason
+
+    # Save round-trip preserves satellite + base.
+    blob = state.to_dict()
+    assert blob["version"] == SAVE_VERSION
+    assert blob.get("satellite_active") is True
+    loaded = IslandState.from_dict(blob)
+    assert loaded.rocket_base_count() == 1
+    assert loaded.cell(ri, rj).building == "rocket_base"
+    assert loaded.has_satellite()
+    assert loaded.island_score() == state.island_score()
+
+    # Satellite disaster factor helper + turn note when disasters run.
+    assert state._satellite_disaster_factor() == SATELLITE_DISASTER_FACTOR
+    bare = IslandState.new_game()
+    assert bare._satellite_disaster_factor() == 1.0
+
+    old_fire = model_mod.FIRE_BASE_CHANCE
+    old_ty = model_mod.TYPHOON_BASE_CHANCE
+    old_qk = model_mod.QUAKE_BASE_CHANCE
+    old_vo = model_mod.VOLCANO_BASE_CHANCE
+    old_ts = model_mod.TSUNAMI_BASE_CHANCE
+    old_mon = model_mod.MONSTER_BASE_CHANCE
+    # Keep quake path live so satellite note is emitted; silence wipe risk.
+    model_mod.FIRE_BASE_CHANCE = 0.0
+    model_mod.TYPHOON_BASE_CHANCE = 0.0
+    model_mod.QUAKE_BASE_CHANCE = 0.0
+    model_mod.VOLCANO_BASE_CHANCE = 0.0
+    model_mod.TSUNAMI_BASE_CHANCE = 0.0
+    model_mod.MONSTER_BASE_CHANCE = 0.0
+    try:
+        # With all base chances 0, factor still applied but no events —
+        # force a non-zero quake chance only to surface the 減災 note.
+        model_mod.QUAKE_BASE_CHANCE = 0.01
+        state.food = max(state.food, 500)
+        random.seed(42)
+        notes = state.next_turn()
+        assert any("減災" in n for n in notes), notes
+        assert state.rocket_base_count() == 1
+        assert state.has_satellite()
+    finally:
+        model_mod.FIRE_BASE_CHANCE = old_fire
+        model_mod.TYPHOON_BASE_CHANCE = old_ty
+        model_mod.QUAKE_BASE_CHANCE = old_qk
+        model_mod.VOLCANO_BASE_CHANCE = old_vo
+        model_mod.TSUNAMI_BASE_CHANCE = old_ts
+        model_mod.MONSTER_BASE_CHANCE = old_mon
+
+    coral = make_demo_coral()
+    assert coral.rocket_base_count() >= 1
+
+
 def test_settlements_and_disasters():
     """Village/town/city evolution + fire/typhoon/quake stubs (local-first)."""
     import random
@@ -1849,6 +1969,8 @@ def test_tool_enabled_rules():
             assert "銀行" in reason
         elif key == "buy_food":
             assert "超市" in reason
+        elif key == "rocket_launch":
+            assert "ロケット" in reason or "基地" in reason
         else:
             assert "選格" in reason
     # Poor island → attract locked.
@@ -1959,7 +2081,8 @@ def test_dialog_import_offscreen():
         dlg.hud.size(),
     )
     assert btn_geo.x() <= 16, btn_geo
-    # No selection → cell tools disabled；誘致不需選格（資金足夠時可點）.
+    # No selection → cell tools disabled；誘致不需選格（資金足夠時可點）；
+    # 火箭發射無基地時仍鎖.
     dlg._refresh_toolbar()
     for key, btn in dlg.tool_buttons.items():
         if key == "attract" and dlg.state.funds >= COST_ATTRACT and not dlg.state.attract_pending:
@@ -2293,6 +2416,7 @@ def test_user_art_loader_hook():
     assert "farm.png" in names["building"]
     assert "park.png" in names["building"]
     assert "airport.png" in names["building"]
+    assert "rocket_base.png" in names["building"]
     assert "inora.png" in names["monster"]
     assert "sea.png" in names["terrain"]
     assert "ocean-background.png" in names["ocean"]
@@ -2501,6 +2625,7 @@ def main():
     test_bank_supermarket_shrine()
     test_park_and_attract()
     test_airport_and_tourism_buffs()
+    test_rocket_base_and_launch()
     test_local_demos()
     test_save_load_roundtrip()
     test_remote_url_normalize()

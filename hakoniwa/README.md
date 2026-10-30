@@ -25,6 +25,7 @@ not a flat top-down square grid rotated 45°.
 | Shrine | 神社 800（平地色塊）；大幅加島分數；餵飽時安穩人口加成 |
 | Park | 公園 250（平地色塊）；島分數／安穩；鄰格提高生村機率 |
 | Airport | 空港 1500（平地色塊；目錄費用原 `?`，本機採箱庭2啟發估算）；島分數／觀光收入／留言小費／誘致加成 |
+| Rocket | ロケット基地 2000（平地色塊；目錄／變體常 `?`，近究想衛星建設 2000）；發射觀測衛星 800（Ex 啟發；需基地；減震／海嘯／噴火） |
 | Attract | 誘致活動 1000（定本；不耗回合）；下回合餵飽時額外人口；有空港再加 inbound |
 | Forbidden | Orthographic-only / pure `rotate(45°)` (equal diamond W/H on screen) |
 | No | Under-tile thickness / skirts |
@@ -63,7 +64,7 @@ Expected filenames (exact; loader is case-sensitive on Linux):
 |---|---|
 | Terrain | `sea.png` `shallow.png` `oilfield.png` `dirt.png` `grass.png` `forest.png` `mountain.png` `village.png` `town.png` `city.png` |
 | Backdrop | `ocean-background.png` |
-| Buildings | `farm.png` `factory.png` `quarry.png` `defense.png` `missile_base.png` `harbor.png` `shipyard.png` `breakwater.png` `monument.png` `bank.png` `supermarket.png` `shrine.png` `park.png` `airport.png` |
+| Buildings | `farm.png` `factory.png` `quarry.png` `defense.png` `missile_base.png` `harbor.png` `shipyard.png` `breakwater.png` `monument.png` `bank.png` `supermarket.png` `shrine.png` `park.png` `airport.png` `rocket_base.png` |
 | Monsters | `inora.png` |
 
 Fallback when a file is absent: buildings／monsters → solid color; terrain → bundled

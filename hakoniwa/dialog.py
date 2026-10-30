@@ -57,6 +57,8 @@ from .model import (
     COST_PARK,
     COST_QUARRY,
     COST_RAISE,
+    COST_ROCKET_BASE,
+    COST_ROCKET_LAUNCH,
     COST_SHIPYARD,
     COST_SHRINE,
     COST_SUPERMARKET,
@@ -386,6 +388,8 @@ TOOL_SPECS: Tuple[Tuple[str, str, Optional[int], str], ...] = (
     ("shrine", "建設神社", COST_SHRINE, "Z"),
     ("park", "建設公園", COST_PARK, "K"),
     ("airport", "建設空港", COST_AIRPORT, "I"),
+    ("rocket_base", "建設ロケット基地", COST_ROCKET_BASE, "O"),
+    ("rocket_launch", "發射火箭", COST_ROCKET_LAUNCH, "L"),
     ("attract", "誘致活動", COST_ATTRACT, "A"),
     ("deposit", "銀行存款", None, "D"),
     ("withdraw", "銀行提款", None, "U"),
@@ -444,6 +448,16 @@ def tool_enabled(
             return False, "已安排誘致（請先推進回合）"
         if state.funds < COST_ATTRACT:
             return False, f"資金不足（需 {COST_ATTRACT}）"
+        return True, ""
+
+    # ロケット發射：不必選格；需基地；已在軌則鎖.
+    if kind == "rocket_launch":
+        if not state.has_rocket_base():
+            return False, "需要ロケット基地"
+        if state.has_satellite():
+            return False, "觀測衛星已在軌"
+        if state.funds < COST_ROCKET_LAUNCH:
+            return False, f"資金不足（需 {COST_ROCKET_LAUNCH}）"
         return True, ""
 
     if selected is None:
@@ -1002,6 +1016,15 @@ class HakoniwaIslandDialog(QDialog):
                     "\n交通色塊：加島分數；每回合觀光收入；"
                     "訪客留言小費；誘致 inbound 加成"
                 )
+            elif key == "rocket_base":
+                tip += "\n宇宙色塊：加島分數；解鎖觀測衛星發射"
+            elif key == "rocket_launch":
+                tip += (
+                    f"\n需ロケット基地：−{COST_ROCKET_LAUNCH}；"
+                    "發射觀測衛星減震／海嘯／噴火（不推進回合）"
+                )
+                if self.state.has_satellite():
+                    tip += "\n衛星已在軌"
             elif key == "attract":
                 tip += (
                     f"\n定本誘致：−{COST_ATTRACT}；下回合餵飽時額外人口"
@@ -1098,6 +1121,8 @@ class HakoniwaIslandDialog(QDialog):
             hints.append("可建公園")
         if self.state.can_place_building(i, j, "airport"):
             hints.append("可建空港")
+        if self.state.can_place_building(i, j, "rocket_base"):
+            hints.append("可建ロケット基地")
         tree_line = ""
         if c.terrain == "forest":
             trees = c.trees if c.trees > 0 else TREE_MIN
@@ -1127,8 +1152,16 @@ class HakoniwaIslandDialog(QDialog):
         )
 
     def _do_action(self, kind: str) -> None:
-        # 觀望／貿易／銀行存提／超市買糧／誘致不需選格；其餘指令要點選格子。
-        if kind in ("wait", "export", "deposit", "withdraw", "buy_food", "attract"):
+        # 觀望／貿易／銀行存提／超市買糧／誘致／火箭發射不需選格；其餘指令要點選格子。
+        if kind in (
+            "wait",
+            "export",
+            "deposit",
+            "withdraw",
+            "buy_food",
+            "attract",
+            "rocket_launch",
+        ):
             i = j = 0
         else:
             sel = self._require_selection()
@@ -1168,6 +1201,8 @@ class HakoniwaIslandDialog(QDialog):
                     out = self.remote.buy_food(1)
                 elif kind == "attract":
                     out = self.remote.attract_population()
+                elif kind == "rocket_launch":
+                    out = self.remote.launch_rocket()
                 else:
                     QMessageBox.information(self, "箱庭島", "未知指令")
                     return
@@ -1211,6 +1246,8 @@ class HakoniwaIslandDialog(QDialog):
             msg = self.state.buy_food(1)
         elif kind == "attract":
             msg = self.state.attract_population()
+        elif kind == "rocket_launch":
+            msg = self.state.launch_rocket()
         else:
             msg = "未知指令"
         if msg != "ok":

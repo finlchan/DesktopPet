@@ -11,7 +11,8 @@ buildings (spawn/stomp/missile stubs), 港灣／造船所／貿易輸出（臨�
 防波堤色塊（臨海；減海嘯）＋海底油田（掘削／探油；被動產資；枯竭）,
 銀行／超市／神社色塊（變體：資金緩衝、買糧、分數／安穩加成）,
 公園色塊＋誘致活動（都市計畫：安穩／生村加成；定本誘致 1000）,
-空港色塊＋觀光訪客增益（交通／觀光收入／留言小費／誘致加成）.
+空港色塊＋觀光訪客增益（交通／觀光收入／留言小費／誘致加成）,
+ロケット基地色塊＋觀測衛星發射（減震／海嘯／噴火；變體啟發費用）.
 Color-block placeholders only — user art later.
 """
 
@@ -59,6 +60,11 @@ COST_ATTRACT = 1000     # 誘致活動（定本 1000 億；當回合人口更易
 # 空港：目錄費用為「?」（島あげます交通設施）。本機採箱庭2／變體常見區間估算：
 # 高於港灣(800)／神社(800)、近防衛(1000)、遠低於紀念碑(9999) → 1500。
 COST_AIRPORT = 1500     # 空港（交通／觀光樞紐色塊；平地）
+# ロケット基地：目錄／變體常為「?」或紀念碑附屬台。本機估算：
+# 高於空港(1500)、近究想「宇宙衛星建設」2000、遠低於紀念碑(9999) → 2000。
+COST_ROCKET_BASE = 2000  # ロケット基地（平地色塊；解鎖衛星發射）
+# 發射：箱庭諸島2 Ex「觀測衛星」800（需基地）；本機同額發射指令。
+COST_ROCKET_LAUNCH = 800  # 觀測衛星發射（不推進回合；需 ≥1 ロケット基地）
 
 # Forest tree stock (catalog 木 100～20000；+100／回合；新植林 100).
 TREE_MIN = 100
@@ -102,6 +108,7 @@ PLACEABLE_BUILDINGS = frozenset(
         "shrine",
         "park",
         "airport",
+        "rocket_base",
     }
 )
 COASTAL_BUILDINGS = frozenset({"harbor", "shipyard", "breakwater"})
@@ -131,6 +138,8 @@ SCORE_PER_SUPERMARKET = 40
 SCORE_PER_SHRINE = 800
 SCORE_PER_PARK = 150
 SCORE_PER_AIRPORT = 500  # 交通設施：島分數權重高於港灣
+SCORE_PER_ROCKET_BASE = 400  # 宇宙設施：略低於空港
+SCORE_PER_SATELLITE = 300  # 在軌觀測衛星（發射後）
 SCORE_PER_VILLAGE = 30
 SCORE_PER_TOWN = 80
 SCORE_PER_CITY = 150
@@ -150,6 +159,8 @@ ATTRACT_AIRPORT_EXTRA = 20
 TOURISM_FUNDS_BASE = 12
 TOURISM_FUNDS_PER_100_POP = 3
 VISITOR_TIP_FUNDS = 20  # 留言板小費（需 ≥1 空港）
+# 觀測衛星：地震／海嘯／噴火機率 × 此係數（Ex 約 1/4；本機同量級）.
+SATELLITE_DISASTER_FACTOR = 0.25
 
 # Turn yields (simplified short loop; not server-accurate).
 FOOD_PER_FARM = 100     # ~100 人農場 → 100 噸／回合
@@ -236,6 +247,12 @@ BUILDINGS = {
     "park": {"label": "公園", "color": (72, 168, 96), "cost": COST_PARK},
     # 交通／觀光色塊（空港：分數＋觀光收入／訪客小費；美術後補）
     "airport": {"label": "空港", "color": (88, 148, 200), "cost": COST_AIRPORT},
+    # 宇宙色塊（ロケット基地：解鎖觀測衛星發射；美術後補）
+    "rocket_base": {
+        "label": "ロケット基地",
+        "color": (64, 108, 128),
+        "cost": COST_ROCKET_BASE,
+    },
 }
 
 # Monsters as solid color-block placeholders (squares on map; art later).
@@ -254,7 +271,7 @@ Coord = Tuple[int, int]
 LAND_TERRAINS = frozenset(k for k, v in TERRAIN.items() if v["land"])
 SETTLEMENT_TERRAINS = frozenset({"village", "town", "city"})
 BUILDABLE = frozenset({"grass"})  # 平地 only（村／町／都市請先整地；採掘場除外）
-SAVE_VERSION = 12
+SAVE_VERSION = 13
 
 
 def timber_funds(trees: int) -> int:
@@ -346,9 +363,11 @@ def compute_island_score(
     shrines: int = 0,
     parks: int = 0,
     airports: int = 0,
+    rocket_bases: int = 0,
+    satellite_active: bool = False,
     bank_deposit: int = 0,
 ) -> int:
-    """簡易島分數（順位／國威 stub；紀念碑／神社／公園／空港權重大）."""
+    """簡易島分數（順位／國威 stub；紀念碑／神社／公園／空港／宇宙權重大）."""
     liquid = max(0, int(funds)) + max(0, int(bank_deposit))
     return (
         max(0, int(population)) * SCORE_PER_POP
@@ -369,6 +388,8 @@ def compute_island_score(
         + max(0, int(shrines)) * SCORE_PER_SHRINE
         + max(0, int(parks)) * SCORE_PER_PARK
         + max(0, int(airports)) * SCORE_PER_AIRPORT
+        + max(0, int(rocket_bases)) * SCORE_PER_ROCKET_BASE
+        + (SCORE_PER_SATELLITE if satellite_active else 0)
         + max(0, int(villages)) * SCORE_PER_VILLAGE
         + max(0, int(towns)) * SCORE_PER_TOWN
         + max(0, int(cities)) * SCORE_PER_CITY
@@ -526,6 +547,7 @@ class IslandState:
     population: int = START_POP
     bank_deposit: int = 0  # 銀行緩衝（超 FUNDS_SOFT_CAP 溢出；無銀行則捨棄）
     attract_pending: bool = False  # 誘致活動：下一次 next_turn 額外人口
+    satellite_active: bool = False  # 觀測衛星在軌：減震／海嘯／噴火
     name: str = "箱庭島"
     cells: List[List[Cell]] = field(default_factory=list)
     log: List[str] = field(default_factory=list)
@@ -646,6 +668,15 @@ class IslandState:
     def has_airport(self) -> bool:
         return self.airport_count() > 0
 
+    def rocket_base_count(self) -> int:
+        return self.building_count("rocket_base")
+
+    def has_rocket_base(self) -> bool:
+        return self.rocket_base_count() > 0
+
+    def has_satellite(self) -> bool:
+        return bool(self.satellite_active)
+
     def terrain_count(self, kind: str) -> int:
         return sum(1 for row in self.cells for c in row if c.terrain == kind)
 
@@ -687,6 +718,8 @@ class IslandState:
             shrines=self.shrine_count(),
             parks=self.park_count(),
             airports=self.airport_count(),
+            rocket_bases=self.rocket_base_count(),
+            satellite_active=self.has_satellite(),
             bank_deposit=self.bank_deposit,
         )
 
@@ -956,6 +989,29 @@ class IslandState:
             f" — 下回合餵飽時人口更易增加"
         )
         return "ok"
+
+    def launch_rocket(self) -> str:
+        """觀測衛星發射：需ロケット基地；−COST_ROCKET_LAUNCH；不推進回合.
+
+        成功後永久標記 satellite_active（減震／海嘯／噴火）。已在軌不可重射。
+        """
+        if not self.has_rocket_base():
+            return "需要ロケット基地"
+        if self.satellite_active:
+            return "觀測衛星已在軌（無需再發射）"
+        if self.funds < COST_ROCKET_LAUNCH:
+            return f"資金不足（發射需要 {COST_ROCKET_LAUNCH}）"
+        self.funds -= COST_ROCKET_LAUNCH
+        self.satellite_active = True
+        self._log(
+            f"回合 {self.turn}：ロケット發射觀測衛星"
+            f"（−{COST_ROCKET_LAUNCH} 資金）— 地震／海嘯／噴火機率下降"
+        )
+        return "ok"
+
+    def _satellite_disaster_factor(self) -> float:
+        """觀測衛星在軌時回傳減災係數，否則 1.0."""
+        return SATELLITE_DISASTER_FACTOR if self.satellite_active else 1.0
 
     def _apply_funds_cap(self) -> List[str]:
         """流動資金軟上限：有銀行→溢出進存款；無銀行→捨棄（定本超額捨棄 stub）."""
@@ -1355,10 +1411,13 @@ class IslandState:
         return ["林木生長：" + "；".join(parts)]
 
     def _apply_disasters(self) -> List[str]:
-        """Fire / typhoon / quake / tsunami stubs; forest／防波堤 mitigate some."""
+        """Fire / typhoon / quake / tsunami stubs; forest／防波堤／衛星 mitigate some."""
         notes: List[str] = []
+        sat = self._satellite_disaster_factor()
+        if sat < 1.0:
+            notes.append("觀測衛星減災中（地震／海嘯／噴火）")
 
-        # Fire: 町／都市／工場 → 荒地（鄰森／紀念碑則不易發生）
+        # Fire: 町／都市／工場 → 荒地（鄰森／紀念碑則不易發生；衛星不減火）
         for i in range(self.size):
             for j in range(self.size):
                 c = self.cell(i, j)
@@ -1381,7 +1440,7 @@ class IslandState:
                 label = "、".join(parts) if parts else "目標"
                 notes.append(f"火災！{label}→荒地 ({i},{j})")
 
-        # Typhoon: 農場 → 平地（清建築；鄰森則較耐；紀念碑不減颱風）
+        # Typhoon: 農場 → 平地（清建築；鄰森則較耐；紀念碑／衛星不減颱風）
         for i in range(self.size):
             for j in range(self.size):
                 c = self.cell(i, j)
@@ -1398,7 +1457,7 @@ class IslandState:
                 c.trees = 0
                 notes.append(f"颱風！農場→平地 ({i},{j})")
 
-        # Quake: 工場／採掘場／都市 → 荒地（stub；森不減震）
+        # Quake: 工場／採掘場／都市 → 荒地（stub；森不減震；衛星減）
         for i in range(self.size):
             for j in range(self.size):
                 c = self.cell(i, j)
@@ -1408,7 +1467,7 @@ class IslandState:
                 )
                 if not quakable:
                     continue
-                if random.random() >= QUAKE_BASE_CHANCE:
+                if random.random() >= QUAKE_BASE_CHANCE * sat:
                     continue
                 parts = []
                 if c.building is not None:
@@ -1421,7 +1480,7 @@ class IslandState:
                 label = "、".join(parts) if parts else "目標"
                 notes.append(f"地震！{label}→荒地 ({i},{j})")
 
-        # Tsunami: coastal land facilities／settlements → 荒地（鄰海越多越險；防波堤減災）
+        # Tsunami: coastal land facilities／settlements → 荒地（鄰海越多越險；防波堤／衛星減災）
         # Master off when TSUNAMI_BASE_CHANCE <= 0 (tests silence disasters this way).
         if TSUNAMI_BASE_CHANCE > 0:
             for i in range(self.size):
@@ -1440,7 +1499,9 @@ class IslandState:
                     )
                     if not vulnerable:
                         continue
-                    chance = TSUNAMI_BASE_CHANCE + sea_n * TSUNAMI_PER_SEA_NEIGHBOR
+                    chance = (
+                        TSUNAMI_BASE_CHANCE + sea_n * TSUNAMI_PER_SEA_NEIGHBOR
+                    ) * sat
                     if self._has_breakwater_neighbor(i, j):
                         chance *= BREAKWATER_TSUNAMI_FACTOR
                     if random.random() >= chance:
@@ -1463,7 +1524,7 @@ class IslandState:
             for j in range(self.size)
             if self.is_land(i, j) and self.cell(i, j).terrain != "mountain"
         ]
-        if land_cells and random.random() < VOLCANO_BASE_CHANCE:
+        if land_cells and random.random() < VOLCANO_BASE_CHANCE * sat:
             vi, vj = random.choice(land_cells)
             c = self.cell(vi, vj)
             prev = c.terrain
@@ -1618,6 +1679,7 @@ class IslandState:
         shrines = self.shrine_count()
         parks = self.park_count()
         airports_n = self.airport_count()
+        rockets_n = self.rocket_base_count()
         score_bits = []
         if monuments:
             score_bits.append(f"紀念碑×{monuments}")
@@ -1627,6 +1689,10 @@ class IslandState:
             score_bits.append(f"公園×{parks}")
         if airports_n:
             score_bits.append(f"空港×{airports_n}")
+        if rockets_n:
+            score_bits.append(f"ロケット基地×{rockets_n}")
+        if self.satellite_active:
+            score_bits.append("觀測衛星")
         notes.append(
             f"島分數 {score}"
             + (f"（{'／'.join(score_bits)}）" if score_bits else "")
@@ -1687,6 +1753,7 @@ class IslandState:
             "population": self.population,
             "bank_deposit": int(self.bank_deposit),
             "attract_pending": bool(self.attract_pending),
+            "satellite_active": bool(self.satellite_active),
             "cells": [[c.to_dict() for c in row] for row in self.cells],
             "log": list(self.log[-40:]),
             "comments": [c.to_dict() for c in self.comments],
@@ -1713,6 +1780,7 @@ class IslandState:
         raw_id = data.get("id") or data.get("island_id") or "home"
         raw_deposit = data.get("bank_deposit")
         raw_attract = data.get("attract_pending")
+        raw_sat = data.get("satellite_active")
         state = cls(
             size=size,
             turn=int(data.get("turn") or 1),
@@ -1725,6 +1793,7 @@ class IslandState:
             ),
             bank_deposit=int(raw_deposit) if raw_deposit is not None else 0,
             attract_pending=bool(raw_attract) if raw_attract is not None else False,
+            satellite_active=bool(raw_sat) if raw_sat is not None else False,
             name=str(data.get("name") or "箱庭島"),
             cells=parsed if ok else [],
             log=[str(x) for x in (data.get("log") or [])][-80:],

@@ -191,6 +191,9 @@ class HakoniwaRemote:
     def attract_population(self) -> ActionOutcome:
         return self._action("/api/v1/island/attract", {})
 
+    def launch_rocket(self) -> ActionOutcome:
+        return self._action("/api/v1/island/rocket-launch", {})
+
     def next_turn(self) -> ActionOutcome:
         return self._action("/api/v1/island/turn", {})
 
