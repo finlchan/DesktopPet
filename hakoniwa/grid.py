@@ -1,4 +1,4 @@
-"""箱庭斜視 grid: 1:1 logical diamonds + v9 stagger + 45° oblique foreshortening.
+"""箱庭斜視 grid: 1:1 logical diamonds + v9 stagger + H/W≈0.65 oblique foreshortening.
 
 Lattice (see docs/hakoniwa-oblique-view.md, internal v13 notes):
   pos(i, j) = i·u + j·v + (i odd ? ½v : 0)
@@ -9,14 +9,17 @@ Odd strips shift +½ along v so vertices meet mid-edges (brick stagger).
 View invariant (箱庭斜視 — NOT flat top-down rotated squares):
   Logical cell top is a 1:1 square diamond (W_logical == H_logical).
   Screen projection applies depth foreshortening:
-      H_screen = W_screen * sin(45°) ≈ 0.707 · W
-  so the island reads as ~45° down-looking oblique. A pure rotate(45°) of an
+      H_screen = W_screen * OBLIQUE_Y_SCALE   # OBLIQUE_Y_SCALE = 0.65
+  so the island reads as a flatter oblique (closer to common isometric /
+  dimetric than the prior sin(45°)≈0.707 squash). A pure rotate(45°) of an
   orthographic grid (H_screen == W_screen) is a regression — reject it.
 
 Logical adjacency is 6-neighbor (hex), matching Hakoniwa Islands topology.
 
-After any map/view change: compare against correct-hakoniwa-oblique-45.png
-semantics; fail smoke if transform is orthographic-only (see smoke_test).
+After any map/view change: compare foreshortening against H/W≈0.65 (reject
+equal-diagonal flat rotate); fail smoke if transform is orthographic-only
+(see smoke_test). Prior reference media/correct-hakoniwa-oblique-45.png was
+the old 0.707 reference — formal scale is now 0.65.
 """
 
 from __future__ import annotations
@@ -29,10 +32,12 @@ GRID_SIZE = 20
 # Screen diamond base size (pixels) before oblique Y squash. Logical top is 1:1.
 DEFAULT_CELL = 30
 
-# ~45° down-looking oblique: depth axis compressed by sin(elevation).
-# Documented in tile-art-notes (v14): H≈181 from W=256 ⇒ sin(45°).
-OBLIQUE_ELEVATION_DEG = 45.0
-OBLIQUE_Y_SCALE = math.sin(math.radians(OBLIQUE_ELEVATION_DEG))
+# Formal foreshortening: screen diamond H = W · OBLIQUE_Y_SCALE.
+# User-locked H/W ≈ 0.65 (flatter than prior sin(45°)≈0.707; between that and
+# classic 2:1 isometric at 0.5). Scale is authoritative.
+OBLIQUE_Y_SCALE = 0.65
+# Diagnostic elevation equivalent (degrees); not used to derive y_scale.
+OBLIQUE_ELEVATION_DEG = math.degrees(math.asin(OBLIQUE_Y_SCALE))
 
 Coord = Tuple[int, int]
 
@@ -40,9 +45,9 @@ Coord = Tuple[int, int]
 def oblique_projection_params() -> Dict[str, Union[float, str]]:
     """Export the locked 箱庭斜視 projection for tests / diagnostics.
 
-    Invariant: y_scale == sin(elevation_deg) with elevation_deg == 45, and
-    screen diamond height/width == y_scale (foreshortened). Orthographic-only
-    (y_scale == 1, pure rotate) is forbidden.
+    Invariant: y_scale == 0.65 (formal H/W), and screen diamond height/width
+    == y_scale (foreshortened). Orthographic-only (y_scale == 1, pure rotate)
+    is forbidden.
     """
     return {
         "kind": "oblique_affine",
@@ -77,7 +82,7 @@ def cell_center(i: int, j: int, cell: float = DEFAULT_CELL) -> Tuple[float, floa
 def diamond_vertices(
     cx: float, cy: float, cell: float = DEFAULT_CELL
 ) -> List[Tuple[float, float]]:
-    """Foreshortened rhombus (logical 1:1 top after 45° oblique squash): N, E, S, W."""
+    """Foreshortened rhombus (logical 1:1 top after oblique squash): N, E, S, W."""
     w, h = cell_screen_size(cell)
     hw, hh = w / 2.0, h / 2.0
     return [

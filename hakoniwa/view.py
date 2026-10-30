@@ -1,13 +1,15 @@
 """箱庭斜視 map widget — textured diamond tops (dirt／grass／sea) + overlays.
 
-Lattice is logical 1:1 diamonds with v9 stagger, then ~45° oblique foreshortening
-(Y *= sin(45°)) from ``hakoniwa.grid`` — NOT a flat top-down grid merely rotated
-45°. Terrain uses flat top textures only; no under-tile thickness/skirts.
-Buildings／monsters default to solid color placeholders; optional user PNGs from
-``Data/hakoniwa/user/`` or ``assets/user/`` replace them when present.
+Lattice is logical 1:1 diamonds with v9 stagger, then H/W≈0.65 oblique
+foreshortening (Y *= OBLIQUE_Y_SCALE) from ``hakoniwa.grid`` — NOT a flat
+top-down grid merely rotated 45°. Terrain uses flat top textures only; no
+under-tile thickness/skirts. Buildings／monsters default to solid color
+placeholders; optional user PNGs from ``Data/hakoniwa/user/`` or ``assets/user/``
+replace them when present.
 
-After any map/view change, run smoke (oblique invariant) and visually compare
-against correct-hakoniwa-oblique-45.png; reject wrong-flat-rotated-grid.png.
+After any map/view change, run smoke (oblique invariant) and reject equal-
+diagonal flat rotate (wrong-flat-rotated-grid.png). Prior
+correct-hakoniwa-oblique-45.png was the old 0.707 reference; formal scale is 0.65.
 """
 
 from __future__ import annotations

@@ -1,7 +1,7 @@
 {
-  "elevation_deg": 45.0,
+  "elevation_deg": 40.541601873504526,
   "forbidden": "orthographic_rotate_only",
   "kind": "oblique_affine",
   "logical_top": "1:1",
-  "y_scale": 0.7071067811865475
+  "y_scale": 0.65
 }

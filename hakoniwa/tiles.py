@@ -2,7 +2,7 @@
 
 Bundled under ``hakoniwa/assets/tiles/`` (from project store
 ``media/tiles/active/``). Logical 1:1 diamond art is drawn into foreshortened
-screen diamonds (H = W · sin(45°)) via clip — never under-tile thickness.
+screen diamonds (H = W · OBLIQUE_Y_SCALE, 0.65) via clip — never under-tile thickness.
 
 Optional user overrides (``Data/hakoniwa/user/`` or ``assets/user/``) are
 checked first via :mod:`hakoniwa.user_art`; missing files keep bundled tops.
