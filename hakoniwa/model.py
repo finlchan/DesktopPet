@@ -13,7 +13,8 @@ buildings (spawn/stomp/missile stubs), 港灣／造船所／貿易輸出（臨�
 公園色塊＋誘致活動（都市計畫：安穩／生村加成；定本誘致 1000）,
 空港色塊＋觀光訪客增益（交通／觀光收入／留言小費／誘致加成）,
 ロケット基地色塊＋觀測衛星發射（減震／海嘯／噴火；變體啟發費用）,
-酒店／賭場色塊＋娛樂觀光收入（變體：住宿／賭場觀光名所；費用估算見常數）.
+酒店／賭場色塊＋娛樂觀光收入（變體：住宿／賭場觀光名所；費用估算見常數）,
+大學／研究所色塊＋輕量研究 buff（變體：下一科技折扣／減災；費用估算見常數）.
 Color-block placeholders only — user art later.
 """
 
@@ -72,6 +73,12 @@ COST_HOTEL = 600  # 酒店（住宿觀光色塊；平地）
 # 賭場：目錄「賭場／觀光名所」「遊樂園」費用為「?」。本機採賭場色塊：
 # 高於酒店(600)／神社(800)、低於空港(1500)／ロケット(2000) → 1100。
 COST_CASINO = 1100  # 賭場（娛樂觀光色塊；平地；依人口加碼收入）
+# 大學：目錄「大學」費用為「?」（島あげます發展設施）。本機估算：
+# 高於酒店(600)、低於神社(800)／港灣(800) → 700。
+COST_UNIVERSITY = 700  # 大學（教育／研究色塊；平地；下一科技折扣）
+# 研究所：目錄「研究所」費用為「?」。本機估算：
+# 高於神社(800)、低於賭場(1100)／空港(1500) → 950。
+COST_RESEARCH_LAB = 950  # 研究所（研究色塊；平地；輕量減災）
 
 # Forest tree stock (catalog 木 100～20000；+100／回合；新植林 100).
 TREE_MIN = 100
@@ -118,6 +125,8 @@ PLACEABLE_BUILDINGS = frozenset(
         "rocket_base",
         "hotel",
         "casino",
+        "university",
+        "research_lab",
     }
 )
 COASTAL_BUILDINGS = frozenset({"harbor", "shipyard", "breakwater"})
@@ -151,6 +160,8 @@ SCORE_PER_ROCKET_BASE = 400  # 宇宙設施：略低於空港
 SCORE_PER_SATELLITE = 300  # 在軌觀測衛星（發射後）
 SCORE_PER_HOTEL = 200  # 住宿觀光：低於空港／賭場
 SCORE_PER_CASINO = 320  # 娛樂觀光：介於公園與空港之間
+SCORE_PER_UNIVERSITY = 280  # 教育設施：介於酒店與賭場
+SCORE_PER_RESEARCH_LAB = 380  # 研究設施：介於賭場與ロケット
 SCORE_PER_VILLAGE = 30
 SCORE_PER_TOWN = 80
 SCORE_PER_CITY = 150
@@ -178,6 +189,10 @@ CASINO_TOURISM_BASE = 18
 CASINO_TOURISM_PER_100_POP = 5
 # 觀測衛星：地震／海嘯／噴火機率 × 此係數（Ex 約 1/4；本機同量級）.
 SATELLITE_DISASTER_FACTOR = 0.25
+# 大學研究 buff：有 ≥1 大學時觀測衛星發射折扣（科技 stub；發射 800→600）.
+UNIVERSITY_TECH_DISCOUNT = 200
+# 研究所減災：地震／海嘯／噴火機率 × 此係數（輕於衛星 0.25；可與衛星疊乘）.
+RESEARCH_LAB_DISASTER_FACTOR = 0.7
 
 # Turn yields (simplified short loop; not server-accurate).
 FOOD_PER_FARM = 100     # ~100 人農場 → 100 噸／回合
@@ -273,6 +288,17 @@ BUILDINGS = {
     # 住宿／娛樂觀光色塊（酒店・賭場：分數＋回合觀光收入；美術後補）
     "hotel": {"label": "酒店", "color": (196, 128, 88), "cost": COST_HOTEL},
     "casino": {"label": "賭場", "color": (168, 72, 96), "cost": COST_CASINO},
+    # 教育／研究色塊（大學・研究所：分數＋科技折扣／輕量減災；美術後補）
+    "university": {
+        "label": "大學",
+        "color": (56, 100, 148),
+        "cost": COST_UNIVERSITY,
+    },
+    "research_lab": {
+        "label": "研究所",
+        "color": (72, 132, 108),
+        "cost": COST_RESEARCH_LAB,
+    },
 }
 
 # Monsters as solid color-block placeholders (squares on map; art later).
@@ -291,7 +317,7 @@ Coord = Tuple[int, int]
 LAND_TERRAINS = frozenset(k for k, v in TERRAIN.items() if v["land"])
 SETTLEMENT_TERRAINS = frozenset({"village", "town", "city"})
 BUILDABLE = frozenset({"grass"})  # 平地 only（村／町／都市請先整地；採掘場除外）
-SAVE_VERSION = 14
+SAVE_VERSION = 15
 
 
 def timber_funds(trees: int) -> int:
@@ -401,10 +427,12 @@ def compute_island_score(
     rocket_bases: int = 0,
     hotels: int = 0,
     casinos: int = 0,
+    universities: int = 0,
+    research_labs: int = 0,
     satellite_active: bool = False,
     bank_deposit: int = 0,
 ) -> int:
-    """簡易島分數（順位／國威 stub；紀念碑／神社／公園／空港／宇宙／觀光權重大）."""
+    """簡易島分數（順位／國威 stub；紀念碑／神社／公園／空港／宇宙／觀光／研究權重大）."""
     liquid = max(0, int(funds)) + max(0, int(bank_deposit))
     return (
         max(0, int(population)) * SCORE_PER_POP
@@ -429,6 +457,8 @@ def compute_island_score(
         + (SCORE_PER_SATELLITE if satellite_active else 0)
         + max(0, int(hotels)) * SCORE_PER_HOTEL
         + max(0, int(casinos)) * SCORE_PER_CASINO
+        + max(0, int(universities)) * SCORE_PER_UNIVERSITY
+        + max(0, int(research_labs)) * SCORE_PER_RESEARCH_LAB
         + max(0, int(villages)) * SCORE_PER_VILLAGE
         + max(0, int(towns)) * SCORE_PER_TOWN
         + max(0, int(cities)) * SCORE_PER_CITY
@@ -725,8 +755,27 @@ class IslandState:
     def has_casino(self) -> bool:
         return self.casino_count() > 0
 
+    def university_count(self) -> int:
+        return self.building_count("university")
+
+    def has_university(self) -> bool:
+        return self.university_count() > 0
+
+    def research_lab_count(self) -> int:
+        return self.building_count("research_lab")
+
+    def has_research_lab(self) -> bool:
+        return self.research_lab_count() > 0
+
     def has_satellite(self) -> bool:
         return bool(self.satellite_active)
+
+    def rocket_launch_cost(self) -> int:
+        """觀測衛星發射費用；有大學則享研究折扣（科技 stub）."""
+        cost = COST_ROCKET_LAUNCH
+        if self.has_university():
+            cost = max(0, cost - UNIVERSITY_TECH_DISCOUNT)
+        return cost
 
     def terrain_count(self, kind: str) -> int:
         return sum(1 for row in self.cells for c in row if c.terrain == kind)
@@ -772,6 +821,8 @@ class IslandState:
             rocket_bases=self.rocket_base_count(),
             hotels=self.hotel_count(),
             casinos=self.casino_count(),
+            universities=self.university_count(),
+            research_labs=self.research_lab_count(),
             satellite_active=self.has_satellite(),
             bank_deposit=self.bank_deposit,
         )
@@ -1044,27 +1095,39 @@ class IslandState:
         return "ok"
 
     def launch_rocket(self) -> str:
-        """觀測衛星發射：需ロケット基地；−COST_ROCKET_LAUNCH；不推進回合.
+        """觀測衛星發射：需ロケット基地；−rocket_launch_cost()；不推進回合.
 
         成功後永久標記 satellite_active（減震／海嘯／噴火）。已在軌不可重射。
+        有大學時費用較低（研究 buff／下一科技折扣 stub）。
         """
         if not self.has_rocket_base():
             return "需要ロケット基地"
         if self.satellite_active:
             return "觀測衛星已在軌（無需再發射）"
-        if self.funds < COST_ROCKET_LAUNCH:
-            return f"資金不足（發射需要 {COST_ROCKET_LAUNCH}）"
-        self.funds -= COST_ROCKET_LAUNCH
+        cost = self.rocket_launch_cost()
+        if self.funds < cost:
+            return f"資金不足（發射需要 {cost}）"
+        self.funds -= cost
         self.satellite_active = True
+        discount_note = ""
+        if self.has_university() and cost < COST_ROCKET_LAUNCH:
+            discount_note = f"；大學研究折扣 −{COST_ROCKET_LAUNCH - cost}"
         self._log(
             f"回合 {self.turn}：ロケット發射觀測衛星"
-            f"（−{COST_ROCKET_LAUNCH} 資金）— 地震／海嘯／噴火機率下降"
+            f"（−{cost} 資金{discount_note}）— 地震／海嘯／噴火機率下降"
         )
         return "ok"
 
     def _satellite_disaster_factor(self) -> float:
         """觀測衛星在軌時回傳減災係數，否則 1.0."""
         return SATELLITE_DISASTER_FACTOR if self.satellite_active else 1.0
+
+    def _disaster_mitigation_factor(self) -> float:
+        """地震／海嘯／噴火綜合減災：衛星與研究所可疊乘."""
+        factor = self._satellite_disaster_factor()
+        if self.has_research_lab():
+            factor *= RESEARCH_LAB_DISASTER_FACTOR
+        return factor
 
     def _apply_funds_cap(self) -> List[str]:
         """流動資金軟上限：有銀行→溢出進存款；無銀行→捨棄（定本超額捨棄 stub）."""
@@ -1464,11 +1527,13 @@ class IslandState:
         return ["林木生長：" + "；".join(parts)]
 
     def _apply_disasters(self) -> List[str]:
-        """Fire / typhoon / quake / tsunami stubs; forest／防波堤／衛星 mitigate some."""
+        """Fire / typhoon / quake / tsunami stubs; forest／防波堤／衛星／研究所 mitigate some."""
         notes: List[str] = []
-        sat = self._satellite_disaster_factor()
-        if sat < 1.0:
+        sat = self._disaster_mitigation_factor()
+        if self.satellite_active:
             notes.append("觀測衛星減災中（地震／海嘯／噴火）")
+        if self.has_research_lab():
+            notes.append("研究所減災中（地震／海嘯／噴火）")
 
         # Fire: 町／都市／工場 → 荒地（鄰森／紀念碑則不易發生；衛星不減火）
         for i in range(self.size):
@@ -1746,6 +1811,8 @@ class IslandState:
         rockets_n = self.rocket_base_count()
         hotels_n = self.hotel_count()
         casinos_n = self.casino_count()
+        univ_n = self.university_count()
+        lab_n = self.research_lab_count()
         score_bits = []
         if monuments:
             score_bits.append(f"紀念碑×{monuments}")
@@ -1763,6 +1830,10 @@ class IslandState:
             score_bits.append(f"酒店×{hotels_n}")
         if casinos_n:
             score_bits.append(f"賭場×{casinos_n}")
+        if univ_n:
+            score_bits.append(f"大學×{univ_n}")
+        if lab_n:
+            score_bits.append(f"研究所×{lab_n}")
         notes.append(
             f"島分數 {score}"
             + (f"（{'／'.join(score_bits)}）" if score_bits else "")

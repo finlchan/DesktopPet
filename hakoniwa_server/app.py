@@ -48,7 +48,7 @@ class PlaceBody(CellAction):
             "farm | factory | quarry | defense | missile_base | "
             "harbor | shipyard | breakwater | monument | "
             "bank | supermarket | shrine | park | airport | rocket_base | "
-            "hotel | casino"
+            "hotel | casino | university | research_lab"
         ),
     )
 

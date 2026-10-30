@@ -52,6 +52,8 @@ from .model import (
     COST_HARVEST,
     COST_HOTEL,
     COST_LANDFILL,
+    COST_RESEARCH_LAB,
+    COST_UNIVERSITY,
     COST_LEVEL,
     COST_MISSILE,
     COST_MISSILE_BASE,
@@ -394,6 +396,8 @@ TOOL_SPECS: Tuple[Tuple[str, str, Optional[int], str], ...] = (
     ("rocket_launch", "發射火箭", COST_ROCKET_LAUNCH, "L"),
     ("hotel", "建設酒店", COST_HOTEL, "T"),
     ("casino", "建設賭場", COST_CASINO, "G"),
+    ("university", "建設大學", COST_UNIVERSITY, "F"),
+    ("research_lab", "建設研究所", COST_RESEARCH_LAB, "J"),
     ("attract", "誘致活動", COST_ATTRACT, "A"),
     ("deposit", "銀行存款", None, "D"),
     ("withdraw", "銀行提款", None, "U"),
@@ -454,14 +458,15 @@ def tool_enabled(
             return False, f"資金不足（需 {COST_ATTRACT}）"
         return True, ""
 
-    # ロケット發射：不必選格；需基地；已在軌則鎖.
+    # ロケット發射：不必選格；需基地；已在軌則鎖；大學可折扣.
     if kind == "rocket_launch":
         if not state.has_rocket_base():
             return False, "需要ロケット基地"
         if state.has_satellite():
             return False, "觀測衛星已在軌"
-        if state.funds < COST_ROCKET_LAUNCH:
-            return False, f"資金不足（需 {COST_ROCKET_LAUNCH}）"
+        launch_cost = state.rocket_launch_cost()
+        if state.funds < launch_cost:
+            return False, f"資金不足（需 {launch_cost}）"
         return True, ""
 
     if selected is None:
@@ -1023,10 +1028,15 @@ class HakoniwaIslandDialog(QDialog):
             elif key == "rocket_base":
                 tip += "\n宇宙色塊：加島分數；解鎖觀測衛星發射"
             elif key == "rocket_launch":
+                launch_cost = self.state.rocket_launch_cost()
                 tip += (
-                    f"\n需ロケット基地：−{COST_ROCKET_LAUNCH}；"
+                    f"\n需ロケット基地：−{launch_cost}；"
                     "發射觀測衛星減震／海嘯／噴火（不推進回合）"
                 )
+                if self.state.has_university() and launch_cost < COST_ROCKET_LAUNCH:
+                    tip += (
+                        f"\n大學研究折扣：原價 {COST_ROCKET_LAUNCH}→{launch_cost}"
+                    )
                 if self.state.has_satellite():
                     tip += "\n衛星已在軌"
             elif key == "hotel":
@@ -1038,6 +1048,16 @@ class HakoniwaIslandDialog(QDialog):
                 tip += (
                     "\n娛樂觀光色塊：加島分數；每回合娛樂觀光收入"
                     "（依人口加碼）"
+                )
+            elif key == "university":
+                tip += (
+                    "\n教育色塊：加島分數；有大學時觀測衛星發射較便宜"
+                    "（研究／下一科技折扣）"
+                )
+            elif key == "research_lab":
+                tip += (
+                    "\n研究色塊：加島分數；輕量減震／海嘯／噴火"
+                    "（可與觀測衛星疊乘）"
                 )
             elif key == "attract":
                 tip += (
@@ -1141,6 +1161,10 @@ class HakoniwaIslandDialog(QDialog):
             hints.append("可建酒店")
         if self.state.can_place_building(i, j, "casino"):
             hints.append("可建賭場")
+        if self.state.can_place_building(i, j, "university"):
+            hints.append("可建大學")
+        if self.state.can_place_building(i, j, "research_lab"):
+            hints.append("可建研究所")
         tree_line = ""
         if c.terrain == "forest":
             trees = c.trees if c.trees > 0 else TREE_MIN
