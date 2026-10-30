@@ -54,11 +54,13 @@ from hakoniwa.model import (
     COST_PARK,
     COST_QUARRY,
     COST_RAISE,
+    COST_RESEARCH_LAB,
     COST_ROCKET_BASE,
     COST_ROCKET_LAUNCH,
     COST_SHIPYARD,
     COST_SHRINE,
     COST_SUPERMARKET,
+    COST_UNIVERSITY,
     HOTEL_TOURISM_BASE,
     HOTEL_TOURISM_PER_100_POP,
     DEFENSE_RADIUS,
@@ -90,6 +92,7 @@ from hakoniwa.model import (
     OIL_DEPLETION_CHANCE,
     OIL_DISCOVER_CHANCE,
     PARK_SETTLEMENT_SPAWN_BONUS,
+    RESEARCH_LAB_DISASTER_FACTOR,
     SAVE_VERSION,
     SATELLITE_DISASTER_FACTOR,
     SCORE_PER_AIRPORT,
@@ -101,10 +104,13 @@ from hakoniwa.model import (
     SCORE_PER_OILFIELD,
     SCORE_PER_PARK,
     SCORE_PER_QUARRY,
+    SCORE_PER_RESEARCH_LAB,
     SCORE_PER_ROCKET_BASE,
     SCORE_PER_SATELLITE,
     SCORE_PER_SHRINE,
     SCORE_PER_SUPERMARKET,
+    SCORE_PER_UNIVERSITY,
+    UNIVERSITY_TECH_DISCOUNT,
     TIMBER_LOT,
     TOURISM_FUNDS_BASE,
     TOURISM_FUNDS_PER_100_POP,
@@ -236,6 +242,8 @@ def test_catalog_costs():
     assert COST_ROCKET_LAUNCH == 800
     assert COST_HOTEL == 600
     assert COST_CASINO == 1100
+    assert COST_UNIVERSITY == 700
+    assert COST_RESEARCH_LAB == 950
     assert SCORE_PER_MONUMENT == 2000
     assert SCORE_PER_QUARRY == 70
     assert SCORE_PER_BREAKWATER == 50
@@ -249,6 +257,10 @@ def test_catalog_costs():
     assert SCORE_PER_SATELLITE == 300
     assert SCORE_PER_HOTEL == 200
     assert SCORE_PER_CASINO == 320
+    assert SCORE_PER_UNIVERSITY == 280
+    assert SCORE_PER_RESEARCH_LAB == 380
+    assert UNIVERSITY_TECH_DISCOUNT == 200
+    assert 0 < RESEARCH_LAB_DISASTER_FACTOR < 1
     assert HAPPINESS_POP_PER_MONUMENT == 5
     assert HAPPINESS_POP_PER_SHRINE == 8
     assert HAPPINESS_POP_PER_PARK == 6
@@ -284,7 +296,7 @@ def test_catalog_costs():
     assert FUNDS_PER_FOOD_BUY == 8
     assert FUNDS_PER_QUARRY == 8
     assert FUNDS_PER_OILFIELD == 50
-    assert SAVE_VERSION == 14
+    assert SAVE_VERSION == 15
     assert 0 < OIL_DISCOVER_CHANCE <= 1
     assert 0 < OIL_DEPLETION_CHANCE < 1
     assert TSUNAMI_BASE_CHANCE > 0
@@ -791,6 +803,8 @@ def test_local_demos():
     assert coral.airport_count() >= 1
     assert coral.hotel_count() >= 1
     assert coral.casino_count() >= 1
+    assert coral.university_count() >= 1
+    assert coral.research_lab_count() >= 1
     assert coral.bank_deposit == 150
     row = island_summary(coral)
     assert row["id"] == "demo-coral"
@@ -1741,6 +1755,140 @@ def test_hotel_casino_tourism():
     assert coral.casino_count() >= 1
 
 
+def test_university_research_lab():
+    """大學／研究所色塊：建設費用、島分數、發射折扣、研究所減災、SAVE round-trip."""
+    import random
+
+    import hakoniwa.model as model_mod
+
+    state = IslandState.new_game()
+    land = [(i, j) for i in range(20) for j in range(20) if state.is_land(i, j)]
+    for i, j in land:
+        if state.cell(i, j).terrain == "dirt":
+            assert state.level_land(i, j) == "ok"
+    grass = [
+        (i, j)
+        for i, j in land
+        if state.cell(i, j).terrain == "grass" and state.cell(i, j).building is None
+    ]
+    assert len(grass) >= 3
+    ui, uj = grass[0]
+    li, lj = grass[1]
+    ri, rj = grass[2]
+
+    # Too poor → cannot place university.
+    state.funds = COST_UNIVERSITY - 1
+    assert state.place_building(ui, uj, "university") != "ok"
+    state.funds = (
+        COST_UNIVERSITY + COST_RESEARCH_LAB + COST_ROCKET_BASE + COST_ROCKET_LAUNCH + 50
+    )
+    before = state.funds
+    assert state.can_place_building(ui, uj, "university")
+    assert state.place_building(ui, uj, "university") == "ok"
+    assert state.cell(ui, uj).building == "university"
+    assert state.funds == before - COST_UNIVERSITY
+    assert state.university_count() == 1
+    assert state.has_university()
+    assert state.island_score() >= SCORE_PER_UNIVERSITY
+    assert state.rocket_launch_cost() == COST_ROCKET_LAUNCH - UNIVERSITY_TECH_DISCOUNT
+
+    before_l = state.funds
+    assert state.can_place_building(li, lj, "research_lab")
+    assert state.place_building(li, lj, "research_lab") == "ok"
+    assert state.cell(li, lj).building == "research_lab"
+    assert state.funds == before_l - COST_RESEARCH_LAB
+    assert state.research_lab_count() == 1
+    assert state.has_research_lab()
+    assert state.island_score() >= SCORE_PER_UNIVERSITY + SCORE_PER_RESEARCH_LAB
+    assert state._disaster_mitigation_factor() == RESEARCH_LAB_DISASTER_FACTOR
+
+    keys = {k for k, *_ in TOOL_SPECS}
+    assert "university" in keys and "research_lab" in keys
+    ok, _ = tool_enabled(state, "university", (ui, uj))
+    assert ok is False  # occupied
+    ok, _ = tool_enabled(state, "research_lab", (li, lj))
+    assert ok is False
+
+    # Rocket launch with university discount.
+    assert state.place_building(ri, rj, "rocket_base") == "ok"
+    launch_cost = state.rocket_launch_cost()
+    assert launch_cost == COST_ROCKET_LAUNCH - UNIVERSITY_TECH_DISCOUNT
+    funds_pre = state.funds
+    ok, _ = tool_enabled(state, "rocket_launch", None)
+    assert ok is True
+    assert state.launch_rocket() == "ok"
+    assert state.funds == funds_pre - launch_cost
+    assert state.has_satellite()
+    assert any("大學" in line and "折扣" in line for line in state.log)
+    # Satellite × lab stack.
+    assert state._disaster_mitigation_factor() == (
+        SATELLITE_DISASTER_FACTOR * RESEARCH_LAB_DISASTER_FACTOR
+    )
+
+    # Save round-trip.
+    blob = state.to_dict()
+    assert blob["version"] == SAVE_VERSION
+    loaded = IslandState.from_dict(blob)
+    assert loaded.university_count() == 1
+    assert loaded.research_lab_count() == 1
+    assert loaded.cell(ui, uj).building == "university"
+    assert loaded.cell(li, lj).building == "research_lab"
+    assert loaded.island_score() == state.island_score()
+    assert loaded.rocket_launch_cost() == launch_cost
+    assert loaded._disaster_mitigation_factor() == state._disaster_mitigation_factor()
+
+    # Lab-only mitigation note on turn (mute wipe risk).
+    lab_only = IslandState.new_game()
+    for i, j in [
+        (ii, jj)
+        for ii in range(20)
+        for jj in range(20)
+        if lab_only.is_land(ii, jj)
+    ]:
+        if lab_only.cell(i, j).terrain == "dirt":
+            lab_only.level_land(i, j)
+    lab_grass = [
+        (i, j)
+        for i in range(20)
+        for j in range(20)
+        if lab_only.cell(i, j).terrain == "grass"
+        and lab_only.cell(i, j).building is None
+    ]
+    lab_only.funds = COST_RESEARCH_LAB + 20
+    assert lab_only.place_building(lab_grass[0][0], lab_grass[0][1], "research_lab") == "ok"
+
+    old_fire = model_mod.FIRE_BASE_CHANCE
+    old_ty = model_mod.TYPHOON_BASE_CHANCE
+    old_qk = model_mod.QUAKE_BASE_CHANCE
+    old_vo = model_mod.VOLCANO_BASE_CHANCE
+    old_ts = model_mod.TSUNAMI_BASE_CHANCE
+    old_mon = model_mod.MONSTER_BASE_CHANCE
+    model_mod.FIRE_BASE_CHANCE = 0.0
+    model_mod.TYPHOON_BASE_CHANCE = 0.0
+    model_mod.QUAKE_BASE_CHANCE = 0.01
+    model_mod.VOLCANO_BASE_CHANCE = 0.0
+    model_mod.TSUNAMI_BASE_CHANCE = 0.0
+    model_mod.MONSTER_BASE_CHANCE = 0.0
+    try:
+        lab_only.food = max(lab_only.food, 500)
+        random.seed(7)
+        notes = lab_only.next_turn()
+        assert any("研究所" in n and "減災" in n for n in notes), notes
+        assert lab_only.research_lab_count() == 1
+        assert any("大學" in n or "研究所" in n for n in notes)
+    finally:
+        model_mod.FIRE_BASE_CHANCE = old_fire
+        model_mod.TYPHOON_BASE_CHANCE = old_ty
+        model_mod.QUAKE_BASE_CHANCE = old_qk
+        model_mod.VOLCANO_BASE_CHANCE = old_vo
+        model_mod.TSUNAMI_BASE_CHANCE = old_ts
+        model_mod.MONSTER_BASE_CHANCE = old_mon
+
+    coral = make_demo_coral()
+    assert coral.university_count() >= 1
+    assert coral.research_lab_count() >= 1
+
+
 def test_settlements_and_disasters():
     """Village/town/city evolution + fire/typhoon/quake stubs (local-first)."""
     import random
@@ -2572,6 +2720,8 @@ def test_user_art_loader_hook():
     assert "rocket_base.png" in names["building"]
     assert "hotel.png" in names["building"]
     assert "casino.png" in names["building"]
+    assert "university.png" in names["building"]
+    assert "research_lab.png" in names["building"]
     assert "inora.png" in names["monster"]
     assert "sea.png" in names["terrain"]
     assert "ocean-background.png" in names["ocean"]
@@ -2782,6 +2932,7 @@ def main():
     test_airport_and_tourism_buffs()
     test_rocket_base_and_launch()
     test_hotel_casino_tourism()
+    test_university_research_lab()
     test_local_demos()
     test_save_load_roundtrip()
     test_remote_url_normalize()

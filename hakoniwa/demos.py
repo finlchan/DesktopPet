@@ -101,23 +101,34 @@ def make_demo_coral() -> IslandState:
             if oil_placed:
                 break
     # Civic color blocks after coastal breakwater so 防波堤 still gets a shore cell.
+    civic_kinds = (
+        "bank",
+        "supermarket",
+        "shrine",
+        "park",
+        "airport",
+        "rocket_base",
+        "hotel",
+        "casino",
+        "university",
+        "research_lab",
+    )
     free_grass = [
         (i, j)
         for i, j in land
         if cells[i][j].terrain == "grass" and cells[i][j].building is None
     ]
-    for idx, kind in enumerate(
-        (
-            "bank",
-            "supermarket",
-            "shrine",
-            "park",
-            "airport",
-            "rocket_base",
-            "hotel",
-            "casino",
-        )
-    ):
+    # Convert spare dirt／森 → 平地 if civic list needs more empty grass.
+    if len(free_grass) < len(civic_kinds):
+        for i, j in land:
+            if len(free_grass) >= len(civic_kinds):
+                break
+            if cells[i][j].building is not None:
+                continue
+            if cells[i][j].terrain in ("dirt", "forest"):
+                cells[i][j] = Cell("grass")
+                free_grass.append((i, j))
+    for idx, kind in enumerate(civic_kinds):
         if idx >= len(free_grass):
             break
         gi, gj = free_grass[idx]
@@ -133,7 +144,7 @@ def make_demo_coral() -> IslandState:
         name="珊瑚灘島",
         cells=cells,
         log=[
-            "示範島：珊瑚灘（觀光唯讀；防波堤／油田／銀行超市神社／公園／空港／ロケット基地／酒店賭場）"
+            "示範島：珊瑚灘（觀光唯讀；防波堤／油田／銀行超市神社／公園／空港／ロケット基地／酒店賭場／大學研究所）"
         ],
         comments=[
             GuestbookEntry(
