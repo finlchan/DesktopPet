@@ -39,6 +39,7 @@ from .model import (
     BUILDINGS,
     COASTAL_BUILDINGS,
     COST_AFFOREST,
+    COST_AIRPORT,
     COST_ATTRACT,
     COST_BANK,
     COST_BREAKWATER,
@@ -384,6 +385,7 @@ TOOL_SPECS: Tuple[Tuple[str, str, Optional[int], str], ...] = (
     ("supermarket", "建設超市", COST_SUPERMARKET, "S"),
     ("shrine", "建設神社", COST_SHRINE, "Z"),
     ("park", "建設公園", COST_PARK, "K"),
+    ("airport", "建設空港", COST_AIRPORT, "I"),
     ("attract", "誘致活動", COST_ATTRACT, "A"),
     ("deposit", "銀行存款", None, "D"),
     ("withdraw", "銀行提款", None, "U"),
@@ -995,11 +997,18 @@ class HakoniwaIslandDialog(QDialog):
                 tip += "\n信仰色塊：大幅加島分數；餵飽時安穩人口加成"
             elif key == "park":
                 tip += "\n都市計畫色塊：加島分數／安穩；鄰格提高生村機率"
+            elif key == "airport":
+                tip += (
+                    "\n交通色塊：加島分數；每回合觀光收入；"
+                    "訪客留言小費；誘致 inbound 加成"
+                )
             elif key == "attract":
                 tip += (
                     f"\n定本誘致：−{COST_ATTRACT}；下回合餵飽時額外人口"
                     "（不推進回合）"
                 )
+                if self.state.has_airport():
+                    tip += "\n有空港：誘致人口再加碼"
                 if self.state.attract_pending:
                     tip += "\n已安排：請先推進回合"
             elif key == "deposit":
@@ -1087,6 +1096,8 @@ class HakoniwaIslandDialog(QDialog):
             hints.append("可建神社")
         if self.state.can_place_building(i, j, "park"):
             hints.append("可建公園")
+        if self.state.can_place_building(i, j, "airport"):
+            hints.append("可建空港")
         tree_line = ""
         if c.terrain == "forest":
             trees = c.trees if c.trees > 0 else TREE_MIN

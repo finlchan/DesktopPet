@@ -106,7 +106,7 @@ def make_demo_coral() -> IslandState:
         for i, j in land
         if cells[i][j].terrain == "grass" and cells[i][j].building is None
     ]
-    for idx, kind in enumerate(("bank", "supermarket", "shrine", "park")):
+    for idx, kind in enumerate(("bank", "supermarket", "shrine", "park", "airport")):
         if idx >= len(free_grass):
             break
         gi, gj = free_grass[idx]
@@ -121,7 +121,7 @@ def make_demo_coral() -> IslandState:
         bank_deposit=150,
         name="珊瑚灘島",
         cells=cells,
-        log=["示範島：珊瑚灘（觀光唯讀；防波堤／油田／銀行超市神社／公園）"],
+        log=["示範島：珊瑚灘（觀光唯讀；防波堤／油田／銀行超市神社／公園／空港）"],
         comments=[
             GuestbookEntry(
                 id="demo-coral-1",

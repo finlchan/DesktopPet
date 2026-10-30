@@ -29,7 +29,9 @@ from hakoniwa.model import (
     ATTRACT_POP_BONUS,
     BANK_TRANSFER_LOT,
     BREAKWATER_TSUNAMI_FACTOR,
+    ATTRACT_AIRPORT_EXTRA,
     COST_AFFOREST,
+    COST_AIRPORT,
     COST_ATTRACT,
     COST_BANK,
     COST_BREAKWATER,
@@ -81,6 +83,7 @@ from hakoniwa.model import (
     OIL_DISCOVER_CHANCE,
     PARK_SETTLEMENT_SPAWN_BONUS,
     SAVE_VERSION,
+    SCORE_PER_AIRPORT,
     SCORE_PER_BANK,
     SCORE_PER_BREAKWATER,
     SCORE_PER_MONUMENT,
@@ -90,6 +93,8 @@ from hakoniwa.model import (
     SCORE_PER_SHRINE,
     SCORE_PER_SUPERMARKET,
     TIMBER_LOT,
+    TOURISM_FUNDS_BASE,
+    TOURISM_FUNDS_PER_100_POP,
     TOWN_TO_CITY_POP,
     TREE_GROWTH_PER_TURN,
     TREE_MAX,
@@ -97,6 +102,7 @@ from hakoniwa.model import (
     TSUNAMI_BASE_CHANCE,
     TSUNAMI_PER_SEA_NEIGHBOR,
     VILLAGE_TO_TOWN_POP,
+    VISITOR_TIP_FUNDS,
     Cell,
     IslandState,
     assign_labor,
@@ -105,6 +111,7 @@ from hakoniwa.model import (
     food_export_funds,
     scaled_yield,
     timber_funds,
+    tourism_funds,
 )
 from hakoniwa.demos import island_summary, local_demo_islands, make_demo_coral, make_demo_pine
 from hakoniwa.dialog import TOOL_SPECS, tool_enabled
@@ -211,6 +218,7 @@ def test_catalog_costs():
     assert COST_SHRINE == 800
     assert COST_PARK == 250
     assert COST_ATTRACT == 1000
+    assert COST_AIRPORT == 1500
     assert SCORE_PER_MONUMENT == 2000
     assert SCORE_PER_QUARRY == 70
     assert SCORE_PER_BREAKWATER == 50
@@ -219,10 +227,19 @@ def test_catalog_costs():
     assert SCORE_PER_SUPERMARKET == 40
     assert SCORE_PER_SHRINE == 800
     assert SCORE_PER_PARK == 150
+    assert SCORE_PER_AIRPORT == 500
     assert HAPPINESS_POP_PER_MONUMENT == 5
     assert HAPPINESS_POP_PER_SHRINE == 8
     assert HAPPINESS_POP_PER_PARK == 6
     assert ATTRACT_POP_BONUS == 40
+    assert ATTRACT_AIRPORT_EXTRA == 20
+    assert TOURISM_FUNDS_BASE == 12
+    assert TOURISM_FUNDS_PER_100_POP == 3
+    assert VISITOR_TIP_FUNDS == 20
+    assert tourism_funds(0, 500) == 0
+    assert tourism_funds(1, 0) == TOURISM_FUNDS_BASE
+    assert tourism_funds(1, 180) == TOURISM_FUNDS_BASE + TOURISM_FUNDS_PER_100_POP
+    assert tourism_funds(2, 250) == 2 * (TOURISM_FUNDS_BASE + 2 * TOURISM_FUNDS_PER_100_POP)
     assert 0 < PARK_SETTLEMENT_SPAWN_BONUS < 1
     assert FUNDS_SOFT_CAP == 9999
     assert BANK_TRANSFER_LOT == 100
@@ -232,7 +249,7 @@ def test_catalog_costs():
     assert FUNDS_PER_FOOD_BUY == 8
     assert FUNDS_PER_QUARRY == 8
     assert FUNDS_PER_OILFIELD == 50
-    assert SAVE_VERSION == 11
+    assert SAVE_VERSION == 12
     assert 0 < OIL_DISCOVER_CHANCE <= 1
     assert 0 < OIL_DEPLETION_CHANCE < 1
     assert TSUNAMI_BASE_CHANCE > 0
@@ -625,11 +642,34 @@ def test_monument_and_island_score():
     assert state._has_forest_neighbor(fi, fj) is True
     assert state._has_forest_for_typhoon(fi, fj) is False
 
-    # Turn log includes 島分數.
+    # Turn log includes 島分數（靜音災害／怪獸，避免噴火偶然清掉紀念碑）.
+    import hakoniwa.model as model_mod
+
     state.food = max(state.food, 500)
-    notes = state.next_turn()
+    old_fire = model_mod.FIRE_BASE_CHANCE
+    old_ty = model_mod.TYPHOON_BASE_CHANCE
+    old_qk = model_mod.QUAKE_BASE_CHANCE
+    old_vo = model_mod.VOLCANO_BASE_CHANCE
+    old_ts = model_mod.TSUNAMI_BASE_CHANCE
+    old_mon = model_mod.MONSTER_BASE_CHANCE
+    model_mod.FIRE_BASE_CHANCE = 0.0
+    model_mod.TYPHOON_BASE_CHANCE = 0.0
+    model_mod.QUAKE_BASE_CHANCE = 0.0
+    model_mod.VOLCANO_BASE_CHANCE = 0.0
+    model_mod.TSUNAMI_BASE_CHANCE = 0.0
+    model_mod.MONSTER_BASE_CHANCE = 0.0
+    try:
+        notes = state.next_turn()
+    finally:
+        model_mod.FIRE_BASE_CHANCE = old_fire
+        model_mod.TYPHOON_BASE_CHANCE = old_ty
+        model_mod.QUAKE_BASE_CHANCE = old_qk
+        model_mod.VOLCANO_BASE_CHANCE = old_vo
+        model_mod.TSUNAMI_BASE_CHANCE = old_ts
+        model_mod.MONSTER_BASE_CHANCE = old_mon
     assert any("島分數" in n for n in notes)
     assert any("島分數" in line for line in state.log)
+    assert state.monument_count() == 1
 
     # Round-trip.
     blob = state.to_dict()
@@ -713,6 +753,7 @@ def test_local_demos():
     assert coral.building_count("bank") == 1
     assert coral.building_count("supermarket") == 1
     assert coral.building_count("shrine") == 1
+    assert coral.airport_count() >= 1
     assert coral.bank_deposit == 150
     row = island_summary(coral)
     assert row["id"] == "demo-coral"
@@ -1318,6 +1359,113 @@ def test_park_and_attract():
     # Demo coral seeds a park.
     coral = make_demo_coral()
     assert coral.park_count() >= 1
+
+
+def test_airport_and_tourism_buffs():
+    """空港色塊（分數／觀光收入）＋訪客留言小費＋誘致 inbound 加成."""
+    import random
+
+    import hakoniwa.model as model_mod
+
+    state = IslandState.new_game()
+    land = [(i, j) for i in range(20) for j in range(20) if state.is_land(i, j)]
+    for i, j in land:
+        if state.cell(i, j).terrain == "dirt":
+            assert state.level_land(i, j) == "ok"
+    grass = [
+        (i, j)
+        for i, j in land
+        if state.cell(i, j).terrain == "grass" and state.cell(i, j).building is None
+    ]
+    assert len(grass) >= 1
+    ai, aj = grass[0]
+
+    # Too poor → cannot place.
+    state.funds = COST_AIRPORT - 1
+    assert state.place_building(ai, aj, "airport") != "ok"
+    state.funds = COST_AIRPORT + 80
+    before = state.funds
+    assert state.can_place_building(ai, aj, "airport")
+    assert state.place_building(ai, aj, "airport") == "ok"
+    assert state.cell(ai, aj).building == "airport"
+    assert state.funds == before - COST_AIRPORT
+    assert state.airport_count() == 1
+    assert state.has_airport()
+    assert state.island_score() >= SCORE_PER_AIRPORT
+
+    keys = {k for k, *_ in TOOL_SPECS}
+    assert "airport" in keys
+    ok, _ = tool_enabled(state, "airport", (ai, aj))
+    assert ok is False  # occupied
+
+    # Save round-trip before disaster-prone turns.
+    blob = state.to_dict()
+    assert blob["version"] == SAVE_VERSION
+    loaded = IslandState.from_dict(blob)
+    assert loaded.airport_count() == 1
+    assert loaded.cell(ai, aj).building == "airport"
+    assert loaded.island_score() == state.island_score()
+
+    # Guestbook tip only with airport.
+    funds_pre = state.funds
+    assert state.add_comment("Tourist", "飛來觀光") == "ok"
+    assert state.funds == funds_pre + VISITOR_TIP_FUNDS
+    assert any("小費" in line for line in state.log)
+
+    # No tip without airport.
+    bare = IslandState.new_game()
+    bare_funds = bare.funds
+    assert bare.add_comment("Walk-in", "無空港") == "ok"
+    assert bare.funds == bare_funds
+
+    # Mute disasters／monsters so airport survives income／誘致 checks.
+    old_fire = model_mod.FIRE_BASE_CHANCE
+    old_ty = model_mod.TYPHOON_BASE_CHANCE
+    old_qk = model_mod.QUAKE_BASE_CHANCE
+    old_vo = model_mod.VOLCANO_BASE_CHANCE
+    old_ts = model_mod.TSUNAMI_BASE_CHANCE
+    old_mon = model_mod.MONSTER_BASE_CHANCE
+    model_mod.FIRE_BASE_CHANCE = 0.0
+    model_mod.TYPHOON_BASE_CHANCE = 0.0
+    model_mod.QUAKE_BASE_CHANCE = 0.0
+    model_mod.VOLCANO_BASE_CHANCE = 0.0
+    model_mod.TSUNAMI_BASE_CHANCE = 0.0
+    model_mod.MONSTER_BASE_CHANCE = 0.0
+    try:
+        # Per-turn tourism income (no farms／油田 on this stub → exact tour gain).
+        state.food = max(state.food, 500)
+        state.population = 180
+        expected_tour = tourism_funds(1, 180)
+        assert expected_tour == TOURISM_FUNDS_BASE + TOURISM_FUNDS_PER_100_POP
+        funds_before_turn = state.funds
+        random.seed(1)
+        notes = state.next_turn()
+        assert any("觀光收入" in n for n in notes)
+        assert state.airport_count() == 1
+        assert state.funds == funds_before_turn + expected_tour
+
+        # Attract + airport inbound extra.
+        state.funds = COST_ATTRACT + 30
+        pop_before = state.population
+        assert state.attract_population() == "ok"
+        state.food = max(state.food, 500)
+        random.seed(2)
+        notes2 = state.next_turn()
+        assert state.attract_pending is False
+        assert any("誘致" in n for n in notes2)
+        assert state.population >= pop_before + ATTRACT_POP_BONUS + ATTRACT_AIRPORT_EXTRA
+        assert state.airport_count() == 1
+    finally:
+        model_mod.FIRE_BASE_CHANCE = old_fire
+        model_mod.TYPHOON_BASE_CHANCE = old_ty
+        model_mod.QUAKE_BASE_CHANCE = old_qk
+        model_mod.VOLCANO_BASE_CHANCE = old_vo
+        model_mod.TSUNAMI_BASE_CHANCE = old_ts
+        model_mod.MONSTER_BASE_CHANCE = old_mon
+
+    # Demo coral seeds an airport.
+    coral = make_demo_coral()
+    assert coral.airport_count() >= 1
 
 
 def test_settlements_and_disasters():
@@ -2144,6 +2292,7 @@ def test_user_art_loader_hook():
     names = expected_filenames()
     assert "farm.png" in names["building"]
     assert "park.png" in names["building"]
+    assert "airport.png" in names["building"]
     assert "inora.png" in names["monster"]
     assert "sea.png" in names["terrain"]
     assert "ocean-background.png" in names["ocean"]
@@ -2351,6 +2500,7 @@ def main():
     test_breakwater_oilfield_tsunami()
     test_bank_supermarket_shrine()
     test_park_and_attract()
+    test_airport_and_tourism_buffs()
     test_local_demos()
     test_save_load_roundtrip()
     test_remote_url_normalize()
