@@ -1,8 +1,8 @@
 Desktop Pet
 ==================
 
-Version: 261029.01
-Published: 2026-10-29
+Version: 261030.01
+Published: 2026-10-30
 
 A floating shortcut menu and document record gadget on the Windows desktop.
 
@@ -20,7 +20,8 @@ Features
    The Document record submenu header has an "Open folder" button to open storage folder(s) in the file manager.
 6. Below Document record, "Mini programs"; click ">>" for Text records and Calculations
    (Level calc / Slope calc / Free station), plus Pomodoro, Translate, and 箱庭島
-   (local island scaffold: oblique diamond map, place/remove buildings, turn loop).
+   (richer island sim: textured oblique map HUD, forest/harbor/monuments/mountain/
+   quarry/breakwater/oil, bank/shop/shrine/park, optional user PNG art overlay).
 7. Drag files, folders, or URLs onto the pet to add shortcuts (prompt for name/description).
 8. The bottom has a "Settings" button to edit all configurations.
 9. Window level can be set to Normal, Always on top, or Always on bottom.
@@ -69,6 +70,21 @@ Free_Station_FAI.xls / .xlsm survey spreadsheet:
 - Output: station Easting/Northing, reduced level, and the distance-check
   residual ΔHD per accepted pair, plus an Average (mean E / N / RL) of those
   pair results. Copy button copies the result block.
+
+What's new in 261030.01 (2026-10-30)
+--------
+1. 箱庭島: oblique diamond projection fix (stable map geometry).
+2. Map HUD / terrain textures (tile tops + ocean backdrop bundled in EXE).
+3. Forest: plant and harvest gameplay.
+4. Harbor / shipyard trade loop.
+5. Monuments and score tracking.
+6. Mountain / quarry production.
+7. Breakwater, oil, and tsunami mitigation.
+8. Bank, supermarket, and shrine buildings.
+9. City park and induction mechanics.
+10. Optional user PNG art overlay on the island map.
+11. Windows CI PyInstaller aligned with build.bat: hakoniwa/assets --add-data
+    plus hidden-imports for hakoniwa.tiles and hakoniwa.user_art.
 
 What's new in 261029.01 (2026-10-29)
 --------
