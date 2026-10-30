@@ -30,17 +30,21 @@ from hakoniwa.model import (
     BANK_TRANSFER_LOT,
     BREAKWATER_TSUNAMI_FACTOR,
     ATTRACT_AIRPORT_EXTRA,
+    CASINO_TOURISM_BASE,
+    CASINO_TOURISM_PER_100_POP,
     COST_AFFOREST,
     COST_AIRPORT,
     COST_ATTRACT,
     COST_BANK,
     COST_BREAKWATER,
+    COST_CASINO,
     COST_DEFENSE,
     COST_EXCAVATE,
     COST_FACTORY,
     COST_FARM,
     COST_HARBOR,
     COST_HARVEST,
+    COST_HOTEL,
     COST_LANDFILL,
     COST_LEVEL,
     COST_MISSILE,
@@ -55,6 +59,8 @@ from hakoniwa.model import (
     COST_SHIPYARD,
     COST_SHRINE,
     COST_SUPERMARKET,
+    HOTEL_TOURISM_BASE,
+    HOTEL_TOURISM_PER_100_POP,
     DEFENSE_RADIUS,
     DEFENSE_SPAWN_FACTOR,
     DEFENSE_STOMP_SAVE_CHANCE,
@@ -89,6 +95,8 @@ from hakoniwa.model import (
     SCORE_PER_AIRPORT,
     SCORE_PER_BANK,
     SCORE_PER_BREAKWATER,
+    SCORE_PER_CASINO,
+    SCORE_PER_HOTEL,
     SCORE_PER_MONUMENT,
     SCORE_PER_OILFIELD,
     SCORE_PER_PARK,
@@ -226,6 +234,8 @@ def test_catalog_costs():
     assert COST_AIRPORT == 1500
     assert COST_ROCKET_BASE == 2000
     assert COST_ROCKET_LAUNCH == 800
+    assert COST_HOTEL == 600
+    assert COST_CASINO == 1100
     assert SCORE_PER_MONUMENT == 2000
     assert SCORE_PER_QUARRY == 70
     assert SCORE_PER_BREAKWATER == 50
@@ -237,6 +247,8 @@ def test_catalog_costs():
     assert SCORE_PER_AIRPORT == 500
     assert SCORE_PER_ROCKET_BASE == 400
     assert SCORE_PER_SATELLITE == 300
+    assert SCORE_PER_HOTEL == 200
+    assert SCORE_PER_CASINO == 320
     assert HAPPINESS_POP_PER_MONUMENT == 5
     assert HAPPINESS_POP_PER_SHRINE == 8
     assert HAPPINESS_POP_PER_PARK == 6
@@ -244,11 +256,24 @@ def test_catalog_costs():
     assert ATTRACT_AIRPORT_EXTRA == 20
     assert TOURISM_FUNDS_BASE == 12
     assert TOURISM_FUNDS_PER_100_POP == 3
+    assert HOTEL_TOURISM_BASE == 8
+    assert HOTEL_TOURISM_PER_100_POP == 2
+    assert CASINO_TOURISM_BASE == 18
+    assert CASINO_TOURISM_PER_100_POP == 5
     assert VISITOR_TIP_FUNDS == 20
     assert tourism_funds(0, 500) == 0
     assert tourism_funds(1, 0) == TOURISM_FUNDS_BASE
     assert tourism_funds(1, 180) == TOURISM_FUNDS_BASE + TOURISM_FUNDS_PER_100_POP
     assert tourism_funds(2, 250) == 2 * (TOURISM_FUNDS_BASE + 2 * TOURISM_FUNDS_PER_100_POP)
+    assert tourism_funds(0, 180, hotels=1) == HOTEL_TOURISM_BASE + HOTEL_TOURISM_PER_100_POP
+    assert tourism_funds(0, 250, casinos=1) == (
+        CASINO_TOURISM_BASE + 2 * CASINO_TOURISM_PER_100_POP
+    )
+    assert tourism_funds(1, 180, hotels=1, casinos=1) == (
+        (TOURISM_FUNDS_BASE + TOURISM_FUNDS_PER_100_POP)
+        + (HOTEL_TOURISM_BASE + HOTEL_TOURISM_PER_100_POP)
+        + (CASINO_TOURISM_BASE + CASINO_TOURISM_PER_100_POP)
+    )
     assert 0 < PARK_SETTLEMENT_SPAWN_BONUS < 1
     assert 0 < SATELLITE_DISASTER_FACTOR < 1
     assert FUNDS_SOFT_CAP == 9999
@@ -259,7 +284,7 @@ def test_catalog_costs():
     assert FUNDS_PER_FOOD_BUY == 8
     assert FUNDS_PER_QUARRY == 8
     assert FUNDS_PER_OILFIELD == 50
-    assert SAVE_VERSION == 13
+    assert SAVE_VERSION == 14
     assert 0 < OIL_DISCOVER_CHANCE <= 1
     assert 0 < OIL_DEPLETION_CHANCE < 1
     assert TSUNAMI_BASE_CHANCE > 0
@@ -764,6 +789,8 @@ def test_local_demos():
     assert coral.building_count("supermarket") == 1
     assert coral.building_count("shrine") == 1
     assert coral.airport_count() >= 1
+    assert coral.hotel_count() >= 1
+    assert coral.casino_count() >= 1
     assert coral.bank_deposit == 150
     row = island_summary(coral)
     assert row["id"] == "demo-coral"
@@ -1586,6 +1613,132 @@ def test_rocket_base_and_launch():
 
     coral = make_demo_coral()
     assert coral.rocket_base_count() >= 1
+
+
+def test_hotel_casino_tourism():
+    """酒店／賭場色塊：建設費用、島分數、觀光收入、酒店留言小費、SAVE round-trip."""
+    import random
+
+    import hakoniwa.model as model_mod
+
+    state = IslandState.new_game()
+    land = [(i, j) for i in range(20) for j in range(20) if state.is_land(i, j)]
+    for i, j in land:
+        if state.cell(i, j).terrain == "dirt":
+            assert state.level_land(i, j) == "ok"
+    grass = [
+        (i, j)
+        for i, j in land
+        if state.cell(i, j).terrain == "grass" and state.cell(i, j).building is None
+    ]
+    assert len(grass) >= 2
+    hi, hj = grass[0]
+    ci, cj = grass[1]
+
+    # Too poor → cannot place hotel.
+    state.funds = COST_HOTEL - 1
+    assert state.place_building(hi, hj, "hotel") != "ok"
+    state.funds = COST_HOTEL + COST_CASINO + 80
+    before = state.funds
+    assert state.can_place_building(hi, hj, "hotel")
+    assert state.place_building(hi, hj, "hotel") == "ok"
+    assert state.cell(hi, hj).building == "hotel"
+    assert state.funds == before - COST_HOTEL
+    assert state.hotel_count() == 1
+    assert state.has_hotel()
+    assert state.island_score() >= SCORE_PER_HOTEL
+
+    before_c = state.funds
+    assert state.can_place_building(ci, cj, "casino")
+    assert state.place_building(ci, cj, "casino") == "ok"
+    assert state.cell(ci, cj).building == "casino"
+    assert state.funds == before_c - COST_CASINO
+    assert state.casino_count() == 1
+    assert state.has_casino()
+    assert state.island_score() >= SCORE_PER_HOTEL + SCORE_PER_CASINO
+
+    keys = {k for k, *_ in TOOL_SPECS}
+    assert "hotel" in keys and "casino" in keys
+    ok, _ = tool_enabled(state, "hotel", (hi, hj))
+    assert ok is False  # occupied
+    ok, _ = tool_enabled(state, "casino", (ci, cj))
+    assert ok is False
+
+    # Save round-trip.
+    blob = state.to_dict()
+    assert blob["version"] == SAVE_VERSION
+    loaded = IslandState.from_dict(blob)
+    assert loaded.hotel_count() == 1
+    assert loaded.casino_count() == 1
+    assert loaded.cell(hi, hj).building == "hotel"
+    assert loaded.cell(ci, cj).building == "casino"
+    assert loaded.island_score() == state.island_score()
+
+    # Guestbook tip with hotel (no airport).
+    tip_state = IslandState.new_game()
+    for i, j in [
+        (ii, jj)
+        for ii in range(20)
+        for jj in range(20)
+        if tip_state.is_land(ii, jj)
+    ]:
+        if tip_state.cell(i, j).terrain == "dirt":
+            tip_state.level_land(i, j)
+    tip_grass = [
+        (i, j)
+        for i in range(20)
+        for j in range(20)
+        if tip_state.cell(i, j).terrain == "grass"
+        and tip_state.cell(i, j).building is None
+    ]
+    tip_state.funds = COST_HOTEL + 20
+    assert tip_state.place_building(tip_grass[0][0], tip_grass[0][1], "hotel") == "ok"
+    funds_pre = tip_state.funds
+    assert tip_state.add_comment("Lodger", "住宿觀光") == "ok"
+    assert tip_state.funds == funds_pre + VISITOR_TIP_FUNDS
+    assert any("酒店" in line and "小費" in line for line in tip_state.log)
+
+    # Mute disasters／monsters so hotel／casino survive income check.
+    old_fire = model_mod.FIRE_BASE_CHANCE
+    old_ty = model_mod.TYPHOON_BASE_CHANCE
+    old_qk = model_mod.QUAKE_BASE_CHANCE
+    old_vo = model_mod.VOLCANO_BASE_CHANCE
+    old_ts = model_mod.TSUNAMI_BASE_CHANCE
+    old_mon = model_mod.MONSTER_BASE_CHANCE
+    model_mod.FIRE_BASE_CHANCE = 0.0
+    model_mod.TYPHOON_BASE_CHANCE = 0.0
+    model_mod.QUAKE_BASE_CHANCE = 0.0
+    model_mod.VOLCANO_BASE_CHANCE = 0.0
+    model_mod.TSUNAMI_BASE_CHANCE = 0.0
+    model_mod.MONSTER_BASE_CHANCE = 0.0
+    try:
+        state.food = max(state.food, 500)
+        state.population = 180
+        expected_tour = tourism_funds(0, 180, hotels=1, casinos=1)
+        assert expected_tour == (
+            (HOTEL_TOURISM_BASE + HOTEL_TOURISM_PER_100_POP)
+            + (CASINO_TOURISM_BASE + CASINO_TOURISM_PER_100_POP)
+        )
+        funds_before_turn = state.funds
+        random.seed(3)
+        notes = state.next_turn()
+        assert any("觀光收入" in n for n in notes)
+        assert "酒店" in " ".join(notes) or any("酒店" in n for n in notes)
+        assert "賭場" in " ".join(notes) or any("賭場" in n for n in notes)
+        assert state.hotel_count() == 1
+        assert state.casino_count() == 1
+        assert state.funds == funds_before_turn + expected_tour
+    finally:
+        model_mod.FIRE_BASE_CHANCE = old_fire
+        model_mod.TYPHOON_BASE_CHANCE = old_ty
+        model_mod.QUAKE_BASE_CHANCE = old_qk
+        model_mod.VOLCANO_BASE_CHANCE = old_vo
+        model_mod.TSUNAMI_BASE_CHANCE = old_ts
+        model_mod.MONSTER_BASE_CHANCE = old_mon
+
+    coral = make_demo_coral()
+    assert coral.hotel_count() >= 1
+    assert coral.casino_count() >= 1
 
 
 def test_settlements_and_disasters():
@@ -2417,6 +2570,8 @@ def test_user_art_loader_hook():
     assert "park.png" in names["building"]
     assert "airport.png" in names["building"]
     assert "rocket_base.png" in names["building"]
+    assert "hotel.png" in names["building"]
+    assert "casino.png" in names["building"]
     assert "inora.png" in names["monster"]
     assert "sea.png" in names["terrain"]
     assert "ocean-background.png" in names["ocean"]
@@ -2626,6 +2781,7 @@ def main():
     test_park_and_attract()
     test_airport_and_tourism_buffs()
     test_rocket_base_and_launch()
+    test_hotel_casino_tourism()
     test_local_demos()
     test_save_load_roundtrip()
     test_remote_url_normalize()

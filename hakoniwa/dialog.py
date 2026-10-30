@@ -47,8 +47,10 @@ from .model import (
     COST_EXCAVATE,
     COST_FACTORY,
     COST_FARM,
+    COST_CASINO,
     COST_HARBOR,
     COST_HARVEST,
+    COST_HOTEL,
     COST_LANDFILL,
     COST_LEVEL,
     COST_MISSILE,
@@ -390,6 +392,8 @@ TOOL_SPECS: Tuple[Tuple[str, str, Optional[int], str], ...] = (
     ("airport", "建設空港", COST_AIRPORT, "I"),
     ("rocket_base", "建設ロケット基地", COST_ROCKET_BASE, "O"),
     ("rocket_launch", "發射火箭", COST_ROCKET_LAUNCH, "L"),
+    ("hotel", "建設酒店", COST_HOTEL, "T"),
+    ("casino", "建設賭場", COST_CASINO, "G"),
     ("attract", "誘致活動", COST_ATTRACT, "A"),
     ("deposit", "銀行存款", None, "D"),
     ("withdraw", "銀行提款", None, "U"),
@@ -1025,6 +1029,16 @@ class HakoniwaIslandDialog(QDialog):
                 )
                 if self.state.has_satellite():
                     tip += "\n衛星已在軌"
+            elif key == "hotel":
+                tip += (
+                    "\n住宿觀光色塊：加島分數；每回合住宿觀光收入；"
+                    "訪客留言小費（無空港時亦可）"
+                )
+            elif key == "casino":
+                tip += (
+                    "\n娛樂觀光色塊：加島分數；每回合娛樂觀光收入"
+                    "（依人口加碼）"
+                )
             elif key == "attract":
                 tip += (
                     f"\n定本誘致：−{COST_ATTRACT}；下回合餵飽時額外人口"
@@ -1123,6 +1137,10 @@ class HakoniwaIslandDialog(QDialog):
             hints.append("可建空港")
         if self.state.can_place_building(i, j, "rocket_base"):
             hints.append("可建ロケット基地")
+        if self.state.can_place_building(i, j, "hotel"):
+            hints.append("可建酒店")
+        if self.state.can_place_building(i, j, "casino"):
+            hints.append("可建賭場")
         tree_line = ""
         if c.terrain == "forest":
             trees = c.trees if c.trees > 0 else TREE_MIN
