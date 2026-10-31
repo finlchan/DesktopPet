@@ -77,6 +77,12 @@ Free_Station_FAI.xls / .xlsm survey spreadsheet:
   residual ΔHD per accepted pair, plus an Average (mean E / N / RL) of those
   pair results. Copy button copies the result block.
 
+What's new in 261031.04 (2026-10-31)
+--------
+1. Transparent Fish Tank: replace top bilingual text toolbar with bottom-left
+   Social Icon Fill circular buttons (hover fill-rise ~0.45s, comic line icons,
+   existing fish-tank teal-slate colors). Slim top status chip kept.
+
 What's new in 261031.03 (2026-10-31)
 --------
 1. Mini programs → 透明魚缸／Fish Tank (below 箱庭島): Phase 1 local translucent
