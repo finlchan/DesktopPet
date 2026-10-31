@@ -4,12 +4,12 @@ Desktop Pet mini-program: local 箱庭斜視 map + simplified island loop.
 
 ## 箱庭斜視 (mandatory view)
 
-Official player view is **~45° down-looking oblique with depth foreshortening**,
+Official player view is **箱庭斜視 with depth foreshortening H/W ≈ 0.65**,
 not a flat top-down square grid rotated 45°.
 
 | | |
 |---|---|
-| Projection | Logical 1:1 diamond tops → screen `H = W · sin(45°)` (`grid.OBLIQUE_Y_SCALE`) |
+| Projection | Logical 1:1 diamond tops → screen `H = W · 0.65` (`grid.OBLIQUE_Y_SCALE`) |
 | Lattice | v9 diagonal-strip stagger, 20×20, same-layer sea/dirt/grass |
 | Terrain | Flat top PNGs in `assets/tiles/` (dirt／grass／sea；森＝草面＋綠洗); ocean backdrop optional |
 | User art | Optional PNGs in `Data/hakoniwa/user/` or `assets/user/` replace building／monster color blocks and optionally terrain (see below); missing → color blocks / bundled tops |
@@ -78,7 +78,7 @@ Fallback when a file is absent: buildings／monsters → solid color; terrain �
 ## Checklist after any map/view change
 
 1. Open the island map (or render the offscreen preview).
-2. Confirm foreshortening: cell diamonds are **wider than tall** (H/W ≈ 0.707).
+2. Confirm foreshortening: cell diamonds are **wider than tall** (H/W ≈ 0.65).
 3. If the map looks like flat diamonds with H/W ≈ 1 (rotated squares), **fix immediately**.
 4. Run `python -m hakoniwa.smoke_test` — must pass `test_oblique_foreshortening_invariant`.
 5. Keep v9 stagger, 20×20, same-layer tops, no under-tile skirts.

@@ -165,18 +165,19 @@ def test_grid_geometry():
 def test_oblique_foreshortening_invariant():
     """箱庭斜視 must foreshorten depth — reject flat rotate(45°) orthographic.
 
-    Correct: screen diamond H/W == sin(45°) ≈ 0.707 (oblique affine).
+    Correct: screen diamond H/W == OBLIQUE_Y_SCALE == 0.65 (oblique affine).
     Wrong regression: H/W == 1.0 (top-down squares rotated 45° only).
     """
     import math
 
     params = oblique_projection_params()
     assert params["kind"] == "oblique_affine"
-    assert params["elevation_deg"] == OBLIQUE_ELEVATION_DEG == 45.0
     assert params["forbidden"] == "orthographic_rotate_only"
-    assert abs(float(params["y_scale"]) - math.sin(math.radians(45.0))) < 1e-12
-    assert abs(OBLIQUE_Y_SCALE - math.sin(math.radians(45.0))) < 1e-12
-    # Hard floor: must not be orthographic (y_scale == 1).
+    assert OBLIQUE_Y_SCALE == 0.65
+    assert abs(float(params["y_scale"]) - 0.65) < 1e-12
+    assert abs(params["elevation_deg"] - OBLIQUE_ELEVATION_DEG) < 1e-12
+    assert abs(OBLIQUE_ELEVATION_DEG - math.degrees(math.asin(0.65))) < 1e-12
+    # Hard floor: must not be orthographic (y_scale == 1) or classic 2:1-only.
     assert OBLIQUE_Y_SCALE < 0.95, OBLIQUE_Y_SCALE
     assert OBLIQUE_Y_SCALE > 0.5, OBLIQUE_Y_SCALE
 
