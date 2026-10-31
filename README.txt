@@ -1,8 +1,8 @@
 Desktop Pet
 ==================
 
-Version: 261030.01
-Published: 2026-10-30
+Version: 261031.01
+Published: 2026-10-31
 
 A floating shortcut menu and document record gadget on the Windows desktop.
 
@@ -60,9 +60,13 @@ Free_Station_FAI.xls / .xlsm survey spreadsheet:
   angle, slope distance and prism/spot height (face-left / face-right).
 - IMPORT (left of Calculate) loads standing station, instrument height, BS
   names/coords, and face observations from a Free Station sheet
-  (.xlsm / .xlsx / .xls). Measurement cells are filled only for BS rows whose
-  Name is non-empty after import. Runtime deps: openpyxl + xlrd (bundled in
-  the Windows EXE via PyInstaller --hidden-import / --collect-submodules).
+  (.xlsm / .xlsx / .xls). Annotated layout: standing D12, HI H12, BS1–3
+  Name/E/N/RL from D/E/F/G13–15, BS4 from D/E/F/G17, faces C25–F32.
+  Measurement cells are filled only for BS rows whose Name is non-empty after
+  import; empty Excel cells (and template placeholders such as "BS name" /
+  "DD.MMSS" / "Distance") clear to blank. Runtime deps: openpyxl + xlrd
+  (bundled in the Windows EXE via PyInstaller --hidden-import /
+  --collect-submodules).
 - Every ordered From→To pair is solved by the sine rule exactly as the sheet's
   FreeStation / FreeStation_Mirror VBA functions; the sheet's branch rule is
   kept (preliminary branch unless its distance check exceeds 0.05 m, then the
@@ -70,6 +74,13 @@ Free_Station_FAI.xls / .xlsm survey spreadsheet:
 - Output: station Easting/Northing, reduced level, and the distance-check
   residual ΔHD per accepted pair, plus an Average (mean E / N / RL) of those
   pair results. Copy button copies the result block.
+
+What's new in 261031.01 (2026-10-31)
+--------
+1. Free Station IMPORT: annotated-layout BS1–3 Name now maps from D13 / D14 /
+   D15 (E/N/RL from E/F/G on the same rows); BS4 Name stays D17; standing D12,
+   Inst. ht H12, and face obs C25–F32 unchanged. Empty cells and template
+   placeholders ("BS name" / "DD.MMSS" / "Distance") clear to blank.
 
 What's new in 261030.01 (2026-10-30)
 --------

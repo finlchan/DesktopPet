@@ -54,7 +54,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261030.01"
+APP_VERSION = "261031.01"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -1959,13 +1959,23 @@ def _survey_round(value, decimals):
 # ---------------------------------------------------------------------------
 # Free Station Excel import (Free Station sheet → dialog fields)
 #
-# Annotated / 4-BS layout (IMPORT map): standing D12, inst. ht H12; BS Name /
-# E / N / RL at D/E/F/G rows 14–17; face obs C/D/E/F rows 25–32 (BS1..BS4).
-# Classic Free_Station_FAI.xls V1.00: standing D10, inst. ht H10; same Name /
-# E/N/RL columns; BS1–3 faces at rows 20–21 / 24–25 / 28–29. Auto-detected.
+# Annotated / 4-BS layout (IMPORT map): standing D12, inst. ht H12; BS1–3
+# Name / E / N / RL at D/E/F/G rows 13–15; BS4 Name/E/N/RL at D/E/F/G 17;
+# face obs C/D/E/F rows 25–32 (BS1..BS4).
+# Classic Free_Station_FAI.xls V1.00: standing D10, inst. ht H10; Name /
+# E/N/RL at D/E/F/G rows 14–17 (row 13 is the Station/E/N/RL header);
+# BS1–3 faces at rows 20–21 / 24–25 / 28–29. Auto-detected.
 # Readers: openpyxl for .xlsx/.xlsm, xlrd for .xls (see requirements.txt).
 # ---------------------------------------------------------------------------
 _FS_SHEET_NAMES = ("free station", "freestation")
+# Template / UI hint strings that must never land as imported field values.
+_FS_PLACEHOLDER_TEXTS = frozenset(
+    {
+        "bs name",
+        "dd.mmss",
+        "distance",
+    }
+)
 
 
 def _excel_cell_to_text(value):
@@ -1988,6 +1998,16 @@ def _excel_cell_to_text(value):
         text = f"{number:.10f}".rstrip("0").rstrip(".")
         return text
     return str(value).strip()
+
+
+def _fs_import_field_text(value):
+    """Cell → dialog text; empty Excel / UI placeholder strings → ''."""
+    text = _excel_cell_to_text(value)
+    if not text:
+        return ""
+    if text.casefold() in _FS_PLACEHOLDER_TEXTS:
+        return ""
+    return text
 
 
 def _excel_a1(col_letters, row_1based):
@@ -2087,7 +2107,7 @@ def parse_free_station_workbook(path):
     _title, get = _load_free_station_sheet_cells(path)
 
     def text(col, row):
-        return _excel_cell_to_text(get(col, row))
+        return _fs_import_field_text(get(col, row))
 
     # Layout detect: annotated map uses D12; classic V1.00 uses D10 + "BS1 - FL" @ B20.
     # Prefer annotated whenever D12 is filled (even if classic labels linger).
@@ -2106,14 +2126,18 @@ def parse_free_station_workbook(path):
         inst_height = text("H", 10)
         # Classic obs rows (FL/FR); BS4 unused in V1.00 templates.
         obs_rows = [(20, 21), (24, 25), (28, 29), (None, None)]
+        # Row 13 is the Station/Easting/Northing/RL header on V1.00 sheets.
+        name_rows = (14, 15, 16, 17)
     else:
         station_name = d12
         inst_height = text("H", 12)
         obs_rows = [(25, 26), (27, 28), (29, 30), (31, 32)]
+        # Annotated map: BS1–3 Name at D13–D15; BS4 keeps prior D17 mapping.
+        name_rows = (13, 14, 15, 17)
 
     backsights = []
     for idx in range(4):
-        row = 14 + idx  # D14..D17 Name; E/F/G Easting/Northing/RL
+        row = name_rows[idx]  # Name at D{row}; E/F/G same row for E/N/RL
         name = text("D", row)
         easting = text("E", row)
         northing = text("F", row)
@@ -3571,8 +3595,13 @@ class FreeStationDialog(FramelessCalcDialog):
             QMessageBox.warning(self, "Import failed", f"Could not read file:\n{exc}")
             return
 
-        self.station_name.setText(data.get("station_name") or "")
-        hi_text = data.get("inst_height") or ""
+        def _set_import_text(edit, value):
+            """Write imported text; empty / placeholder tokens clear the field."""
+            text = _fs_import_field_text(value)
+            edit.setText(text)
+
+        _set_import_text(self.station_name, data.get("station_name") or "")
+        hi_text = _fs_import_field_text(data.get("inst_height") or "")
         self.inst_height.setText(hi_text if hi_text else "0.000")
 
         for idx, bs in enumerate(data.get("backsights") or []):
@@ -3581,16 +3610,16 @@ class FreeStationDialog(FramelessCalcDialog):
             f1, f2 = self.bs_fields[idx]["f1"], self.bs_fields[idx]["f2"]
             # Block store auto-fill while we set Name so Excel E/N/RL win.
             f1["name"].blockSignals(True)
-            f1["name"].setText(bs.get("name") or "")
+            _set_import_text(f1["name"], bs.get("name") or "")
             f1["name"].blockSignals(False)
-            f1["easting"].setText(bs.get("easting") or "")
-            f1["northing"].setText(bs.get("northing") or "")
-            f1["rl"].setText(bs.get("rl") or "")
+            _set_import_text(f1["easting"], bs.get("easting") or "")
+            _set_import_text(f1["northing"], bs.get("northing") or "")
+            _set_import_text(f1["rl"], bs.get("rl") or "")
             for face_fields, face_data in ((f1, bs.get("f1") or {}), (f2, bs.get("f2") or {})):
-                face_fields["bearing"].setText(face_data.get("bearing") or "")
-                face_fields["va"].setText(face_data.get("va") or "")
-                face_fields["sd"].setText(face_data.get("sd") or "")
-                face_fields["sh"].setText(face_data.get("sh") or "")
+                _set_import_text(face_fields["bearing"], face_data.get("bearing") or "")
+                _set_import_text(face_fields["va"], face_data.get("va") or "")
+                _set_import_text(face_fields["sd"], face_data.get("sd") or "")
+                _set_import_text(face_fields["sh"], face_data.get("sh") or "")
 
         named = sum(1 for bs in data.get("backsights") or [] if (bs.get("name") or "").strip())
         self.result.setText(
