@@ -14,7 +14,9 @@ buildings (spawn/stomp/missile stubs), 港灣／造船所／貿易輸出（臨�
 空港色塊＋觀光訪客增益（交通／觀光收入／留言小費／誘致加成）,
 ロケット基地色塊＋觀測衛星發射（減震／海嘯／噴火；變體啟發費用）,
 酒店／賭場色塊＋娛樂觀光收入（變體：住宿／賭場觀光名所；費用估算見常數）,
-大學／研究所色塊＋輕量研究 buff（變體：下一科技折扣／減災；費用估算見常數）.
+大學／研究所色塊＋輕量研究 buff（變體：下一科技折扣／減災；費用估算見常數）,
+養殖場色塊（變體：淺灘產糧）／遊樂園色塊（變體：依人口觀光收入）／
+發電廠色塊（SE 電力 stub：被動產資＋工場供電加產）.
 Color-block placeholders only — user art later.
 """
 
@@ -79,6 +81,15 @@ COST_UNIVERSITY = 700  # 大學（教育／研究色塊；平地；下一科技�
 # 研究所：目錄「研究所」費用為「?」。本機估算：
 # 高於神社(800)、低於賭場(1100)／空港(1500) → 950。
 COST_RESEARCH_LAB = 950  # 研究所（研究色塊；平地；輕量減災）
+# 養殖場：目錄「養殖場 — 淺灘產糧」（變體常見）。本機估算：
+# 高於防波堤(200)、同超市(300) → 300。
+COST_AQUAFARM = 300  # 養殖場（淺灘色塊；被動產糧）
+# 遊樂園：目錄「遊樂園／觀光名所」費用為「?」。本機估算：
+# 介於賭場(1100)與空港(1500) → 1300（大型觀光設施）。
+COST_AMUSEMENT_PARK = 1300  # 遊樂園（觀光色塊；平地；依人口收入）
+# 發電廠：目錄「發電廠 — 電力／稅收上限相關」（SE）。本機估算：
+# 介於酒店(600)與大學(700) → 650；供電給工場加產。
+COST_POWER_PLANT = 650  # 發電廠（電力色塊；平地；被動產資＋工場加產）
 
 # Forest tree stock (catalog 木 100～20000；+100／回合；新植林 100).
 TREE_MIN = 100
@@ -127,11 +138,16 @@ PLACEABLE_BUILDINGS = frozenset(
         "casino",
         "university",
         "research_lab",
+        "aquafarm",
+        "amusement_park",
+        "power_plant",
     }
 )
 COASTAL_BUILDINGS = frozenset({"harbor", "shipyard", "breakwater"})
 # Catalog: 採掘場僅能整備在山上.
 MOUNTAIN_ONLY_BUILDINGS = frozenset({"quarry"})
+# Catalog（變體）: 養殖場只能建在淺灘.
+SHALLOW_ONLY_BUILDINGS = frozenset({"aquafarm"})
 # Catalog: 紀念碑抗怪獸踩踏、抑火災如森（鄰居減火）.
 MONSTER_PROOF_BUILDINGS = frozenset({"monument"})
 # Water-like terrains (海嘯鄰接／臨海判定；油田算海域).
@@ -162,6 +178,9 @@ SCORE_PER_HOTEL = 200  # 住宿觀光：低於空港／賭場
 SCORE_PER_CASINO = 320  # 娛樂觀光：介於公園與空港之間
 SCORE_PER_UNIVERSITY = 280  # 教育設施：介於酒店與賭場
 SCORE_PER_RESEARCH_LAB = 380  # 研究設施：介於賭場與ロケット
+SCORE_PER_AQUAFARM = 60  # 淺灘養殖：介於超市(40)與港灣(80)
+SCORE_PER_AMUSEMENT_PARK = 350  # 大型觀光名所：介於賭場與空港
+SCORE_PER_POWER_PLANT = 130  # 電力設施：同油田量級（基礎建設）
 SCORE_PER_VILLAGE = 30
 SCORE_PER_TOWN = 80
 SCORE_PER_CITY = 150
@@ -193,6 +212,16 @@ SATELLITE_DISASTER_FACTOR = 0.25
 UNIVERSITY_TECH_DISCOUNT = 200
 # 研究所減災：地震／海嘯／噴火機率 × 此係數（輕於衛星 0.25；可與衛星疊乘）.
 RESEARCH_LAB_DISASTER_FACTOR = 0.7
+# 養殖場：淺灘被動產糧（變體「淺灘產糧」；無勞動；短局約農場 1/3 產能）.
+FOOD_PER_AQUAFARM = 30
+# 發電廠：被動產資（電力稅收 stub）＋供電工場加產.
+FUNDS_PER_POWER_PLANT = 15
+POWER_FACTORY_BONUS = 0.2  # 有 ≥1 發電廠時工場產出 ×(1+此值)
+# 遊樂園觀光收入（每座／回合；依人口加碼；高於賭場——大型觀光名所）.
+AMUSEMENT_TOURISM_BASE = 25
+AMUSEMENT_TOURISM_PER_100_POP = 6
+# 遊樂園安穩：餵飽時輕量人口成長加成（介於公園 6 與神社 8 之間的娛樂設施）.
+HAPPINESS_POP_PER_AMUSEMENT = 5
 
 # Turn yields (simplified short loop; not server-accurate).
 FOOD_PER_FARM = 100     # ~100 人農場 → 100 噸／回合
@@ -299,6 +328,24 @@ BUILDINGS = {
         "color": (72, 132, 108),
         "cost": COST_RESEARCH_LAB,
     },
+    # 淺灘養殖色塊（變體：淺灘產糧；美術後補）
+    "aquafarm": {
+        "label": "養殖場",
+        "color": (96, 178, 190),
+        "cost": COST_AQUAFARM,
+    },
+    # 大型觀光色塊（變體：遊樂園依人口產收入；美術後補）
+    "amusement_park": {
+        "label": "遊樂園",
+        "color": (230, 100, 140),
+        "cost": COST_AMUSEMENT_PARK,
+    },
+    # 電力色塊（SE：發電廠供電／稅收 stub；美術後補）
+    "power_plant": {
+        "label": "發電廠",
+        "color": (110, 190, 230),
+        "cost": COST_POWER_PLANT,
+    },
 }
 
 # Monsters as solid color-block placeholders (squares on map; art later).
@@ -342,8 +389,9 @@ def tourism_funds(
     population: int,
     hotels: int = 0,
     casinos: int = 0,
+    amusement_parks: int = 0,
 ) -> int:
-    """Per-turn tourism income from 空港／酒店／賭場 (base + pop tier)."""
+    """Per-turn tourism income from 空港／酒店／賭場／遊樂園 (base + pop tier)."""
     pop = max(0, int(population))
     total = 0
     n_air = max(0, int(airports))
@@ -358,6 +406,10 @@ def tourism_funds(
     if n_casino > 0:
         pop_tier = (pop // 100) * CASINO_TOURISM_PER_100_POP
         total += n_casino * (CASINO_TOURISM_BASE + pop_tier)
+    n_amuse = max(0, int(amusement_parks))
+    if n_amuse > 0:
+        pop_tier = (pop // 100) * AMUSEMENT_TOURISM_PER_100_POP
+        total += n_amuse * (AMUSEMENT_TOURISM_BASE + pop_tier)
     return total
 
 
@@ -429,6 +481,9 @@ def compute_island_score(
     casinos: int = 0,
     universities: int = 0,
     research_labs: int = 0,
+    aquafarms: int = 0,
+    amusement_parks: int = 0,
+    power_plants: int = 0,
     satellite_active: bool = False,
     bank_deposit: int = 0,
 ) -> int:
@@ -459,6 +514,9 @@ def compute_island_score(
         + max(0, int(casinos)) * SCORE_PER_CASINO
         + max(0, int(universities)) * SCORE_PER_UNIVERSITY
         + max(0, int(research_labs)) * SCORE_PER_RESEARCH_LAB
+        + max(0, int(aquafarms)) * SCORE_PER_AQUAFARM
+        + max(0, int(amusement_parks)) * SCORE_PER_AMUSEMENT_PARK
+        + max(0, int(power_plants)) * SCORE_PER_POWER_PLANT
         + max(0, int(villages)) * SCORE_PER_VILLAGE
         + max(0, int(towns)) * SCORE_PER_TOWN
         + max(0, int(cities)) * SCORE_PER_CITY
@@ -767,6 +825,15 @@ class IslandState:
     def has_research_lab(self) -> bool:
         return self.research_lab_count() > 0
 
+    def aquafarm_count(self) -> int:
+        return self.building_count("aquafarm")
+
+    def amusement_park_count(self) -> int:
+        return self.building_count("amusement_park")
+
+    def power_plant_count(self) -> int:
+        return self.building_count("power_plant")
+
     def has_satellite(self) -> bool:
         return bool(self.satellite_active)
 
@@ -823,16 +890,20 @@ class IslandState:
             casinos=self.casino_count(),
             universities=self.university_count(),
             research_labs=self.research_lab_count(),
+            aquafarms=self.aquafarm_count(),
+            amusement_parks=self.amusement_park_count(),
+            power_plants=self.power_plant_count(),
             satellite_active=self.has_satellite(),
             bank_deposit=self.bank_deposit,
         )
 
     def happiness_bonus(self) -> int:
-        """安穩 stub：紀念碑＋神社＋公園帶來的輕量人口成長加成。"""
+        """安穩 stub：紀念碑＋神社＋公園＋遊樂園帶來的輕量人口成長加成。"""
         return (
             self.monument_count() * HAPPINESS_POP_PER_MONUMENT
             + self.shrine_count() * HAPPINESS_POP_PER_SHRINE
             + self.park_count() * HAPPINESS_POP_PER_PARK
+            + self.amusement_park_count() * HAPPINESS_POP_PER_AMUSEMENT
         )
 
     def missile_cost(self) -> int:
@@ -907,6 +978,8 @@ class IslandState:
             return False
         if kind in MOUNTAIN_ONLY_BUILDINGS:
             return c.terrain == "mountain"
+        if kind in SHALLOW_ONLY_BUILDINGS:
+            return c.terrain == "shallow"
         if c.terrain not in BUILDABLE:
             return False
         if kind in COASTAL_BUILDINGS and not self._adjacent_to_sea(i, j):
@@ -924,6 +997,9 @@ class IslandState:
         if kind in MOUNTAIN_ONLY_BUILDINGS:
             if c.terrain != "mountain":
                 return "採掘場只能建在山上（請先造山或等噴火）"
+        elif kind in SHALLOW_ONLY_BUILDINGS:
+            if c.terrain != "shallow":
+                return "養殖場只能建在淺灘（請先填海造出淺灘）"
         elif c.terrain not in BUILDABLE:
             return "只能在平地上建設（請先整地）"
         if kind in COASTAL_BUILDINGS and not self._adjacent_to_sea(i, j):
@@ -1707,7 +1783,18 @@ class IslandState:
         quarry_funds = scaled_yield(
             quarries * FUNDS_PER_QUARRY, quarry_labor, quarry_slots
         )
-        funds_gain = factory_funds + quarry_funds
+        # 發電廠：被動產資＋供電工場加產（電力 stub；無勞動）.
+        power_plants = self.power_plant_count()
+        power_funds = power_plants * FUNDS_PER_POWER_PLANT
+        power_boost = 0
+        if power_plants > 0 and factory_funds > 0:
+            power_boost = int(factory_funds * POWER_FACTORY_BONUS)
+            factory_funds += power_boost
+        funds_gain = factory_funds + quarry_funds + power_funds
+        # 養殖場：淺灘被動產糧（變體；無勞動）.
+        aquafarms = self.aquafarm_count()
+        aqua_food = aquafarms * FOOD_PER_AQUAFARM
+        food_gain += aqua_food
         food_need = max(0, (self.population // 500) * FOOD_PER_500_POP)
         if food_need == 0 and self.population > 0:
             food_need = MIN_FOOD_NEED
@@ -1715,20 +1802,30 @@ class IslandState:
         self.food += food_gain
         self.funds += funds_gain
         notes.append(
-            f"農場×{farms} 產糧 +{food_gain}；"
+            f"農場×{farms} 產糧 +{food_gain - aqua_food}；"
             f"工場×{factories} 產資 +{factory_funds}；"
             f"採掘場×{quarries} 產資 +{quarry_funds}"
         )
+        if aquafarms:
+            notes.append(f"養殖場×{aquafarms} 產糧 +{aqua_food}")
+        if power_plants:
+            bits = f"（含工場供電 +{power_boost}）" if power_boost else ""
+            notes.append(f"發電廠×{power_plants} 產資 +{power_funds}{bits}")
 
         # 海底油田：被動產資（無勞動）＋枯竭機率.
         notes.extend(self._oilfield_income_and_depletion())
 
-        # 觀光收入（空港／酒店／賭場；依人口加碼）.
+        # 觀光收入（空港／酒店／賭場／遊樂園；依人口加碼）.
         airports = self.airport_count()
         hotels = self.hotel_count()
         casinos = self.casino_count()
+        amusements = self.amusement_park_count()
         tour_gain = tourism_funds(
-            airports, self.population, hotels=hotels, casinos=casinos
+            airports,
+            self.population,
+            hotels=hotels,
+            casinos=casinos,
+            amusement_parks=amusements,
         )
         if tour_gain > 0:
             self.funds += tour_gain
@@ -1739,6 +1836,8 @@ class IslandState:
                 tour_bits.append(f"酒店×{hotels}")
             if casinos:
                 tour_bits.append(f"賭場×{casinos}")
+            if amusements:
+                tour_bits.append(f"遊樂園×{amusements}")
             notes.append(f"{'／'.join(tour_bits)} 觀光收入 +{tour_gain}")
 
         # 流動資金軟上限：有銀行緩衝／無銀行捨棄.
@@ -1813,6 +1912,9 @@ class IslandState:
         casinos_n = self.casino_count()
         univ_n = self.university_count()
         lab_n = self.research_lab_count()
+        aqua_n = self.aquafarm_count()
+        amuse_n = self.amusement_park_count()
+        power_n = self.power_plant_count()
         score_bits = []
         if monuments:
             score_bits.append(f"紀念碑×{monuments}")
@@ -1834,6 +1936,12 @@ class IslandState:
             score_bits.append(f"大學×{univ_n}")
         if lab_n:
             score_bits.append(f"研究所×{lab_n}")
+        if aqua_n:
+            score_bits.append(f"養殖場×{aqua_n}")
+        if amuse_n:
+            score_bits.append(f"遊樂園×{amuse_n}")
+        if power_n:
+            score_bits.append(f"發電廠×{power_n}")
         notes.append(
             f"島分數 {score}"
             + (f"（{'／'.join(score_bits)}）" if score_bits else "")

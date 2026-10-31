@@ -42,6 +42,8 @@ from hakoniwa.model import (
     COST_EXCAVATE,
     COST_FACTORY,
     COST_FARM,
+    COST_AMUSEMENT_PARK,
+    COST_AQUAFARM,
     COST_HARBOR,
     COST_HARVEST,
     COST_HOTEL,
@@ -52,6 +54,7 @@ from hakoniwa.model import (
     COST_MISSILE_CHEAP,
     COST_MONUMENT,
     COST_PARK,
+    COST_POWER_PLANT,
     COST_QUARRY,
     COST_RAISE,
     COST_RESEARCH_LAB,
@@ -63,6 +66,12 @@ from hakoniwa.model import (
     COST_UNIVERSITY,
     HOTEL_TOURISM_BASE,
     HOTEL_TOURISM_PER_100_POP,
+    AMUSEMENT_TOURISM_BASE,
+    AMUSEMENT_TOURISM_PER_100_POP,
+    FOOD_PER_AQUAFARM,
+    FUNDS_PER_POWER_PLANT,
+    POWER_FACTORY_BONUS,
+    MIN_FOOD_NEED,
     DEFENSE_RADIUS,
     DEFENSE_SPAWN_FACTOR,
     DEFENSE_STOMP_SAVE_CHANCE,
@@ -81,6 +90,7 @@ from hakoniwa.model import (
     HAPPINESS_POP_PER_MONUMENT,
     HAPPINESS_POP_PER_PARK,
     HAPPINESS_POP_PER_SHRINE,
+    HAPPINESS_POP_PER_AMUSEMENT,
     LABOR_PER_FACTORY,
     LABOR_PER_FARM,
     LABOR_PER_QUARRY,
@@ -96,6 +106,8 @@ from hakoniwa.model import (
     SAVE_VERSION,
     SATELLITE_DISASTER_FACTOR,
     SCORE_PER_AIRPORT,
+    SCORE_PER_AMUSEMENT_PARK,
+    SCORE_PER_AQUAFARM,
     SCORE_PER_BANK,
     SCORE_PER_BREAKWATER,
     SCORE_PER_CASINO,
@@ -109,6 +121,7 @@ from hakoniwa.model import (
     SCORE_PER_SATELLITE,
     SCORE_PER_SHRINE,
     SCORE_PER_SUPERMARKET,
+    SCORE_PER_POWER_PLANT,
     SCORE_PER_UNIVERSITY,
     UNIVERSITY_TECH_DISCOUNT,
     TIMBER_LOT,
@@ -245,6 +258,9 @@ def test_catalog_costs():
     assert COST_CASINO == 1100
     assert COST_UNIVERSITY == 700
     assert COST_RESEARCH_LAB == 950
+    assert COST_AQUAFARM == 300
+    assert COST_AMUSEMENT_PARK == 1300
+    assert COST_POWER_PLANT == 650
     assert SCORE_PER_MONUMENT == 2000
     assert SCORE_PER_QUARRY == 70
     assert SCORE_PER_BREAKWATER == 50
@@ -260,6 +276,9 @@ def test_catalog_costs():
     assert SCORE_PER_CASINO == 320
     assert SCORE_PER_UNIVERSITY == 280
     assert SCORE_PER_RESEARCH_LAB == 380
+    assert SCORE_PER_AQUAFARM == 60
+    assert SCORE_PER_AMUSEMENT_PARK == 350
+    assert SCORE_PER_POWER_PLANT == 130
     assert UNIVERSITY_TECH_DISCOUNT == 200
     assert 0 < RESEARCH_LAB_DISASTER_FACTOR < 1
     assert HAPPINESS_POP_PER_MONUMENT == 5
@@ -273,6 +292,12 @@ def test_catalog_costs():
     assert HOTEL_TOURISM_PER_100_POP == 2
     assert CASINO_TOURISM_BASE == 18
     assert CASINO_TOURISM_PER_100_POP == 5
+    assert AMUSEMENT_TOURISM_BASE == 25
+    assert AMUSEMENT_TOURISM_PER_100_POP == 6
+    assert HAPPINESS_POP_PER_AMUSEMENT == 5
+    assert FOOD_PER_AQUAFARM == 30
+    assert FUNDS_PER_POWER_PLANT == 15
+    assert 0 < POWER_FACTORY_BONUS < 1
     assert VISITOR_TIP_FUNDS == 20
     assert tourism_funds(0, 500) == 0
     assert tourism_funds(1, 0) == TOURISM_FUNDS_BASE
@@ -1890,6 +1915,122 @@ def test_university_research_lab():
     assert coral.research_lab_count() >= 1
 
 
+def test_aquafarm_amusement_power():
+    """養殖場／遊樂園／發電廠色塊：建設規則、回合產出、島分數、存檔 round-trip."""
+    import random
+
+    import hakoniwa.model as model_mod
+
+    state = IslandState.new_game()
+    land = [(i, j) for i in range(20) for j in range(20) if state.is_land(i, j)]
+    for i, j in land:
+        if state.cell(i, j).terrain == "dirt":
+            assert state.level_land(i, j) == "ok"
+    grass = [
+        (i, j)
+        for i, j in land
+        if state.cell(i, j).terrain == "grass" and state.cell(i, j).building is None
+    ]
+    assert len(grass) >= 3
+
+    # 養殖場：須建在淺灘（先填海造一格淺灘）；平地不可.
+    sea = next(
+        (
+            (i, j)
+            for i in range(20)
+            for j in range(20)
+            if state.can_landfill(i, j) and state.cell(i, j).terrain == "sea"
+        ),
+        None,
+    )
+    assert sea is not None
+    assert state.landfill(*sea) == "ok"
+    si, sj = sea
+    assert state.cell(si, sj).terrain == "shallow"
+    ok, reason = tool_enabled(state, "aquafarm", grass[0])
+    assert ok is False and "淺灘" in reason
+    state.funds = 10000
+    assert state.place_building(si, sj, "aquafarm") == "ok"
+    assert state.aquafarm_count() == 1
+
+    ai, aj = grass[0]
+    pi, pj = grass[1]
+    fi, fj = grass[2]
+    assert state.place_building(ai, aj, "amusement_park") == "ok"
+    assert state.place_building(pi, pj, "power_plant") == "ok"
+    assert state.place_building(fi, fj, "factory") == "ok"
+    assert state.amusement_park_count() == 1
+    assert state.power_plant_count() == 1
+
+    # Score weights + 遊樂園安穩.
+    assert state.island_score() >= (
+        SCORE_PER_AQUAFARM + SCORE_PER_AMUSEMENT_PARK + SCORE_PER_POWER_PLANT
+    )
+    assert state.happiness_bonus() == HAPPINESS_POP_PER_AMUSEMENT
+
+    keys = {k for k, *_ in TOOL_SPECS}
+    assert {"aquafarm", "amusement_park", "power_plant"} <= keys
+    for key in ("aquafarm", "amusement_park", "power_plant"):
+        ok, _ = tool_enabled(state, key, (ai, aj))
+        assert ok is False  # occupied cells
+
+    # Save round-trip.
+    blob = state.to_dict()
+    assert blob["version"] == SAVE_VERSION
+    loaded = IslandState.from_dict(blob)
+    assert loaded.aquafarm_count() == 1
+    assert loaded.amusement_park_count() == 1
+    assert loaded.power_plant_count() == 1
+    assert loaded.island_score() == state.island_score()
+
+    # Mute disasters／monsters；驗證回合產出（淺灘產糧／供電加產／人口觀光）.
+    old_fire = model_mod.FIRE_BASE_CHANCE
+    old_ty = model_mod.TYPHOON_BASE_CHANCE
+    old_qk = model_mod.QUAKE_BASE_CHANCE
+    old_vo = model_mod.VOLCANO_BASE_CHANCE
+    old_ts = model_mod.TSUNAMI_BASE_CHANCE
+    old_mon = model_mod.MONSTER_BASE_CHANCE
+    model_mod.FIRE_BASE_CHANCE = 0.0
+    model_mod.TYPHOON_BASE_CHANCE = 0.0
+    model_mod.QUAKE_BASE_CHANCE = 0.0
+    model_mod.VOLCANO_BASE_CHANCE = 0.0
+    model_mod.TSUNAMI_BASE_CHANCE = 0.0
+    model_mod.MONSTER_BASE_CHANCE = 0.0
+    try:
+        state.food = 5000
+        state.population = 5000
+        funds_before = state.funds
+        food_before = state.food
+        random.seed(7)
+        notes = state.next_turn()
+        joined = " ".join(notes)
+        assert "養殖場×1 產糧 +30" in joined
+        assert "發電廠×1 產資 +15" in joined
+        assert "工場供電" in joined  # factory funds × (1 + POWER_FACTORY_BONUS)
+        assert "遊樂園×1" in joined and "觀光收入" in joined
+        # Food: 農場 0 + 養殖場 30；人口 5000 消耗 (5000//500)×100 = 1000.
+        assert state.food == food_before + FOOD_PER_AQUAFARM - 1000
+        # Funds: 工場滿產 10 × 1.2 = 12、發電廠 15、遊樂園觀光（依人口）.
+        expected_tour = tourism_funds(0, 5000, amusement_parks=1)
+        assert expected_tour == (
+            AMUSEMENT_TOURISM_BASE + 50 * AMUSEMENT_TOURISM_PER_100_POP
+        )
+        assert state.funds == funds_before + (
+            int(FUNDS_PER_FACTORY * (1 + POWER_FACTORY_BONUS))
+            + FUNDS_PER_POWER_PLANT
+            + expected_tour
+        )
+    finally:
+        model_mod.FIRE_BASE_CHANCE = old_fire
+        model_mod.TYPHOON_BASE_CHANCE = old_ty
+        model_mod.QUAKE_BASE_CHANCE = old_qk
+        model_mod.VOLCANO_BASE_CHANCE = old_vo
+        model_mod.TSUNAMI_BASE_CHANCE = old_ts
+        model_mod.MONSTER_BASE_CHANCE = old_mon
+
+    print("aquafarm/amusement/power: placement + yields + score OK")
+
+
 def test_settlements_and_disasters():
     """Village/town/city evolution + fire/typhoon/quake stubs (local-first)."""
     import random
@@ -2934,6 +3075,7 @@ def main():
     test_rocket_base_and_launch()
     test_hotel_casino_tourism()
     test_university_research_lab()
+    test_aquafarm_amusement_power()
     test_local_demos()
     test_save_load_roundtrip()
     test_remote_url_normalize()
