@@ -30,6 +30,9 @@ not a flat top-down square grid rotated 45°.
 | Casino | 賭場 1100（平地色塊；目錄賭場／遊樂園費用 `?` → 介於神社與空港）；島分數／娛樂觀光收入（依人口加碼） |
 | University | 大學 700（平地色塊；目錄費用 `?` → 介於酒店與神社）；島分數／觀測衛星發射折扣（研究／下一科技 stub；800→600） |
 | Research lab | 研究所 950（平地色塊；目錄費用 `?` → 介於神社與賭場）；島分數／輕量減震／海嘯／噴火（可與衛星疊乘） |
+| Aquafarm | 養殖場 300（**淺灘**色塊；目錄「淺灘產糧」變體）；被動產糧 30／回合（無勞動） |
+| Amusement park | 遊樂園 1300（平地色塊；目錄費用 `?` → 介於賭場與空港）；島分數／安穩＋5／觀光收入（依人口加碼，高於賭場） |
+| Power plant | 發電廠 650（平地色塊；SE 電力 stub）；被動產資 15／回合；有電時工場產出 ×1.2 |
 | Attract | 誘致活動 1000（定本；不耗回合）；下回合餵飽時額外人口；有空港再加 inbound |
 | Forbidden | Orthographic-only / pure `rotate(45°)` (equal diamond W/H on screen) |
 | No | Under-tile thickness / skirts |
@@ -68,7 +71,7 @@ Expected filenames (exact; loader is case-sensitive on Linux):
 |---|---|
 | Terrain | `sea.png` `shallow.png` `oilfield.png` `dirt.png` `grass.png` `forest.png` `mountain.png` `village.png` `town.png` `city.png` |
 | Backdrop | `ocean-background.png` |
-| Buildings | `farm.png` `factory.png` `quarry.png` `defense.png` `missile_base.png` `harbor.png` `shipyard.png` `breakwater.png` `monument.png` `bank.png` `supermarket.png` `shrine.png` `park.png` `airport.png` `rocket_base.png` `hotel.png` `casino.png` `university.png` `research_lab.png` |
+| Buildings | `farm.png` `factory.png` `quarry.png` `defense.png` `missile_base.png` `harbor.png` `shipyard.png` `breakwater.png` `monument.png` `bank.png` `supermarket.png` `shrine.png` `park.png` `airport.png` `rocket_base.png` `hotel.png` `casino.png` `university.png` `research_lab.png` `aquafarm.png` `amusement_park.png` `power_plant.png` |
 | Monsters | `inora.png` |
 
 Fallback when a file is absent: buildings／monsters → solid color; terrain → bundled
