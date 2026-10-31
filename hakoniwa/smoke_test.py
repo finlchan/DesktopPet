@@ -2817,6 +2817,81 @@ def test_user_art_loader_hook():
         print("user art loader: naming + optional PNG hook OK")
 
 
+def test_tall_sprite_render_offscreen():
+    """tall=True buildings paint user art unclipped above the cell N tip.
+
+    採掘場 (tall) with a portrait stub sprite must extend above the diamond's
+    north tip; a non-tall building with the same sprite stays clipped inside
+    its footprint diamond.
+    """
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    try:
+        from PySide6.QtGui import QColor, QImage, QPixmap
+        from PySide6.QtWidgets import QApplication
+        from hakoniwa.grid import cell_center
+        from hakoniwa.tiles import ATLAS
+        from hakoniwa.view import HakoniwaMapWidget
+    except Exception as exc:  # pragma: no cover - optional GUI
+        print(f"tall sprite: skip render check ({exc})")
+        return
+
+    app = QApplication.instance() or QApplication([])
+    state = IslandState.new_game()
+    grass_cells = [
+        (i, j)
+        for i in range(20)
+        for j in range(20)
+        if state.cell(i, j).terrain == "grass"
+    ]
+    assert len(grass_cells) >= 2, "new_game should open with 平地 cells"
+    (ti, tj), (fi, fj) = grass_cells[0], grass_cells[1]
+    state.funds = 10000
+    assert state.raise_mountain(ti, tj) == "ok"
+    assert state.place_building(ti, tj, "quarry") == "ok"
+    assert state.place_building(fi, fj, "farm") == "ok"
+
+    # Stub a tall 32×128 magenta sprite in place of any user art.
+    img = QImage(32, 128, QImage.Format.Format_ARGB32)
+    img.fill(QColor(255, 0, 255))
+    stub = QPixmap.fromImage(img)
+    original = ATLAS.building_pixmap
+    ATLAS.building_pixmap = lambda kind: stub  # type: ignore[method-assign]
+    try:
+        widget = HakoniwaMapWidget(state)
+        widget.resize(640, 480)
+        widget.show()
+        app.processEvents()
+        rendered = widget.grab().toImage()
+        ox, oy = widget._origin_offset()
+    finally:
+        ATLAS.building_pixmap = original  # type: ignore[method-assign]
+
+    def _sample(cx: float, cy: float, dy: float) -> QColor:
+        px, py = int(round(cx + ox)), int(round(cy + oy + dy))
+        return QColor(rendered.pixel(px, py))
+
+    def _is_magenta(c: QColor) -> bool:
+        return c.red() > 200 and c.blue() > 200 and c.green() < 80
+
+    # Tall 採掘場: sprite bottom in the footprint and peak far above N tip.
+    qx, qy = cell_center(ti, tj, widget.cell)
+    n_tip = qy - widget.cell * 0.65 / 2.0
+    assert _is_magenta(_sample(qx, qy, 0.0)), "tall sprite missing in footprint"
+    assert _is_magenta(_sample(qx, qy, -40.0)), (
+        "tall sprite clipped: art should extend above the north tip"
+    )
+    # Non-tall 農場 with the same sprite: stays inside the clip diamond.
+    fx_, fy_ = cell_center(fi, fj, widget.cell)
+    fn_tip = fy_ - widget.cell * 0.65 / 2.0
+    assert _is_magenta(_sample(fx_, fy_, 0.0)), "clipped sprite missing in footprint"
+    assert not _is_magenta(_sample(fx_, fy_, (fn_tip - fy_) - 8.0)), (
+        "non-tall sprite should stay clipped below the north tip"
+    )
+    print("tall sprite: unclipped above N tip OK (footprint inside diamond)")
+
+
 def test_oblique_preview_png_if_possible():
     """Write a small foreshortening proof PNG when Qt offscreen is available."""
     import json
@@ -2918,6 +2993,7 @@ def main():
     test_oblique_foreshortening_invariant()
     test_terrain_top_assets()
     test_user_art_loader_hook()
+    test_tall_sprite_render_offscreen()
     test_catalog_costs()
     test_new_island_and_loop()
     test_guestbook_local()

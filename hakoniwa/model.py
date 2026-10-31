@@ -261,7 +261,13 @@ BUILDINGS = {
     None: {"label": "（無）", "color": None, "cost": 0},
     "farm": {"label": "農場", "color": (210, 190, 60), "cost": COST_FARM},
     "factory": {"label": "工場", "color": (120, 120, 130), "cost": COST_FACTORY},
-    "quarry": {"label": "採掘場", "color": (150, 110, 70), "cost": COST_QUARRY},
+        # tall=True：用戶美術（如 quarry.png 山體）可向上超出北尖；足跡仍在菱形內
+    "quarry": {
+        "label": "採掘場",
+        "color": (150, 110, 70),
+        "cost": COST_QUARRY,
+        "tall": True,
+    },
     # 軍事色塊佔位（定本費用；美術後補）
     "defense": {"label": "防衛設施", "color": (48, 88, 160), "cost": COST_DEFENSE},
     "missile_base": {"label": "飛彈基地", "color": (160, 72, 48), "cost": COST_MISSILE_BASE},
@@ -269,8 +275,13 @@ BUILDINGS = {
     "harbor": {"label": "港灣", "color": (40, 140, 168), "cost": COST_HARBOR},
     "shipyard": {"label": "造船所", "color": (56, 72, 112), "cost": COST_SHIPYARD},
     "breakwater": {"label": "防波堤", "color": (128, 138, 152), "cost": COST_BREAKWATER},
-    # 紀念碑色塊（定本國威；美術後補）
-    "monument": {"label": "紀念碑", "color": (168, 140, 72), "cost": COST_MONUMENT},
+    # 紀念碑色塊（定本國威；美術後補；塔狀美術可向上超出北尖）
+    "monument": {
+        "label": "紀念碑",
+        "color": (168, 140, 72),
+        "cost": COST_MONUMENT,
+        "tall": True,
+    },
     # 變體民生／信仰色塊（銀行緩衝／超市買糧／神社分數；美術後補）
     "bank": {"label": "銀行", "color": (72, 120, 168), "cost": COST_BANK},
     "supermarket": {"label": "超市", "color": (200, 100, 80), "cost": COST_SUPERMARKET},
@@ -279,11 +290,12 @@ BUILDINGS = {
     "park": {"label": "公園", "color": (72, 168, 96), "cost": COST_PARK},
     # 交通／觀光色塊（空港：分數＋觀光收入／訪客小費；美術後補）
     "airport": {"label": "空港", "color": (88, 148, 200), "cost": COST_AIRPORT},
-    # 宇宙色塊（ロケット基地：解鎖觀測衛星發射；美術後補）
+    # 宇宙色塊（ロケット基地：解鎖觀測衛星發射；美術後補；立體火箭可超出北尖）
     "rocket_base": {
         "label": "ロケット基地",
         "color": (64, 108, 128),
         "cost": COST_ROCKET_BASE,
+        "tall": True,
     },
     # 住宿／娛樂觀光色塊（酒店・賭場：分數＋回合觀光收入；美術後補）
     "hotel": {"label": "酒店", "color": (196, 128, 88), "cost": COST_HOTEL},
