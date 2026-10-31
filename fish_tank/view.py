@@ -1,4 +1,4 @@
-"""Tank viewport: translucent water, fixed-size OBLIQUE swim sprites, zoom = visible range."""
+"""Tank viewport: translucent water, fixed-size 8-dir RTS swim sprites, zoom = visible range."""
 
 from __future__ import annotations
 
@@ -117,7 +117,7 @@ class TankView(QWidget):
         # Decor (plants) — fixed sprite size.
         for d in self.state.decor:
             sp = self.world_to_screen(d.x, d.y)
-            pix = swim_pixmap(d.species_key, False, True)
+            pix = swim_pixmap(d.species_key, False, 2)
             p.drawPixmap(
                 int(sp.x() - PLANT_W / 2),
                 int(sp.y() - PLANT_H / 2),
@@ -133,7 +133,7 @@ class TankView(QWidget):
         # Fish — fixed SWIM size regardless of zoom.
         for f in self.state.active_fish():
             sp = self.world_to_screen(f.x, f.y)
-            pix = swim_pixmap(f.species_key, f.rare, f.facing_right)
+            pix = swim_pixmap(f.species_key, f.rare, getattr(f, "facing", f.facing_right))
             p.drawPixmap(
                 int(sp.x() - SWIM_W / 2),
                 int(sp.y() - SWIM_H / 2),

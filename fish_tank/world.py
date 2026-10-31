@@ -8,6 +8,7 @@ import time
 import uuid
 from typing import List
 
+from .facing import facing_from_velocity
 from .model import WORLD_H, WORLD_W, FishEntity, TankState
 from .species import FISH_KEYS
 
@@ -58,8 +59,9 @@ def _wander(f: FishEntity, dt: float) -> None:
         f.vy *= max_speed / speed
     f.x += f.vx * dt
     f.y += f.vy * dt
-    if abs(f.vx) > 2:
-        f.facing_right = f.vx >= 0
+    prev = getattr(f, "facing", 2)
+    f.facing = facing_from_velocity(f.vx, f.vy, prev=prev)
+    f.facing_right = f.facing in (1, 2, 3)  # NE/E/SE legacy
     _clamp_world(f)
 
 

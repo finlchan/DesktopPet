@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
 
 from . import remote_stubs
+from .facing import DEFAULT_FACING, coerce_facing
 from .species import FISH_KEYS, PLANT_KEY, SPECIES
 
 
@@ -32,7 +33,9 @@ class FishEntity:
     y: float
     vx: float = 0.0
     vy: float = 0.0
-    facing_right: bool = True
+    # 8-dir facing index (0=N … 7=NW). Legacy saves may only have facing_right.
+    facing: int = DEFAULT_FACING
+    facing_right: bool = True  # legacy mirror of E/W; kept for older tank.json
     rare: bool = False
     # Status (shown on capture / 圖鑑 view-2 card).
     health: float = 1.0  # 0..1
@@ -61,7 +64,12 @@ class FishEntity:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "FishEntity":
         known = {f.name for f in cls.__dataclass_fields__.values()}  # type: ignore[attr-defined]
-        return cls(**{k: v for k, v in data.items() if k in known})
+        payload = {k: v for k, v in data.items() if k in known}
+        if "facing" in payload:
+            payload["facing"] = coerce_facing(payload["facing"])
+        elif "facing_right" in payload:
+            payload["facing"] = coerce_facing(bool(payload["facing_right"]))
+        return cls(**payload)
 
 
 @dataclass
@@ -233,6 +241,7 @@ class TankState:
                     y=random.uniform(120, WORLD_H - 120),
                     vx=random.uniform(-35, 35),
                     vy=random.uniform(-18, 18),
+                    facing=DEFAULT_FACING,
                     facing_right=True,
                     rare=rare,
                     health=random.uniform(0.7, 1.0),

@@ -20,7 +20,7 @@ class SpeciesDef:
     market_en: str
     aliases_zh: Tuple[str, ...]
     scientific: str
-    # Base palette (R,G,B) for soft ~16% pixel look.
+    # Base palette (R,G,B) for RTS pixel sheets / rare remap.
     base_colors: Tuple[Tuple[int, int, int], ...]
     # Rare = palette / marking variant only (same silhouette).
     rare_colors: Tuple[Tuple[int, int, int], ...]
