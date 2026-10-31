@@ -20,7 +20,8 @@ from PySide6.QtGui import QColor, QImage, QPixmap
 from .facing import DEFAULT_FACING, DIR_COUNT, DIRS, coerce_facing
 from .species import SPECIES, SpeciesDef
 
-# Fixed on-screen blit size (must match generator CELL_*).
+# Default blit size for legacy RTS sheets (48×40). HD species (青衣) use larger
+# cells detected from the PNG strip width/height (see swim_frame_size).
 SWIM_W, SWIM_H = 48, 40
 SIDE_W, SIDE_H = 96, 56
 PLANT_W, PLANT_H = 32, 40
@@ -85,7 +86,7 @@ def _nearest_palette_map(
                 if d < best_d:
                     best_d = d
                     best = dst
-            if best is not None and best_d < 180 ** 2:
+            if best is not None and best_d < 220 ** 2:
                 out.setPixelColor(x, y, QColor(best[0], best[1], best[2], c.alpha()))
     return out
 
@@ -102,6 +103,20 @@ def _swim_sheet_image(species_key: str, rare: bool) -> Optional[QImage]:
     return img
 
 
+@lru_cache(maxsize=64)
+def swim_frame_size(species_key: str) -> Tuple[int, int]:
+    """Per-species cell size from sheet (width//8, height). Falls back to SWIM_*."""
+    if SPECIES[species_key].is_plant:
+        return PLANT_W, PLANT_H
+    sheet = _swim_sheet_image(species_key, False)
+    if sheet is not None and sheet.width() >= DIR_COUNT:
+        fw = sheet.width() // DIR_COUNT
+        fh = sheet.height()
+        if fw > 0 and fh > 0:
+            return fw, fh
+    return SWIM_W, SWIM_H
+
+
 @lru_cache(maxsize=256)
 def swim_pixmap(
     species_key: str,
@@ -115,12 +130,13 @@ def swim_pixmap(
 
     idx = coerce_facing(facing)
     sheet = _swim_sheet_image(species_key, rare)
-    if sheet is not None and sheet.width() >= SWIM_W * DIR_COUNT:
-        frame = sheet.copy(idx * SWIM_W, 0, SWIM_W, SWIM_H)
+    fw, fh = swim_frame_size(species_key)
+    if sheet is not None and sheet.width() >= fw * DIR_COUNT and sheet.height() >= fh:
+        frame = sheet.copy(idx * fw, 0, fw, fh)
         return QPixmap.fromImage(frame)
 
     # Fallback empty transparent (assets missing)
-    img = QImage(SWIM_W, SWIM_H, QImage.Format.Format_ARGB32)
+    img = QImage(fw, fh, QImage.Format.Format_ARGB32)
     img.fill(Qt.GlobalColor.transparent)
     return QPixmap.fromImage(img)
 

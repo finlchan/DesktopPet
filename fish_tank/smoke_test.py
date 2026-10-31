@@ -28,6 +28,7 @@ def main() -> int:
         SWIM_W,
         oblique_swim_metrics,
         side_pixmap,
+        swim_frame_size,
         swim_pixmap,
         warm_cache,
     )
@@ -40,12 +41,16 @@ def main() -> int:
 
     warm_cache()
     for key in FISH_KEYS:
+        fw, fh = swim_frame_size(key)
+        assert fw >= SWIM_W and fh >= SWIM_H
         for facing in range(DIR_COUNT):
             pix = swim_pixmap(key, False, facing)
-            assert not pix.isNull() and pix.width() == SWIM_W and pix.height() == SWIM_H
+            assert not pix.isNull() and pix.width() == fw and pix.height() == fh
         side = side_pixmap(key, True)
         assert not side.isNull()
-        assert side.width() != SWIM_W or side.height() != SWIM_H
+    # 青衣 HD sheet is larger than legacy RTS cells.
+    gw, gh = swim_frame_size("grouper")
+    assert gw >= 96 and gh >= 80, (gw, gh)
 
     # 8-dir / RTS sheet invariant: E vs N differ; frames opaque.
     m = oblique_swim_metrics("grouper")

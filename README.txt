@@ -1,7 +1,7 @@
 Desktop Pet
 ==================
 
-Version: 261031.05
+Version: 261031.06
 Published: 2026-10-31
 
 A floating shortcut menu and document record gadget on the Windows desktop.
@@ -76,6 +76,12 @@ Free_Station_FAI.xls / .xlsm survey spreadsheet:
 - Output: station Easting/Northing, reduced level, and the distance-check
   residual ΔHD per accepted pair, plus an Average (mean E / N / RL) of those
   pair results. Copy button copies the result block.
+
+What's new in 261031.06 (2026-10-31)
+--------
+1. Transparent Fish Tank: 青衣／grouper swim sheets remade at HD pixel quality
+   (96×80 × 8 dirs; green/blue + yellow accents). Other species keep legacy
+   RTS 48×40 sheets. Rare = palette remap of the same HD silhouettes.
 
 What's new in 261031.05 (2026-10-31)
 --------

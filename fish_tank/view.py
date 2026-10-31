@@ -130,20 +130,21 @@ class TankView(QWidget):
             sp = self.world_to_screen(food["x"], food["y"])
             p.drawEllipse(sp, 2.5, 2.5)
 
-        # Fish — fixed SWIM size regardless of zoom.
+        # Fish — sprite pixel size fixed per sheet (zoom changes visible range only).
         for f in self.state.active_fish():
             sp = self.world_to_screen(f.x, f.y)
             pix = swim_pixmap(f.species_key, f.rare, getattr(f, "facing", f.facing_right))
+            pw, ph = pix.width(), pix.height()
             p.drawPixmap(
-                int(sp.x() - SWIM_W / 2),
-                int(sp.y() - SWIM_H / 2),
+                int(sp.x() - pw / 2),
+                int(sp.y() - ph / 2),
                 pix,
             )
             if f.owned and f.custom_name:
                 p.setPen(QColor(255, 255, 230, 200))
                 p.drawText(
                     int(sp.x() - 40),
-                    int(sp.y() - SWIM_H / 2 - 4),
+                    int(sp.y() - ph / 2 - 4),
                     80,
                     14,
                     Qt.AlignmentFlag.AlignHCenter,
@@ -206,7 +207,9 @@ class TankView(QWidget):
         # Topmost fish whose fixed sprite rect contains the point.
         for f in reversed(self.state.active_fish()):
             sp = self.world_to_screen(f.x, f.y)
-            if abs(pos.x() - sp.x()) <= SWIM_W / 2 and abs(pos.y() - sp.y()) <= SWIM_H / 2:
+            pix = swim_pixmap(f.species_key, f.rare, getattr(f, "facing", f.facing_right))
+            hw, hh = pix.width() / 2, pix.height() / 2
+            if abs(pos.x() - sp.x()) <= hw and abs(pos.y() - sp.y()) <= hh:
                 return f.id
         return None
 

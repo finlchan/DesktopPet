@@ -13,3 +13,7 @@ python -m fish_tank.tools.gen_rts_sheets
 ```
 
 In-game: Qt blit by heading bucket; rare = palette remap. **No realtime 3D.**
+
+## 青衣 HD
+
+`swim/grouper.png` is **96×80** per facing (HD pixel). Regenerate with `python -m fish_tank.tools.gen_grouper_hd`.
