@@ -1,7 +1,7 @@
 Desktop Pet
 ==================
 
-Version: 261031.01
+Version: 261031.06
 Published: 2026-10-31
 
 A floating shortcut menu and document record gadget on the Windows desktop.
@@ -19,9 +19,11 @@ Features
 5. The middle section shows "Document record"; click the ">>" button to open the submenu and browse/search files.
    The Document record submenu header has an "Open folder" button to open storage folder(s) in the file manager.
 6. Below Document record, "Mini programs"; click ">>" for Text records and Calculations
-   (Level calc / Slope calc / Free station), plus Pomodoro, Translate, and 箱庭島
+   (Level calc / Slope calc / Free station), plus Pomodoro, Translate, 箱庭島
    (richer island sim: textured oblique map HUD, forest/harbor/monuments/mountain/
-   quarry/breakwater/oil, bank/shop/shrine/park, optional user PNG art overlay).
+   quarry/breakwater/oil, bank/shop/shrine/park, optional user PNG art overlay),
+   and 透明魚缸／Fish Tank (Phase 1 local translucent aquarium below 箱庭島;
+   high slightly-oblique swim camera — not eye-level).
 7. Drag files, folders, or URLs onto the pet to add shortcuts (prompt for name/description).
 8. The bottom has a "Settings" button to edit all configurations.
 9. Window level can be set to Normal, Always on top, or Always on bottom.
@@ -74,6 +76,34 @@ Free_Station_FAI.xls / .xlsm survey spreadsheet:
 - Output: station Easting/Northing, reduced level, and the distance-check
   residual ΔHD per accepted pair, plus an Average (mean E / N / RL) of those
   pair results. Copy button copies the result block.
+
+What's new in 261031.06 (2026-10-31)
+--------
+1. Transparent Fish Tank: 青衣／grouper swim sheets remade at HD pixel quality
+   (96×80 × 8 dirs; green/blue + yellow accents). Other species keep legacy
+   RTS 48×40 sheets. Rare = palette remap of the same HD silhouettes.
+
+What's new in 261031.05 (2026-10-31)
+--------
+1. Transparent Fish Tank: RTS-like isometric pre-rendered pixel swim art with
+   8-direction sheets (N/NE/E/SE/S/SW/W/NW); heading selects facing. Rare =
+   palette remap of same sheets. Side 圖鑑 kept. Assets under fish_tank/assets/.
+
+What's new in 261031.04 (2026-10-31)
+--------
+1. Transparent Fish Tank: replace top bilingual text toolbar with bottom-left
+   Social Icon Fill circular buttons (hover fill-rise ~0.45s, comic line icons,
+   existing fish-tank teal-slate colors). Slim top status chip kept.
+
+What's new in 261031.03 (2026-10-31)
+--------
+1. Mini programs → 透明魚缸／Fish Tank (below 箱庭島): Phase 1 local translucent
+   aquarium — glass click-through, always-on edge grips + bilingual toolbar,
+   fixed-size ~16% soft-pixel fish (5 HK species + waterweed) with HIGH
+   slightly-oblique swim sprites (bird's-eye tilted; never eye-level side
+   swim), free swim with away stub, feed / decorate / name / catch (local
+   ownership), capture／圖鑑 side cards (scientific name on card only).
+   Phase 2 public server / trade / settlement hooks are stubs only.
 
 What's new in 261031.01 (2026-10-31)
 --------

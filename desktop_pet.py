@@ -54,7 +54,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261031.01"
+APP_VERSION = "261031.06"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -4635,6 +4635,7 @@ class MiniProgramsSubMenu(PopupPanel):
         self.pomodoro_dialog = None
         self.translate_dialog = None
         self.hakoniwa_dialog = None
+        self.fish_tank_dialog = None
         self.build_ui()
 
     def build_ui(self):
@@ -4707,6 +4708,12 @@ class MiniProgramsSubMenu(PopupPanel):
         btn_hakoniwa.clicked.connect(self.open_hakoniwa)
         layout.addWidget(btn_hakoniwa)
 
+        # Transparent Fish Tank — below 箱庭島 (Phase 1 local, high-oblique swim).
+        btn_fish_tank = QPushButton("透明魚缸／Fish Tank")
+        btn_fish_tank.setStyleSheet(menu_button_style("#1a5a6e"))
+        btn_fish_tank.clicked.connect(self.open_fish_tank)
+        layout.addWidget(btn_fish_tank)
+
         self.setStyleSheet(MENU_STYLE + """
             MiniProgramsSubMenu { background-color: transparent; }
         """)
@@ -4776,6 +4783,17 @@ class MiniProgramsSubMenu(PopupPanel):
         self.hakoniwa_dialog.activateWindow()
         QTimer.singleShot(300, self._release_suppress)
 
+    def open_fish_tank(self):
+        self._suppress_hide = True
+        if self.fish_tank_dialog is None:
+            from fish_tank import FishTankDialog
+
+            self.fish_tank_dialog = FishTankDialog(self.cfg, None)
+        self.fish_tank_dialog.show()
+        self.fish_tank_dialog.raise_()
+        self.fish_tank_dialog.activateWindow()
+        QTimer.singleShot(300, self._release_suppress)
+
     def _release_suppress(self):
         self._suppress_hide = False
 
@@ -4804,6 +4822,12 @@ class MiniProgramsSubMenu(PopupPanel):
             from hakoniwa import HakoniwaIslandDialog as _HakoniwaIslandDialog
         except Exception:
             _HakoniwaIslandDialog = type(None)
+        try:
+            from fish_tank import FishTankDialog as _FishTankDialog
+            from fish_tank.dialog import CaptureCardDialog as _CaptureCardDialog
+        except Exception:
+            _FishTankDialog = type(None)
+            _CaptureCardDialog = type(None)
         if isinstance(
             active,
             (
@@ -4815,6 +4839,8 @@ class MiniProgramsSubMenu(PopupPanel):
                 PomodoroDialog,
                 TranslateDialog,
                 _HakoniwaIslandDialog,
+                _FishTankDialog,
+                _CaptureCardDialog,
             ),
         ):
             return
@@ -5085,6 +5111,12 @@ class PetMenu(PopupPanel):
             from hakoniwa import HakoniwaIslandDialog as _HakoniwaIslandDialog
         except Exception:
             _HakoniwaIslandDialog = type(None)
+        try:
+            from fish_tank import FishTankDialog as _FishTankDialog
+            from fish_tank.dialog import CaptureCardDialog as _CaptureCardDialog
+        except Exception:
+            _FishTankDialog = type(None)
+            _CaptureCardDialog = type(None)
         if isinstance(
             active,
             (
@@ -5100,6 +5132,8 @@ class PetMenu(PopupPanel):
                 PomodoroDialog,
                 TranslateDialog,
                 _HakoniwaIslandDialog,
+                _FishTankDialog,
+                _CaptureCardDialog,
             ),
         ):
             return
