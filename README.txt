@@ -1,7 +1,7 @@
 Desktop Pet
 ==================
 
-Version: 261031.03
+Version: 261031.04
 Published: 2026-10-31
 
 A floating shortcut menu and document record gadget on the Windows desktop.

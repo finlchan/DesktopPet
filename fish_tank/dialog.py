@@ -1,6 +1,7 @@
-"""Transparent Fish Tank window — glass click-through, edge grips, bilingual toolbar.
+"""Transparent Fish Tank window — glass click-through, edge grips, Social Icon Fill toolbar.
 
 Phase 1: local playable tank only. Phase 2 hooks live in ``remote_stubs``.
+Primary chrome: bottom-left circular Social Icon Fill buttons (not a top text strip).
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from PySide6.QtWidgets import (
 
 from .model import TankState
 from .save import default_save_path, load_tank, save_tank
+from .social_toolbar import SocialIconToolbar
 from .species import SPECIES
 from .sprites import warm_cache
 from .view import TankView, capture_card_pixmap
@@ -36,16 +38,20 @@ from . import world as world_sim
 
 # Edge grip thickness (always-on 「 」 style handles).
 GRIP = 10
-TOOLBAR_H = 36
+# Slim top status chip only (primary toolbar is bottom-left Social Icon Fill).
+STATUS_CHIP_H = 28
 
 TANK_STYLE = """
 QDialog#FishTankDialog {
     background: transparent;
 }
-QFrame#fishTankToolbar {
-    background-color: rgba(24, 36, 48, 210);
-    border: 1px solid rgba(160, 190, 210, 160);
-    border-radius: 4px;
+QLabel#fishTankStatusChip {
+    color: #c8dce8;
+    font-size: 11px;
+    padding: 4px 10px;
+    background-color: rgba(24, 36, 48, 180);
+    border: 1px solid rgba(140, 180, 200, 120);
+    border-radius: 10px;
 }
 QPushButton#fishTankBtn {
     background-color: rgba(50, 78, 100, 220);
@@ -60,11 +66,6 @@ QPushButton#fishTankBtn:hover {
 }
 QPushButton#fishTankBtn:checked {
     background-color: rgba(120, 90, 40, 230);
-}
-QLabel#fishTankTitle {
-    color: #e8f2f8;
-    font-weight: bold;
-    padding: 0 6px;
 }
 QFrame#fishTankGrip {
     background-color: rgba(210, 230, 240, 90);
@@ -116,8 +117,8 @@ class EdgeGrips(QWidget):
         x, y = pos.x(), pos.y()
         left, right = x <= GRIP, x >= r.width() - GRIP
         top, bottom = y <= GRIP, y >= r.height() - GRIP
-        # Exclude toolbar band (top-center) from north grip so buttons work;
-        # corners still count.
+        # Corners / edges always grip; Social Icon toolbar is bottom-left (mask keeps
+        # center transparent so toolbar receives clicks).
         if top and left:
             return "tl"
         if top and right:
@@ -299,7 +300,7 @@ class FishTankDialog(QDialog):
         loaded = load_tank(self._save_path)
         self.state = loaded if loaded is not None else TankState.new_tank()
 
-        # Stack: glass view fills; grips overlay; toolbar top-center.
+        # Stack: glass view fills; grips overlay; Social Icon Fill toolbar bottom-left.
         self.tank_view = TankView(self.state, self)
         self.tank_view.fish_clicked.connect(self._on_fish_clicked)
 
@@ -308,36 +309,22 @@ class FishTankDialog(QDialog):
             Qt.WidgetAttribute.WA_TransparentForMouseEvents, False
         )
 
-        self.toolbar = QFrame(self)
-        self.toolbar.setObjectName("fishTankToolbar")
-        self.toolbar.setFixedHeight(TOOLBAR_H)
-        tb = QHBoxLayout(self.toolbar)
-        tb.setContentsMargins(6, 3, 6, 3)
-        tb.setSpacing(4)
+        # Slim top status chip (title + live stats) — no text button strip.
+        self.status_chip = QLabel("透明魚缸／Fish Tank", self)
+        self.status_chip.setObjectName("fishTankStatusChip")
+        self.status_chip.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
 
-        title = QLabel("透明魚缸／Fish Tank")
-        title.setObjectName("fishTankTitle")
-        tb.addWidget(title)
-
-        def _btn(text, slot, checkable=False):
-            b = QPushButton(text)
-            b.setObjectName("fishTankBtn")
-            b.setCheckable(checkable)
-            b.clicked.connect(slot)
-            tb.addWidget(b)
-            return b
-
-        self.btn_feed = _btn("餵食／Feed", self._feed)
-        self.btn_decor = _btn("佈景／Decorate", self._decorate)
-        self.btn_name = _btn("命名／Name", self._name)
-        self.btn_catch = _btn("捕捉／Catch", self._toggle_catch, checkable=True)
-        self.btn_book = _btn("圖鑑／Dex", self._open_dex)
-        self.btn_reset = _btn("視圖／View", self._reset_view)
-        tb.addStretch(1)
-        self.status = QLabel("")
-        self.status.setStyleSheet("color:#c8dce8; font-size:11px; padding-right:6px;")
-        tb.addWidget(self.status)
-        self.btn_close = _btn("關閉／Close", self.close)
+        self.toolbar = SocialIconToolbar(self)
+        self.toolbar.bind(
+            feed=self._feed,
+            decorate=self._decorate,
+            name=self._name,
+            catch_toggle=self._toggle_catch,
+            dex=self._open_dex,
+            view=self._reset_view,
+            close=self.close,
+        )
+        self.btn_catch = self.toolbar.catch_button()
 
         self._catch_mode = False
         self._click_through = True
@@ -370,8 +357,19 @@ class FishTankDialog(QDialog):
         r = self.rect()
         self.tank_view.setGeometry(r)
         self.grips.setGeometry(r)
-        tw = min(860, max(420, r.width() - 40))
-        self.toolbar.setGeometry((r.width() - tw) // 2, 8, tw, TOOLBAR_H)
+        # Slim status chip — top-left, clear of edge grips.
+        self.status_chip.adjustSize()
+        chip_w = max(160, self.status_chip.sizeHint().width() + 8)
+        self.status_chip.setGeometry(
+            GRIP + 8, GRIP + 6, min(chip_w, r.width() - 2 * GRIP - 16), STATUS_CHIP_H
+        )
+        # Primary toolbar: bottom-left Social Icon Fill row (compact).
+        self.toolbar.adjustSize()
+        th = self.toolbar.sizeHint()
+        tw = min(th.width(), r.width() - GRIP - 16)
+        tb_h = th.height()
+        self.toolbar.setGeometry(GRIP + 6, r.height() - GRIP - tb_h - 6, tw, tb_h)
+        self.status_chip.raise_()
         self.toolbar.raise_()
         self.grips.raise_()
         # Let grips receive edge hits but pass center to view/toolbar via
@@ -410,11 +408,14 @@ class FishTankDialog(QDialog):
     # --- click-through --------------------------------------------------
 
     def _chrome_contains_global(self, gpos: QPoint) -> bool:
-        # Toolbar?
-        if self.toolbar.geometry().contains(self.mapFromGlobal(gpos)):
+        local = self.mapFromGlobal(gpos)
+        # Bottom-left Social Icon Fill toolbar?
+        if self.toolbar.geometry().contains(local):
+            return True
+        # Slim status chip (non-interactive but still chrome for pass-through).
+        if self.status_chip.geometry().contains(local):
             return True
         # Grip band?
-        local = self.mapFromGlobal(gpos)
         r = self.rect()
         if (
             local.x() <= GRIP
@@ -460,7 +461,8 @@ class FishTankDialog(QDialog):
         msg = f"魚／Fish {n}  擁有／Owned {owned}  外出／Away {away}  縮放／Zoom {z:.2f}"
         if self._log_flash:
             msg = f"{msg}  ·  {self._log_flash}"
-        self.status.setText(msg)
+        self.status_chip.setText(f"透明魚缸／Fish Tank  ·  {msg}")
+        self.toolbar.set_status(msg)
 
     # --- toolbar actions ------------------------------------------------
 
@@ -520,7 +522,8 @@ class FishTankDialog(QDialog):
                 pass
 
     def _toggle_catch(self, checked: bool = False) -> None:
-        self._catch_mode = bool(checked) or self.btn_catch.isChecked()
+        # Social Icon catch button toggles itself before emitting clicked.
+        self._catch_mode = self.btn_catch.isChecked()
         self.tank_view.set_interact_mode(self._catch_mode)
         if self._catch_mode:
             self._log_flash = "捕捉模式／Catch mode — click a fish"
@@ -529,6 +532,7 @@ class FishTankDialog(QDialog):
             self._click_through = False
         else:
             self._log_flash = "結束捕捉／Catch mode off"
+        self._refresh_status()
 
     def _on_fish_clicked(self, fish_id: str) -> None:
         if not self._catch_mode:

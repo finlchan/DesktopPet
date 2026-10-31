@@ -11,7 +11,7 @@ Closed PR #48 used wrong eye-level swim silhouettes — do **not** treat it as r
 
 ## Phase 1 (this package)
 
-- Full-window translucent glass; Windows click-through on the glass; always-on edge grips `「 」` + bilingual toolbar.
+- Full-window translucent glass; Windows click-through on the glass; always-on edge grips `「 」` + bottom-left **Social Icon Fill** circular toolbar (comic line icons, hover fill-rise ~0.45s).
 - Zoom/pan change **visible world range only**; swim sprites stay fixed pixel size.
 - Five fish + one plant (~16% soft pixel placeholders); rare = palette swap only.
 - Free swim; fish may leave the local view (away stub — no public server).
