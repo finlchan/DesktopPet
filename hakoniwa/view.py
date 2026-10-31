@@ -215,7 +215,11 @@ class HakoniwaMapWidget(QWidget):
             self._paint_terrain_top(painter, cell.terrain, cx, cy, poly)
 
             # Building: user PNG when dropped, else solid color diamond.
+            # tall=True → sprite keeps aspect, anchored at the footprint's south
+            # tip, drawn unclipped so peaks may rise above the cell's N tip
+            # (ground footprint still spans the inset diamond).
             if cell.building and cell.building in BUILDINGS:
+                meta = BUILDINGS[cell.building]
                 inset = self.cell * 0.55
                 bcy = cy - self.cell * 0.08
                 bverts = diamond_vertices(cx, bcy, inset)
@@ -223,19 +227,27 @@ class HakoniwaMapWidget(QWidget):
                 bpix = self._atlas.building_pixmap(cell.building)
                 if bpix is not None and not bpix.isNull():
                     bw, bh = cell_screen_size(inset)
-                    dest = QRectF(cx - bw / 2.0, bcy - bh / 2.0, bw, bh)
-                    path = QPainterPath()
-                    path.addPolygon(bpoly)
-                    painter.save()
-                    painter.setClipPath(path)
-                    painter.setPen(Qt.PenStyle.NoPen)
-                    painter.drawPixmap(
-                        dest, bpix, QRectF(0, 0, bpix.width(), bpix.height())
-                    )
-                    painter.restore()
-                    painter.setBrush(Qt.BrushStyle.NoBrush)
-                    painter.setPen(QPen(QColor(30, 30, 30, 200), 1.0))
-                    painter.drawPolygon(bpoly)
+                    if meta.get("tall"):
+                        sprite_h = bw * bpix.height() / max(1.0, float(bpix.width()))
+                        dest = QRectF(cx - bw / 2.0, bcy + bh / 2.0 - sprite_h, bw, sprite_h)
+                        painter.setPen(Qt.PenStyle.NoPen)
+                        painter.drawPixmap(
+                            dest, bpix, QRectF(0, 0, bpix.width(), bpix.height())
+                        )
+                    else:
+                        dest = QRectF(cx - bw / 2.0, bcy - bh / 2.0, bw, bh)
+                        path = QPainterPath()
+                        path.addPolygon(bpoly)
+                        painter.save()
+                        painter.setClipPath(path)
+                        painter.setPen(Qt.PenStyle.NoPen)
+                        painter.drawPixmap(
+                            dest, bpix, QRectF(0, 0, bpix.width(), bpix.height())
+                        )
+                        painter.restore()
+                        painter.setBrush(Qt.BrushStyle.NoBrush)
+                        painter.setPen(QPen(QColor(30, 30, 30, 200), 1.0))
+                        painter.drawPolygon(bpoly)
                 else:
                     bcol = BUILDINGS[cell.building]["color"]
                     if bcol:

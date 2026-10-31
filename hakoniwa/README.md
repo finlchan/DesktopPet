@@ -13,6 +13,7 @@ not a flat top-down square grid rotated 45°.
 | Lattice | v9 diagonal-strip stagger, 20×20, same-layer sea/dirt/grass |
 | Terrain | Flat top PNGs in `assets/tiles/` (dirt／grass／sea；森＝草面＋綠洗); ocean backdrop optional |
 | User art | Optional PNGs in `Data/hakoniwa/user/` or `assets/user/` replace building／monster color blocks and optionally terrain (see below); missing → color blocks / bundled tops |
+| Tall art | Building registry flag `tall=True`（採掘場／紀念碑／ロケット基地）: sprite keeps its aspect ratio, bottom anchored to the footprint diamond, drawn **unclipped** so mountains／towers may rise above the cell's north tip. Ground footprint still spans the inset diamond; terrain sea／dirt／grass clip unchanged |
 | Forest | 植林 50→森(100本)；每回合+100本(上限20000)；伐採免費瞬售 100本≈5資金 |
 | Mountain | 造山 100／噴火→山；整地山→荒地；採掘場 300（僅山上色塊）產資 |
 | Labor | 回合勞動：農場優先，再工場、採掘場；產能依就業比例 |
@@ -62,7 +63,10 @@ player PNGs** — `Data/` is gitignored; `assets/user/*.png` is also ignored.
 | `{config}/Data/hakoniwa/user/` | Preferred — beside `Data/hakoniwa_island.json` |
 | `hakoniwa/assets/user/` | Package-local drop folder |
 
-Expected filenames (exact; loader is case-sensitive on Linux):
+Expected filenames (exact; loader is case-sensitive on Linux). `tall=True`
+buildings（`quarry.png` `monument.png` `rocket_base.png`）may use portrait art —
+e.g. `quarry.png` with a big mountain: the base fills the diamond footprint and
+the peak extends above the cell's north tip without being clipped:
 
 | Category | Filenames |
 |---|---|
@@ -85,5 +89,6 @@ Fallback when a file is absent: buildings／monsters → solid color; terrain �
 6. Confirm HUD overlays still sit on the map (not outside columns).
 7. Confirm dirt／grass／sea cells show real textures (not solid color fills).
 8. Without user PNGs, buildings／monsters stay color blocks; with drops, those keys swap.
+9. `tall=True` user art（採掘場 etc.）renders the full sprite — peak may exceed the cell's north tip; ground footprint stays in the diamond.
 
 CI/local smoke fails if the projection regresses to orthographic-only.
