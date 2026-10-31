@@ -1,7 +1,7 @@
 Desktop Pet
 ==================
 
-Version: 261031.01
+Version: 261031.02
 Published: 2026-10-31
 
 A floating shortcut menu and document record gadget on the Windows desktop.
@@ -19,9 +19,10 @@ Features
 5. The middle section shows "Document record"; click the ">>" button to open the submenu and browse/search files.
    The Document record submenu header has an "Open folder" button to open storage folder(s) in the file manager.
 6. Below Document record, "Mini programs"; click ">>" for Text records and Calculations
-   (Level calc / Slope calc / Free station), plus Pomodoro, Translate, and 箱庭島
+   (Level calc / Slope calc / Free station), plus Pomodoro, Translate, 箱庭島
    (richer island sim: textured oblique map HUD, forest/harbor/monuments/mountain/
-   quarry/breakwater/oil, bank/shop/shrine/park, optional user PNG art overlay).
+   quarry/breakwater/oil, bank/shop/shrine/park, optional user PNG art overlay),
+   and 透明魚缸／Fish Tank (Phase 1 local translucent aquarium below 箱庭島).
 7. Drag files, folders, or URLs onto the pet to add shortcuts (prompt for name/description).
 8. The bottom has a "Settings" button to edit all configurations.
 9. Window level can be set to Normal, Always on top, or Always on bottom.
@@ -74,6 +75,14 @@ Free_Station_FAI.xls / .xlsm survey spreadsheet:
 - Output: station Easting/Northing, reduced level, and the distance-check
   residual ΔHD per accepted pair, plus an Average (mean E / N / RL) of those
   pair results. Copy button copies the result block.
+
+What's new in 261031.02 (2026-10-31)
+--------
+1. Mini programs → 透明魚缸／Fish Tank (below 箱庭島): Phase 1 local translucent
+   aquarium — glass click-through, always-on edge grips + bilingual toolbar,
+   fixed-size ~16% pixel fish (5 species + waterweed), free swim with away stub,
+   feed / decorate / name / catch (local ownership), capture／圖鑑 side cards.
+   Phase 2 public server / trade / settlement hooks are stubs only.
 
 What's new in 261031.01 (2026-10-31)
 --------
