@@ -17,3 +17,8 @@ In-game: Qt blit by heading bucket; rare = palette remap. **No realtime 3D.**
 ## 青衣 HD
 
 `swim/grouper.png` is **96×80** per facing (HD pixel). Regenerate with `python -m fish_tank.tools.gen_grouper_hd`.
+
+## 青衣 swim-cycle
+
+`swim/grouper.png` is **120×100 × 8 dirs × 4 frames** (cols=dirs, rows=frames).
+Rebuild: `python -m fish_tank.tools.gen_grouper_swim_cycle` (needs user source JPG).

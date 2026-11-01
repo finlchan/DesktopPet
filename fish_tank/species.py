@@ -80,8 +80,9 @@ SPECIES: Dict[str, SpeciesDef] = {
         market_en="Orange-spotted grouper",
         aliases_zh=(),
         scientific="Epinephelus coioides",
-        base_colors=((70, 120, 90), (40, 80, 60), (200, 140, 50), (30, 50, 40)),
-        rare_colors=((50, 90, 130), (30, 55, 90), (220, 160, 40), (20, 36, 55)),
+        # Palette tuned to user HD stills (teal body + yellow accents + black spot).
+        base_colors=((40, 150, 140), (25, 95, 110), (235, 205, 55), (25, 25, 28)),
+        rare_colors=((55, 100, 175), (30, 55, 110), (250, 170, 45), (20, 22, 30)),
     ),
     "waterweed": SpeciesDef(
         key="waterweed",

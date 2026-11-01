@@ -36,6 +36,8 @@ class FishEntity:
     # 8-dir facing index (0=N … 7=NW). Legacy saves may only have facing_right.
     facing: int = DEFAULT_FACING
     facing_right: bool = True  # legacy mirror of E/W; kept for older tank.json
+    # Swim-cycle phase 0..1 (青衣 loops frames; others ignore).
+    anim_phase: float = 0.0
     rare: bool = False
     # Status (shown on capture / 圖鑑 view-2 card).
     health: float = 1.0  # 0..1

@@ -104,38 +104,55 @@ def _swim_sheet_image(species_key: str, rare: bool) -> Optional[QImage]:
 
 
 @lru_cache(maxsize=64)
-def swim_frame_size(species_key: str) -> Tuple[int, int]:
-    """Per-species cell size from sheet (width//8, height). Falls back to SWIM_*."""
+def swim_layout(species_key: str) -> Tuple[int, int, int]:
+    """Return (frame_w, frame_h, cycle_frames).
+
+    Sheet layout: columns = 8 dirs, rows = swim-cycle frames (1 for static).
+    青衣 uses 4-row cycle; other species stay single-row.
+    """
     if SPECIES[species_key].is_plant:
-        return PLANT_W, PLANT_H
+        return PLANT_W, PLANT_H, 1
     sheet = _swim_sheet_image(species_key, False)
     if sheet is not None and sheet.width() >= DIR_COUNT:
         fw = sheet.width() // DIR_COUNT
-        fh = sheet.height()
-        if fw > 0 and fh > 0:
-            return fw, fh
-    return SWIM_W, SWIM_H
+        for nframes in (4, 3, 2, 1):
+            if sheet.height() % nframes == 0:
+                fh = sheet.height() // nframes
+                if fh >= 24:
+                    return fw, fh, nframes
+    return SWIM_W, SWIM_H, 1
 
 
-@lru_cache(maxsize=256)
+@lru_cache(maxsize=64)
+def swim_frame_size(species_key: str) -> Tuple[int, int]:
+    fw, fh, _n = swim_layout(species_key)
+    return fw, fh
+
+
+def swim_cycle_frames(species_key: str) -> int:
+    return swim_layout(species_key)[2]
+
+
+@lru_cache(maxsize=512)
 def swim_pixmap(
     species_key: str,
     rare: bool = False,
     facing: object = DEFAULT_FACING,
+    frame: int = 0,
 ) -> QPixmap:
-    """8-dir swim frame. ``facing`` = int 0..7, name, or legacy bool (right=True→E)."""
+    """8-dir swim cell. ``frame`` selects swim-cycle row (青衣 0..3; others 0)."""
     species = SPECIES[species_key]
     if species.is_plant:
         return plant_pixmap()
 
     idx = coerce_facing(facing)
     sheet = _swim_sheet_image(species_key, rare)
-    fw, fh = swim_frame_size(species_key)
-    if sheet is not None and sheet.width() >= fw * DIR_COUNT and sheet.height() >= fh:
-        frame = sheet.copy(idx * fw, 0, fw, fh)
-        return QPixmap.fromImage(frame)
+    fw, fh, nframes = swim_layout(species_key)
+    fr = int(frame) % max(1, nframes)
+    if sheet is not None and sheet.width() >= fw * DIR_COUNT and sheet.height() >= fh * nframes:
+        cell = sheet.copy(idx * fw, fr * fh, fw, fh)
+        return QPixmap.fromImage(cell)
 
-    # Fallback empty transparent (assets missing)
     img = QImage(fw, fh, QImage.Format.Format_ARGB32)
     img.fill(Qt.GlobalColor.transparent)
     return QPixmap.fromImage(img)
@@ -169,14 +186,16 @@ def side_pixmap(species_key: str, rare: bool = False) -> QPixmap:
 
 
 def warm_cache() -> None:
-    """Pre-load all v1 swim facings + side cards (common + rare)."""
+    """Pre-load all v1 swim facings (+ cycle frames) and side cards."""
     for key, sp in SPECIES.items():
         for rare in (False, True):
             if sp.is_plant:
                 plant_pixmap()
                 continue
+            nframes = swim_cycle_frames(key)
             for facing in range(DIR_COUNT):
-                swim_pixmap(key, rare, facing)
+                for fr in range(nframes):
+                    swim_pixmap(key, rare, facing, fr)
             side_pixmap(key, rare)
 
 

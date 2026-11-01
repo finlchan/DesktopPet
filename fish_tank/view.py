@@ -16,7 +16,15 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QWidget
 
 from .model import TankState
-from .sprites import PLANT_H, PLANT_W, SWIM_H, SWIM_W, side_pixmap, swim_pixmap
+from .sprites import (
+    PLANT_H,
+    PLANT_W,
+    SWIM_H,
+    SWIM_W,
+    side_pixmap,
+    swim_cycle_frames,
+    swim_pixmap,
+)
 
 
 class TankView(QWidget):
@@ -133,7 +141,10 @@ class TankView(QWidget):
         # Fish — sprite pixel size fixed per sheet (zoom changes visible range only).
         for f in self.state.active_fish():
             sp = self.world_to_screen(f.x, f.y)
-            pix = swim_pixmap(f.species_key, f.rare, getattr(f, "facing", f.facing_right))
+            facing = getattr(f, "facing", f.facing_right)
+            nframes = swim_cycle_frames(f.species_key)
+            fr = int(getattr(f, "anim_phase", 0.0) * nframes) % nframes
+            pix = swim_pixmap(f.species_key, f.rare, facing, fr)
             pw, ph = pix.width(), pix.height()
             p.drawPixmap(
                 int(sp.x() - pw / 2),
@@ -207,7 +218,10 @@ class TankView(QWidget):
         # Topmost fish whose fixed sprite rect contains the point.
         for f in reversed(self.state.active_fish()):
             sp = self.world_to_screen(f.x, f.y)
-            pix = swim_pixmap(f.species_key, f.rare, getattr(f, "facing", f.facing_right))
+            facing = getattr(f, "facing", f.facing_right)
+            nframes = swim_cycle_frames(f.species_key)
+            fr = int(getattr(f, "anim_phase", 0.0) * nframes) % nframes
+            pix = swim_pixmap(f.species_key, f.rare, facing, fr)
             hw, hh = pix.width() / 2, pix.height() / 2
             if abs(pos.x() - sp.x()) <= hw and abs(pos.y() - sp.y()) <= hh:
                 return f.id

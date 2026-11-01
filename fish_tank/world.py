@@ -62,6 +62,10 @@ def _wander(f: FishEntity, dt: float) -> None:
     prev = getattr(f, "facing", 2)
     f.facing = facing_from_velocity(f.vx, f.vy, prev=prev)
     f.facing_right = f.facing in (1, 2, 3)  # NE/E/SE legacy
+    # Swim-cycle: faster fish flap quicker; idle still gently loops.
+    speed = math.hypot(f.vx, f.vy)
+    rate = 1.6 + min(3.5, speed / 18.0)
+    f.anim_phase = (getattr(f, "anim_phase", 0.0) + rate * dt) % 1.0
     _clamp_world(f)
 
 

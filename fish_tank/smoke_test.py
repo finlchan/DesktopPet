@@ -28,6 +28,7 @@ def main() -> int:
         SWIM_W,
         oblique_swim_metrics,
         side_pixmap,
+        swim_cycle_frames,
         swim_frame_size,
         swim_pixmap,
         warm_cache,
@@ -48,9 +49,20 @@ def main() -> int:
             assert not pix.isNull() and pix.width() == fw and pix.height() == fh
         side = side_pixmap(key, True)
         assert not side.isNull()
-    # 青衣 HD sheet is larger than legacy RTS cells.
+    # 青衣: HD cell + 4-frame swim cycle.
     gw, gh = swim_frame_size("grouper")
     assert gw >= 96 and gh >= 80, (gw, gh)
+    assert swim_cycle_frames("grouper") == 4
+    assert swim_cycle_frames("lionfish") == 1
+    a = swim_pixmap("grouper", False, 2, 0).toImage()
+    b = swim_pixmap("grouper", False, 2, 1).toImage()
+    diff = sum(
+        1
+        for y in range(min(a.height(), b.height()))
+        for x in range(min(a.width(), b.width()))
+        if a.pixelColor(x, y).rgba() != b.pixelColor(x, y).rgba()
+    )
+    assert diff > 50, diff
 
     # 8-dir / RTS sheet invariant: E vs N differ; frames opaque.
     m = oblique_swim_metrics("grouper")
