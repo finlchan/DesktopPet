@@ -30,7 +30,7 @@ from typing import Dict, Iterable, List, Sequence, Tuple, Union
 GRID_SIZE = 20
 
 # Screen diamond base size (pixels) before oblique Y squash. Logical top is 1:1.
-DEFAULT_CELL = 30
+DEFAULT_CELL = 60
 
 # Formal foreshortening: screen diamond H = W · OBLIQUE_Y_SCALE.
 # User-locked H/W ≈ 0.65 (flatter than prior sin(45°)≈0.707; between that and
