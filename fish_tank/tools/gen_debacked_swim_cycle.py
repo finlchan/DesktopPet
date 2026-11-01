@@ -3,10 +3,10 @@
 
 Do NOT re-key / re-deback — alpha is authoritative.
 
-Motion (visible amplitude):
+Motion (visible amplitude) — trial revision after user 「不行」:
   - Tail: left–right swing
   - Dorsal: open / close (flare toward tip ↔ fold toward spine)
-  - Lower fins (魚翼): stretch + swing
+  - Lower fins: STATIC (no stretch/swing)
 
 Trial source:
   media/.../user-debacked/red-bigeye-trial.png → assets/swim/red_bigeye.png
@@ -126,12 +126,11 @@ def _centroid(cell: np.ndarray) -> Tuple[float, float]:
 
 
 def _warp_frame(base: np.ndarray, facing: int, frame: int) -> np.ndarray:
-    """Inverse-map warp with strong visible fin/tail motion; preserve sampled RGBA."""
+    """Inverse-map warp: tail L/R + dorsal open/close only; lower fins static."""
     phase = (frame / FRAME_COUNT) * 2.0 * math.pi
-    # Explicit phases
+    # Explicit phases — no lower-fin motion
     tail = math.sin(phase)  # L/R
     dorsal_open = 0.55 + 0.45 * math.sin(phase + 0.7)  # 0.1..1.0 open amount
-    lower = math.sin(phase + math.pi / 2)  # stretch/swing
 
     (fx, fy), (rx, ry) = _forward_right(facing)
     cx, cy = _centroid(base)
@@ -145,60 +144,36 @@ def _warp_frame(base: np.ndarray, facing: int, frame: int) -> np.ndarray:
     upness = dx * ux + dy * uy
 
     # --- region weights ---
-    # Tail: behind nose
+    # Tail: behind nose, tip-weighted
     t = np.clip((-along) / 34.0, 0.0, 1.0)
-    t = t * t  # tip-weighted
+    t = t * t
 
-    # Dorsal: upper side, mid-body, near spine band then out to tip
+    # Dorsal: upper side, mid-body → tip (do not touch belly / lower fins)
     dorsal_w = np.zeros_like(along)
     d_mask = (along > -8) & (along < 32) & (upness > 1.5)
     dorsal_w[d_mask] = np.clip((upness[d_mask] - 1.5) / 14.0, 0.0, 1.0) * (
         1.0 - np.clip(np.abs(across[d_mask]) / 22.0, 0.0, 1.0) * 0.35
     )
 
-    # Lower fins / 魚翼: belly-ish + outward mid-body
-    lower_w = np.zeros_like(along)
-    l_mask = (along > -12) & (along < 22) & (np.abs(across) > 5)
-    lower_w[l_mask] = np.clip((np.abs(across[l_mask]) - 5) / 14.0, 0.0, 1.0)
-    # Prefer belly (negative upness)
-    lower_w = np.where(upness < 2.0, lower_w * (1.0 + 0.35 * np.clip(-upness / 12.0, 0, 1)), lower_w * 0.55)
-
-    # Amplitudes (visible)
     amp_tail = 7.5
-    amp_dorsal_close = 5.5  # how far tips fold toward spine when closed
-    amp_lower_stretch = 4.5
-    amp_lower_swing = 5.0
+    amp_dorsal_close = 5.5
 
-    # Tail L/R (across)
+    # Tail L/R (across) + slight along foreshorten at tip
     shift_across = tail * amp_tail * t
-    # slight along foreshorten on tail tip
     shift_along = -abs(tail) * 1.4 * t
 
-    # Dorsal open/close: when closed, pull tips toward spine (reduce |across| in source)
-    # Inverse map: sample from farther-out across when closed so dest looks folded in
-    close = 1.0 - dorsal_open  # 0 open … ~0.9 closed
-    # For dorsal pixels, sample from across * (1 + close*k)  → dest appears pulled in
+    # Dorsal open/close: fold tips toward spine when closed; lift when open
+    close = 1.0 - dorsal_open
     dorsal_pull = close * amp_dorsal_close * dorsal_w
-    # sign: pull toward zero across
     shift_across = shift_across + np.sign(across + 1e-3) * dorsal_pull
-    # open lifts tip slightly toward image-up
     shift_along = shift_along + (dorsal_open - 0.55) * 2.2 * dorsal_w
     sx_up = ux * (dorsal_open - 0.55) * 2.8 * dorsal_w
     sy_up = uy * (dorsal_open - 0.55) * 2.8 * dorsal_w
-
-    # Lower fins: stretch (push |across|) + swing
-    stretch = (0.5 + 0.5 * lower)  # 0..1
-    lower_out = stretch * amp_lower_stretch * lower_w
-    # inverse: sample from closer-to-spine when dest is stretched out
-    shift_across = shift_across - np.sign(across + 1e-3) * lower_out
-    shift_across = shift_across + lower * amp_lower_swing * lower_w * 0.85
-    shift_along = shift_along - abs(lower) * 1.2 * lower_w
 
     sx = xs - (rx * shift_across + fx * shift_along) - sx_up
     sy = ys - (ry * shift_across + fy * shift_along) - sy_up
 
     out = np.zeros((CELL_H, CELL_W, 4), dtype=np.uint8)
-    # Sample each channel with nearest (keep pixel look / alpha)
     for c in range(4):
         sampled = map_coordinates(
             base[:, :, c].astype(np.float32),
@@ -209,10 +184,8 @@ def _warp_frame(base: np.ndarray, facing: int, frame: int) -> np.ndarray:
         )
         out[:, :, c] = np.clip(sampled, 0, 255).astype(np.uint8)
 
-    # Thin outline on new alpha edge (does not re-key body)
     op = out[:, :, 3] > 40
     edge = binary_dilation(op) & ~op
-    # only write outline where fully empty
     out[edge] = (18, 22, 26, 255)
     return out
 
