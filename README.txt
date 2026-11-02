@@ -1,7 +1,7 @@
 Desktop Pet
 ==================
 
-Version: 261102.02
+Version: 261102.03
 Published: 2026-11-02
 
 A floating shortcut menu and document record gadget on the Windows desktop.
@@ -76,6 +76,11 @@ Free_Station_FAI.xls / .xlsm survey spreadsheet:
 - Output: station Easting/Northing, reduced level, and the distance-check
   residual ΔHD per accepted pair, plus an Average (mean E / N / RL) of those
   pair results. Copy button copies the result block.
+
+What's new in 261102.03 (2026-11-02)
+--------
+1. Free Station: fix mean bearing when 正鏡=0 / 倒鏡=180 (TESTDEG now wraps
+   exactly 360→0 so AVERAGE is not 180). General angle wrap; no UI special-case.
 
 What's new in 261102.02 (2026-11-02)
 --------

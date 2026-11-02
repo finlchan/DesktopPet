@@ -54,7 +54,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261102.02"
+APP_VERSION = "261102.03"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -2208,7 +2208,8 @@ def survey_dms(degrees):
 
 
 def survey_test_dms(value):
-    if abs(value) > 360:
+    # Wrap at exactly ±360 as well (> alone left 360 literal → bad averages).
+    if abs(value) >= 360:
         value = (abs(value) - math.floor(abs(value) / 360) * 360) * abs(value) / value
     if value < 0:
         value = survey_dms(survey_deg(value) + 360)
@@ -2216,7 +2217,12 @@ def survey_test_dms(value):
 
 
 def survey_test_deg(value):
-    if abs(value) > 360:
+    """VBA TESTDEG(): normalize decimal degrees into [0, 360).
+
+    Must wrap **exactly 360 → 0** (use >= 360, not > 360). Otherwise
+    mean_bearing_faces(0, 180) does AVERAGE(0, 360) = 180 instead of 0.
+    """
+    if abs(value) >= 360:
         value = (abs(value) - math.floor(abs(value) / 360) * 360) * abs(value) / value
     if value < 0:
         value += 360
