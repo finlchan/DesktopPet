@@ -1,7 +1,7 @@
 Desktop Pet
 ==================
 
-Version: 261102.04
+Version: 261102.05
 Published: 2026-11-02
 
 A floating shortcut menu and document record gadget on the Windows desktop.
@@ -76,6 +76,11 @@ Free_Station_FAI.xls / .xlsm survey spreadsheet:
 - Output: station Easting/Northing, reduced level, and the distance-check
   residual ΔHD per accepted pair, plus an Average (mean E / N / RL) of those
   pair results. Copy button copies the result block.
+
+What's new in 261102.05 (2026-11-02)
+--------
+1. Pomodoro: wall-clock mode — enter 目標鐘點／End at; remaining seconds are
+   auto-computed from now until that time. Duration presets kept.
 
 What's new in 261102.04 (2026-11-02)
 --------
