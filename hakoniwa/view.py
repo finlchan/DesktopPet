@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Optional, Tuple
 
-from PySide6.QtCore import Qt, Signal, QPointF, QPoint, QRectF
+from PySide6.QtCore import Qt, Signal, QPointF, QPoint, QRect, QRectF
 from PySide6.QtGui import (
     QColor,
     QPainter,
@@ -40,7 +40,7 @@ from .grid import (
     paint_order,
 )
 from .model import BUILDINGS, TERRAIN, IslandState
-from .tiles import ATLAS
+from .tiles import ATLAS, alpha_content_rect
 
 Coord = Tuple[int, int]
 
@@ -167,18 +167,26 @@ class HakoniwaMapWidget(QWidget):
         cy: float,
         poly: QPolygonF,
     ) -> None:
-        """Draw flat top texture clipped to the foreshortened diamond (no skirts)."""
+        """Draw flat top texture clipped to the foreshortened diamond (no skirts).
+
+        Source uses the alpha-content AABB (not full PNG canvas) so dirt／mountain
+        user overlays with padding still fill W↔E and bottom to the S tip.
+        """
         w, h = cell_screen_size(self.cell)
         hw, hh = w / 2.0, h / 2.0
         dest = QRectF(cx - hw, cy - hh, w, h)
         pix = self._atlas.pixmap_for(terrain_key)
         if pix is not None and not pix.isNull():
+            content = alpha_content_rect(pix)
+            src = QRectF(content) if content.isValid() and not content.isEmpty() else QRectF(
+                0, 0, pix.width(), pix.height()
+            )
             path = QPainterPath()
             path.addPolygon(poly)
             painter.save()
             painter.setClipPath(path)
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawPixmap(dest, pix, QRectF(0, 0, pix.width(), pix.height()))
+            painter.drawPixmap(dest, pix, src)
             tint = self._atlas.tint_for(terrain_key)
             if tint is not None:
                 painter.fillPath(path, tint)
@@ -216,20 +224,24 @@ class HakoniwaMapWidget(QWidget):
             self._paint_terrain_top(painter, cell.terrain, cx, cy, poly)
 
             # Building: user PNG when dropped, else solid color diamond.
-            # Sprites: aspect-preserving, left=W tip / right=E tip (draw width =
-            # full cell W), bottom=S tip; top may rise above N tip. No inset /
-            # diamond clip (terrain tops stay diamond-clipped above).
+            # Align by **alpha content AABB** (not PNG canvas): content left↔right
+            # = diamond W↔E (full cell W), content bottom = S tip; top may rise
+            # above N. No diamond clip (terrain tops stay clipped above).
             if cell.building and cell.building in BUILDINGS:
                 bpix = self._atlas.building_pixmap(cell.building)
                 if bpix is not None and not bpix.isNull():
                     bw, bh = cell_screen_size(self.cell)
                     south_y = cy + bh / 2.0
-                    sprite_h = bw * bpix.height() / max(1.0, float(bpix.width()))
+                    content = alpha_content_rect(bpix)
+                    if not content.isValid() or content.isEmpty():
+                        content = QRect(0, 0, bpix.width(), bpix.height())
+                    cw = max(1.0, float(content.width()))
+                    ch = max(1.0, float(content.height()))
+                    scale = bw / cw
+                    sprite_h = ch * scale
                     dest = QRectF(cx - bw / 2.0, south_y - sprite_h, bw, sprite_h)
                     painter.setPen(Qt.PenStyle.NoPen)
-                    painter.drawPixmap(
-                        dest, bpix, QRectF(0, 0, bpix.width(), bpix.height())
-                    )
+                    painter.drawPixmap(dest, bpix, QRectF(content))
                 else:
                     bcol = BUILDINGS[cell.building]["color"]
                     if bcol:

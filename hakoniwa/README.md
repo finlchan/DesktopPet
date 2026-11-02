@@ -13,7 +13,7 @@ not a flat top-down square grid rotated 45°.
 | Lattice | v9 diagonal-strip stagger, 20×20, same-layer sea/dirt/grass |
 | Terrain | Flat top PNGs in `assets/tiles/` (dirt／grass／sea；森＝草面＋綠洗); ocean backdrop optional |
 | User art | Optional PNGs in `Data/hakoniwa/user/` or `assets/user/` replace building／monster color blocks and optionally terrain (see below); missing → color blocks / bundled tops |
-| Building art | User PNGs: aspect-preserving; left↔right = diamond W↔E tips (draw width = full cell `W`); bottom = S tip; top may rise above N tip; **no** 0.55× inset / diamond clip. Terrain sea／dirt／grass stay diamond-clipped. `tall=True`（採掘場／紀念碑／ロケット基地）marks portrait-friendly keys; placement rule applies to all building sprites |
+| Building art | User PNGs align by **alpha content AABB** (ignore canvas padding): content left↔right = diamond W↔E (full cell `W`); content bottom = S tip; top may rise above N; **no** diamond clip. Flat art（防波堤 etc.）included. Terrain tops diamond-clipped; user dirt／mountain source also uses content AABB so padding still fills the diamond. `tall=True` marks portrait-friendly keys |
 | Cell size | `DEFAULT_CELL=120`; wheel zoom `MIN_CELL…MAX_CELL` (12…256); `OBLIQUE_Y_SCALE=0.65` |
 | Forest | 植林 50→森(100本)；每回合+100本(上限20000)；伐採免費瞬售 100本≈5資金 |
 | Mountain | 造山 100／噴火→山；整地山→荒地；採掘場 300（僅山上色塊）產資 |

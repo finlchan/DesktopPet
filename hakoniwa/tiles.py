@@ -13,9 +13,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, Optional
 
+from PySide6.QtCore import QRect
 from PySide6.QtGui import QColor, QImage, QPixmap
 
 from .user_art import LOADER as USER_ART
+
+# Tight AABB of non-transparent pixels, keyed by QPixmap.cacheKey().
+_CONTENT_BOUNDS: Dict[int, QRect] = {}
+_ALPHA_MIN = 8  # treat near-transparent as empty
 
 # Package-local assets (also bundled into frozen EXE via build.bat --add-data).
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
@@ -49,6 +54,45 @@ TERRAIN_TINT: Dict[str, tuple] = {
 }
 
 _BLACK_KEY_LUMA = 28  # near-black outside diamond → transparent
+
+
+def clear_content_bounds_cache() -> None:
+    """Drop alpha-content AABB cache (call with atlas user-cache invalidate)."""
+    _CONTENT_BOUNDS.clear()
+
+
+def alpha_content_rect(pix: QPixmap, alpha_min: int = _ALPHA_MIN) -> QRect:
+    """Return the tight AABB of pixels with alpha > ``alpha_min``.
+
+    Used so building／user sprites align by **visible content**, not PNG canvas
+    padding. Empty／fully-transparent images fall back to the full pixmap rect.
+    """
+    if pix is None or pix.isNull():
+        return QRect()
+    key = int(pix.cacheKey())
+    cached = _CONTENT_BOUNDS.get(key)
+    if cached is not None:
+        return QRect(cached)
+    img = pix.toImage().convertToFormat(QImage.Format.Format_ARGB32)
+    w, h = img.width(), img.height()
+    min_x, min_y, max_x, max_y = w, h, -1, -1
+    for y in range(h):
+        for x in range(w):
+            if (img.pixel(x, y) >> 24) & 0xFF > alpha_min:
+                if x < min_x:
+                    min_x = x
+                if y < min_y:
+                    min_y = y
+                if x > max_x:
+                    max_x = x
+                if y > max_y:
+                    max_y = y
+    if max_x < 0:
+        rect = QRect(0, 0, w, h)
+    else:
+        rect = QRect(min_x, min_y, max_x - min_x + 1, max_y - min_y + 1)
+    _CONTENT_BOUNDS[key] = QRect(rect)
+    return rect
 
 
 def _key_black_to_alpha(img: QImage) -> QImage:
@@ -85,6 +129,7 @@ class TileAtlas:
         self._user_bg_tried = False
         self._bg = None
         self._bg_tried = False
+        clear_content_bounds_cache()
 
     def pixmap_for(self, terrain: str) -> Optional[QPixmap]:
         # 1) Optional user override (no new art shipped — only if file exists).
