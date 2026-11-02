@@ -12,6 +12,7 @@ import os
 import random
 import sys
 from collections import OrderedDict
+from datetime import datetime, timedelta
 from pathlib import Path
 import urllib.error
 import urllib.request
@@ -54,7 +55,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261102.03"
+APP_VERSION = "261102.04"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -3904,6 +3905,17 @@ MINI_PROGRAM_STYLE = f"""
         font-family: "Consolas", "Courier New", monospace;
         font-size: 24pt;
     }}
+    QLabel#pomodoroClockRow {{
+        color: #d8d8d8;
+        font-size: 10pt;
+        padding: 1px 2px;
+    }}
+    QLabel#pomodoroClockValue {{
+        color: #e8f5e8;
+        font-family: "Consolas", "Courier New", monospace;
+        font-size: 11pt;
+        padding: 1px 2px;
+    }}
     QProgressBar#pomodoroProgress {{
         background-color: rgba(42, 42, 42, 210);
         color: #f0f0f0;
@@ -3962,14 +3974,14 @@ POMODORO_PRESETS = (25, 5, 15)
 
 
 class PomodoroDialog(FramelessCalcDialog):
-    """Pomodoro — compact countdown with 25/5/15 presets, custom minutes and progress bar."""
+    """Pomodoro — countdown with current clock, target end time, presets, progress."""
 
     def __init__(self, config_manager, parent=None):
         super().__init__(parent)
         self.cfg = config_manager
         self.setWindowTitle("Pomodoro")
-        self.setMinimumSize(380, 250)
-        self.resize(400, 270)
+        self.setMinimumSize(400, 310)
+        self.resize(420, 340)
         self.setStyleSheet(CALC_DIALOG_STYLE + MINI_PROGRAM_STYLE)
         root = install_ornate_calc_frame(self)
         root.setSpacing(6)
@@ -3983,6 +3995,30 @@ class PomodoroDialog(FramelessCalcDialog):
         self.total_seconds = min(max(saved or 25, 1), 600) * 60
         self.remaining_seconds = self.total_seconds
         self.running = False
+        self.target_end = None  # datetime when active session should end
+
+        # 現在時間 / 目標時間 — bilingual labels (user request); rest of dialog stays EN.
+        clock_grid = QGridLayout()
+        clock_grid.setHorizontalSpacing(8)
+        clock_grid.setVerticalSpacing(2)
+        now_cap = QLabel("現在時間／Now")
+        now_cap.setObjectName("pomodoroClockRow")
+        self.now_value = QLabel("--:--:--")
+        self.now_value.setObjectName("pomodoroClockValue")
+        target_cap = QLabel("目標時間／Target")
+        target_cap.setObjectName("pomodoroClockRow")
+        self.target_value = QLabel("—")
+        self.target_value.setObjectName("pomodoroClockValue")
+        clock_grid.addWidget(now_cap, 0, 0)
+        clock_grid.addWidget(self.now_value, 0, 1)
+        clock_grid.addWidget(target_cap, 1, 0)
+        clock_grid.addWidget(self.target_value, 1, 1)
+        clock_grid.setColumnStretch(1, 1)
+        root.addLayout(clock_grid)
+
+        countdown_cap = QLabel("倒數／Countdown")
+        countdown_cap.setObjectName("pomodoroClockRow")
+        root.addWidget(countdown_cap)
 
         self.display = QLabel(self._format_clock(self.remaining_seconds))
         self.display.setObjectName("pomodoroDisplay")
@@ -4034,9 +4070,16 @@ class PomodoroDialog(FramelessCalcDialog):
         self.status.setWordWrap(True)
         root.addWidget(self.status)
 
+        # Session tick (countdown). Separate clock timer keeps 現在時間 live while idle.
         self.timer = QTimer(self)
         self.timer.setInterval(1000)
         self.timer.timeout.connect(self._tick)
+
+        self.clock_timer = QTimer(self)
+        self.clock_timer.setInterval(1000)
+        self.clock_timer.timeout.connect(self._refresh_clock_rows)
+        self.clock_timer.start()
+        self._refresh_clock_rows()
 
         close_row = QHBoxLayout()
         close_row.addStretch()
@@ -4049,9 +4092,26 @@ class PomodoroDialog(FramelessCalcDialog):
         minutes, seconds = divmod(max(total_seconds, 0), 60)
         return f"{minutes:02d}:{seconds:02d}"
 
+    @staticmethod
+    def _format_wall_time(when):
+        return when.strftime("%H:%M:%S")
+
+    def _refresh_clock_rows(self):
+        now = datetime.now()
+        self.now_value.setText(self._format_wall_time(now))
+        if self.running and self.target_end is not None:
+            self.target_value.setText(self._format_wall_time(self.target_end))
+        elif self.remaining_seconds > 0 and self.remaining_seconds < self.total_seconds:
+            # Paused mid-session: show when it would end if resumed now.
+            preview = now + timedelta(seconds=self.remaining_seconds)
+            self.target_value.setText(f"{self._format_wall_time(preview)} (if resume)")
+        else:
+            self.target_value.setText("—")
+
     def _set_minutes(self, minutes):
         self.total_seconds = int(minutes) * 60
         self.remaining_seconds = self.total_seconds
+        self.target_end = None
         self._stop_ticking()
         self.minutes_spin.blockSignals(True)
         self.minutes_spin.setValue(int(minutes))
@@ -4067,19 +4127,24 @@ class PomodoroDialog(FramelessCalcDialog):
         if self.running or self.remaining_seconds <= 0:
             return
         self.running = True
+        self.target_end = datetime.now() + timedelta(seconds=self.remaining_seconds)
         self.timer.start()
         self.status.setText("Running…")
         self._persist_minutes(self.total_seconds // 60)
+        self._refresh_clock_rows()
 
     def _pause(self):
         if not self.running:
             return
         self._stop_ticking()
+        self.target_end = None
         self.status.setText("Paused")
+        self._refresh_clock_rows()
 
     def _reset(self):
         self._stop_ticking()
         self.remaining_seconds = self.total_seconds
+        self.target_end = None
         self._refresh(reset_status=True)
 
     def _stop_ticking(self):
@@ -4090,6 +4155,7 @@ class PomodoroDialog(FramelessCalcDialog):
         self.remaining_seconds -= 1
         if self.remaining_seconds <= 0:
             self.remaining_seconds = 0
+            self.target_end = None
             self._stop_ticking()
             self._on_finished()
         self._refresh()
@@ -4100,11 +4166,13 @@ class PomodoroDialog(FramelessCalcDialog):
         self.progress.setValue(
             round(elapsed * 100.0 / self.total_seconds) if self.total_seconds else 0
         )
+        self._refresh_clock_rows()
         if reset_status and not self.running:
             self.status.setText("Ready")
 
     def _on_finished(self):
         self.status.setText("Time is up!")
+        self._refresh_clock_rows()
         QApplication.beep()
         tray = getattr(QApplication.instance(), "_tray_icon", None)
         if tray is not None:
@@ -4114,6 +4182,7 @@ class PomodoroDialog(FramelessCalcDialog):
                 QSystemTrayIcon.MessageIcon.Information,
                 4000,
             )
+
 
 
 class TranslateError(Exception):
