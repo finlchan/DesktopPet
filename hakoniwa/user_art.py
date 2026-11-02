@@ -1,7 +1,7 @@
 """Optional user-provided PNG art loader for 箱庭島.
 
 Until the player drops files, buildings／monsters stay color blocks and terrain
-uses the bundled sea／dirt／grass tops. Drop PNGs into a user folder to replace
+uses the bundled 海／淺灘／dirt／grass tops. Drop PNGs into a user folder to replace
 those placeholders — this module never ships new artwork.
 
 Search order (first existing file wins per key):

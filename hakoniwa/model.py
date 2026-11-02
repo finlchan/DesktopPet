@@ -240,11 +240,12 @@ FOREST_FIRE_FACTOR = 0.25     # any adjacent 森 → fire chance × this
 FOREST_TYPHOON_FACTOR = 0.35  # any adjacent 森 → typhoon chance × this
 BREAKWATER_TSUNAMI_FACTOR = 0.25  # adjacent 防波堤 → tsunami chance × this
 
-# Terrain kinds — map paints flat top textures (dirt／grass／sea) via tiles.py;
-# ``color`` remains fallback / tint basis. Opening map: 中央 7 泥／草, rest 海.
+# Terrain kinds — map paints flat top textures (dirt／grass／海／淺灘) via tiles.py;
+# ``color`` remains fallback / tint basis. Opening map: 中央 7 泥／草,
+# coastal 淺灘 ring, rest 海 (deep).
 TERRAIN = {
-    "sea": {"label": "海", "color": (42, 110, 168), "land": False},
-    "shallow": {"label": "淺灘", "color": (72, 148, 176), "land": False},
+    "sea": {"label": "海", "color": (28, 72, 140), "land": False},
+    "shallow": {"label": "淺灘", "color": (72, 168, 176), "land": False},
     "oilfield": {"label": "海底油田", "color": (48, 52, 58), "land": False},
     "dirt": {"label": "荒地", "color": (139, 90, 43), "land": True},
     "grass": {"label": "平地", "color": (74, 143, 60), "land": True},
@@ -627,14 +628,20 @@ class IslandState:
     def __post_init__(self) -> None:
         if not self.cells:
             self.cells = self._new_map()
-            self._log("島已生成：中央 7 格陸地（泥／草），其餘為海。")
+            self._log("島已生成：中央 7 格陸地（泥／草），沿岸淺灘，其餘為海。")
 
     def _new_map(self) -> List[List[Cell]]:
         grid = [[Cell("sea") for _ in range(self.size)] for _ in range(self.size)]
         land = center_cluster(self.size)
+        land_set = set(land)
         # First cell dirt, rest alternate dirt/grass for readable placeholders.
         for idx, (i, j) in enumerate(land):
             grid[i][j] = Cell("dirt" if idx % 2 == 0 else "grass")
+        # Coastal 淺灘 ring: land neighbors that are still deep sea.
+        for i, j in land:
+            for ni, nj in neighbors(i, j, self.size):
+                if (ni, nj) not in land_set and grid[ni][nj].terrain == "sea":
+                    grid[ni][nj] = Cell("shallow")
         return grid
 
     def _log(self, msg: str) -> None:

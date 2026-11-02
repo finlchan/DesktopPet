@@ -23,10 +23,11 @@ TILES_DIR = ASSETS_DIR / "tiles"
 OCEAN_BACKGROUND = ASSETS_DIR / "ocean-background.png"
 
 # Primary terrain → active top PNG (flat diamond on black; black keyed out).
+# 淺灘 = original sea art as-is; 海 = same art recolored deeper blue.
 TERRAIN_TILE_FILES: Dict[str, str] = {
     "sea": "sea-01.png",
-    "shallow": "sea-01.png",
-    "oilfield": "sea-01.png",  # reuse sea top + dark wash（色塊；用戶後補平台圖）
+    "shallow": "shallow-01.png",
+    "oilfield": "sea-01.png",  # reuse deep-sea top + dark wash（色塊；用戶後補平台圖）
     "dirt": "dirt-01.png",
     "grass": "grass-01.png",
     "forest": "grass-01.png",
@@ -38,8 +39,8 @@ TERRAIN_TILE_FILES: Dict[str, str] = {
 
 # Optional colour wash after texture (settlements / forest stay readable).
 # Forest uses grass top + deeper green wash (flat top only; no skirts).
+# Shallow keeps un-tinted shallow-01.png; deep sea is baked into sea-01.png.
 TERRAIN_TINT: Dict[str, tuple] = {
-    "shallow": (90, 180, 200, 70),
     "oilfield": (30, 28, 24, 150),  # 海底油田／石油平台色塊洗
     "forest": (12, 58, 24, 120),
     "mountain": (90, 85, 75, 110),
@@ -154,8 +155,8 @@ class TileAtlas:
         return USER_ART.monster_pixmap(kind)
 
     def has_primary_tops(self) -> bool:
-        """True when dirt／grass／sea active tops are all loadable."""
-        for key in ("dirt", "grass", "sea"):
+        """True when dirt／grass／sea／shallow active tops are all loadable."""
+        for key in ("dirt", "grass", "sea", "shallow"):
             pix = self.pixmap_for(key)
             if pix is None or pix.isNull():
                 return False

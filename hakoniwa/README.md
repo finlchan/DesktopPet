@@ -10,8 +10,8 @@ not a flat top-down square grid rotated 45°.
 | | |
 |---|---|
 | Projection | Logical 1:1 diamond tops → screen `H = W · 0.65` (`grid.OBLIQUE_Y_SCALE`) |
-| Lattice | v9 diagonal-strip stagger, 20×20, same-layer sea/dirt/grass |
-| Terrain | Flat top PNGs in `assets/tiles/` (dirt／grass／sea；森＝草面＋綠洗); ocean backdrop optional |
+| Lattice | v9 diagonal-strip stagger, 20×20, same-layer 海／淺灘／mud／grass |
+| Terrain | Flat top PNGs in `assets/tiles/` (dirt／grass／shallow／sea；森＝草面＋綠洗); 淺灘＝原海面貼圖、海＝同圖加深藍; ocean backdrop optional |
 | User art | Optional PNGs in `Data/hakoniwa/user/` or `assets/user/` replace building／monster color blocks and optionally terrain (see below); missing → color blocks / bundled tops |
 | Forest | 植林 50→森(100本)；每回合+100本(上限20000)；伐採免費瞬售 100本≈5資金 |
 | Mountain | 造山 100／噴火→山；整地山→荒地；採掘場 300（僅山上色塊）產資 |
@@ -53,9 +53,10 @@ No permanent right-side build column. Server URL / 本機·連線 live under too
 
 ## User-provided art (optional)
 
-Buildings／monsters ship as **color blocks** until you drop PNGs. Sea／dirt／grass
-already have bundled tops; user files override them when present. **Do not commit
-player PNGs** — `Data/` is gitignored; `assets/user/*.png` is also ignored.
+Buildings／monsters ship as **color blocks** until you drop PNGs. 海／淺灘／dirt／grass
+already have bundled tops (`sea-01` deeper blue, `shallow-01` original cyan sea art);
+user files override them when present. **Do not commit player PNGs** — `Data/` is
+gitignored; `assets/user/*.png` is also ignored.
 
 | Search root (first hit wins) | When |
 |---|---|
@@ -72,7 +73,7 @@ Expected filenames (exact; loader is case-sensitive on Linux):
 | Monsters | `inora.png` |
 
 Fallback when a file is absent: buildings／monsters → solid color; terrain → bundled
-`assets/tiles/{sea,dirt,grass}-01.png` (or color if that is missing too). Hook:
+`assets/tiles/{sea,shallow,dirt,grass}-01.png` (or color if that is missing too). Hook:
 `hakoniwa.user_art` + `TileAtlas` / map paint in `view.py`.
 
 ## Checklist after any map/view change
@@ -83,7 +84,7 @@ Fallback when a file is absent: buildings／monsters → solid color; terrain �
 4. Run `python -m hakoniwa.smoke_test` — must pass `test_oblique_foreshortening_invariant`.
 5. Keep v9 stagger, 20×20, same-layer tops, no under-tile skirts.
 6. Confirm HUD overlays still sit on the map (not outside columns).
-7. Confirm dirt／grass／sea cells show real textures (not solid color fills).
+7. Confirm dirt／grass／海／淺灘 cells show real textures (deep blue vs cyan shallow).
 8. Without user PNGs, buildings／monsters stay color blocks; with drops, those keys swap.
 
 CI/local smoke fails if the projection regresses to orthographic-only.
