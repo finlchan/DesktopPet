@@ -1,7 +1,7 @@
 Desktop Pet
 ==================
 
-Version: 261102.01
+Version: 261102.02
 Published: 2026-11-02
 
 A floating shortcut menu and document record gadget on the Windows desktop.
@@ -21,8 +21,9 @@ Features
 6. Below Document record, "Mini programs"; click ">>" for Text records and Calculations
    (Level calc / Slope calc / Free station), plus Pomodoro, Translate,
    箱庭島（未完成）／Hakoniwa (WIP) (island sim entry kept; marked unfinished),
-   and 透明魚缸／Fish Tank (Phase 1 local translucent aquarium below 箱庭島;
-   high top-down / RTS isometric swim — glass stays transparent).
+   and 透明魚缸（未完成）／Fish Tank (WIP) (Phase 1 local translucent aquarium
+   below 箱庭島; high top-down / RTS isometric swim — glass stays transparent;
+   marked unfinished).
 7. Drag files, folders, or URLs onto the pet to add shortcuts (prompt for name/description).
 8. The bottom has a "Settings" button to edit all configurations.
 9. Window level can be set to Normal, Always on top, or Always on bottom.
@@ -75,6 +76,11 @@ Free_Station_FAI.xls / .xlsm survey spreadsheet:
 - Output: station Easting/Northing, reduced level, and the distance-check
   residual ΔHD per accepted pair, plus an Average (mean E / N / RL) of those
   pair results. Copy button copies the result block.
+
+What's new in 261102.02 (2026-11-02)
+--------
+1. Mini programs: label 透明魚缸 as unfinished —
+   「透明魚缸（未完成）／Fish Tank (WIP)」 (entry kept, like 箱庭島).
 
 What's new in 261102.01 (2026-11-02)
 --------
