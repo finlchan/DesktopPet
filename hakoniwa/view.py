@@ -45,7 +45,8 @@ from .tiles import ATLAS
 Coord = Tuple[int, int]
 
 MIN_CELL = 12.0
-MAX_CELL = 96.0
+# Must be ≥ DEFAULT_CELL so open/reset zoom level is reachable via wheel.
+MAX_CELL = 256.0
 ZOOM_STEP = 1.12
 # Fallback wash when ocean-background.png is missing.
 BG_FALLBACK = QColor(28, 48, 72)
@@ -215,45 +216,26 @@ class HakoniwaMapWidget(QWidget):
             self._paint_terrain_top(painter, cell.terrain, cx, cy, poly)
 
             # Building: user PNG when dropped, else solid color diamond.
-            # tall=True → sprite keeps aspect, anchored at the footprint's south
-            # tip, drawn unclipped so peaks may rise above the cell's N tip
-            # (ground footprint still spans the inset diamond).
+            # Sprites: aspect-preserving, left=W tip / right=E tip (draw width =
+            # full cell W), bottom=S tip; top may rise above N tip. No inset /
+            # diamond clip (terrain tops stay diamond-clipped above).
             if cell.building and cell.building in BUILDINGS:
-                meta = BUILDINGS[cell.building]
-                inset = self.cell * 0.55
-                bcy = cy - self.cell * 0.08
-                bverts = diamond_vertices(cx, bcy, inset)
-                bpoly = QPolygonF([QPointF(x, y) for x, y in bverts])
                 bpix = self._atlas.building_pixmap(cell.building)
                 if bpix is not None and not bpix.isNull():
-                    bw, bh = cell_screen_size(inset)
-                    if meta.get("tall"):
-                        sprite_h = bw * bpix.height() / max(1.0, float(bpix.width()))
-                        dest = QRectF(cx - bw / 2.0, bcy + bh / 2.0 - sprite_h, bw, sprite_h)
-                        painter.setPen(Qt.PenStyle.NoPen)
-                        painter.drawPixmap(
-                            dest, bpix, QRectF(0, 0, bpix.width(), bpix.height())
-                        )
-                    else:
-                        dest = QRectF(cx - bw / 2.0, bcy - bh / 2.0, bw, bh)
-                        path = QPainterPath()
-                        path.addPolygon(bpoly)
-                        painter.save()
-                        painter.setClipPath(path)
-                        painter.setPen(Qt.PenStyle.NoPen)
-                        painter.drawPixmap(
-                            dest, bpix, QRectF(0, 0, bpix.width(), bpix.height())
-                        )
-                        painter.restore()
-                        painter.setBrush(Qt.BrushStyle.NoBrush)
-                        painter.setPen(QPen(QColor(30, 30, 30, 200), 1.0))
-                        painter.drawPolygon(bpoly)
+                    bw, bh = cell_screen_size(self.cell)
+                    south_y = cy + bh / 2.0
+                    sprite_h = bw * bpix.height() / max(1.0, float(bpix.width()))
+                    dest = QRectF(cx - bw / 2.0, south_y - sprite_h, bw, sprite_h)
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    painter.drawPixmap(
+                        dest, bpix, QRectF(0, 0, bpix.width(), bpix.height())
+                    )
                 else:
                     bcol = BUILDINGS[cell.building]["color"]
                     if bcol:
                         painter.setBrush(QBrush(QColor(*bcol)))
                         painter.setPen(QPen(QColor(30, 30, 30, 200), 1.0))
-                        painter.drawPolygon(bpoly)
+                        painter.drawPolygon(poly)
 
             # Monster: user PNG when dropped, else axis-aligned color square.
             monster = self.state.monster_at(i, j)

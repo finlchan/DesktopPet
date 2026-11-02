@@ -13,7 +13,8 @@ not a flat top-down square grid rotated 45°.
 | Lattice | v9 diagonal-strip stagger, 20×20, same-layer sea/dirt/grass |
 | Terrain | Flat top PNGs in `assets/tiles/` (dirt／grass／sea；森＝草面＋綠洗); ocean backdrop optional |
 | User art | Optional PNGs in `Data/hakoniwa/user/` or `assets/user/` replace building／monster color blocks and optionally terrain (see below); missing → color blocks / bundled tops |
-| Tall art | Building registry flag `tall=True`（採掘場／紀念碑／ロケット基地）: sprite keeps its aspect ratio, bottom anchored to the footprint diamond, drawn **unclipped** so mountains／towers may rise above the cell's north tip. Ground footprint still spans the inset diamond; terrain sea／dirt／grass clip unchanged |
+| Building art | User PNGs: aspect-preserving; left↔right = diamond W↔E tips (draw width = full cell `W`); bottom = S tip; top may rise above N tip; **no** 0.55× inset / diamond clip. Terrain sea／dirt／grass stay diamond-clipped. `tall=True`（採掘場／紀念碑／ロケット基地）marks portrait-friendly keys; placement rule applies to all building sprites |
+| Cell size | `DEFAULT_CELL=120`; wheel zoom `MIN_CELL…MAX_CELL` (12…256); `OBLIQUE_Y_SCALE=0.65` |
 | Forest | 植林 50→森(100本)；每回合+100本(上限20000)；伐採免費瞬售 100本≈5資金 |
 | Mountain | 造山 100／噴火→山；整地山→荒地；採掘場 300（僅山上色塊）產資 |
 | Labor | 回合勞動：農場優先，再工場、採掘場；產能依就業比例 |
@@ -63,10 +64,11 @@ player PNGs** — `Data/` is gitignored; `assets/user/*.png` is also ignored.
 | `{config}/Data/hakoniwa/user/` | Preferred — beside `Data/hakoniwa_island.json` |
 | `hakoniwa/assets/user/` | Package-local drop folder |
 
-Expected filenames (exact; loader is case-sensitive on Linux). `tall=True`
-buildings（`quarry.png` `monument.png` `rocket_base.png`）may use portrait art —
-e.g. `quarry.png` with a big mountain: the base fills the diamond footprint and
-the peak extends above the cell's north tip without being clipped:
+Expected filenames (exact; loader is case-sensitive on Linux). Building sprites
+scale to full cell width (W↔E tips) with the bottom on the S tip; portrait art
+(e.g. `quarry.png` with a big mountain) may extend above the N tip unclipped.
+`tall=True` keys（`quarry.png` `monument.png` `rocket_base.png`）are the usual
+portrait subjects:
 
 | Category | Filenames |
 |---|---|
@@ -89,6 +91,6 @@ Fallback when a file is absent: buildings／monsters → solid color; terrain �
 6. Confirm HUD overlays still sit on the map (not outside columns).
 7. Confirm dirt／grass／sea cells show real textures (not solid color fills).
 8. Without user PNGs, buildings／monsters stay color blocks; with drops, those keys swap.
-9. `tall=True` user art（採掘場 etc.）renders the full sprite — peak may exceed the cell's north tip; ground footprint stays in the diamond.
+9. Building user art spans W↔E tips, sits on the S tip, and may exceed the N tip (no diamond clip on sprites).
 
 CI/local smoke fails if the projection regresses to orthographic-only.

@@ -2817,12 +2817,12 @@ def test_user_art_loader_hook():
         print("user art loader: naming + optional PNG hook OK")
 
 
-def test_tall_sprite_render_offscreen():
-    """tall=True buildings paint user art unclipped above the cell N tip.
+def test_building_sprite_ew_south_align_offscreen():
+    """Building user art: full cell W (E↔W), bottom at S tip, unclipped above N.
 
-    採掘場 (tall) with a portrait stub sprite must extend above the diamond's
-    north tip; a non-tall building with the same sprite stays clipped inside
-    its footprint diamond.
+    Portrait stub (32×128) on both tall 採掘場 and non-tall 農場 must span
+    West→East tips, sit on the South tip, and paint above the North tip.
+    No 0.55× inset / diamond clip for building sprites (terrain stays clipped).
     """
     import os
 
@@ -2830,27 +2830,17 @@ def test_tall_sprite_render_offscreen():
     try:
         from PySide6.QtGui import QColor, QImage, QPixmap
         from PySide6.QtWidgets import QApplication
-        from hakoniwa.grid import cell_center
+        from hakoniwa.grid import DEFAULT_CELL, cell_center, cell_screen_size
         from hakoniwa.tiles import ATLAS
-        from hakoniwa.view import HakoniwaMapWidget
+        from hakoniwa.view import MAX_CELL, HakoniwaMapWidget
     except Exception as exc:  # pragma: no cover - optional GUI
-        print(f"tall sprite: skip render check ({exc})")
+        print(f"building sprite align: skip render check ({exc})")
         return
 
+    assert DEFAULT_CELL == 120, DEFAULT_CELL
+    assert MAX_CELL >= DEFAULT_CELL, (MAX_CELL, DEFAULT_CELL)
+
     app = QApplication.instance() or QApplication([])
-    state = IslandState.new_game()
-    grass_cells = [
-        (i, j)
-        for i in range(20)
-        for j in range(20)
-        if state.cell(i, j).terrain == "grass"
-    ]
-    assert len(grass_cells) >= 2, "new_game should open with 平地 cells"
-    (ti, tj), (fi, fj) = grass_cells[0], grass_cells[1]
-    state.funds = 10000
-    assert state.raise_mountain(ti, tj) == "ok"
-    assert state.place_building(ti, tj, "quarry") == "ok"
-    assert state.place_building(fi, fj, "farm") == "ok"
 
     # Stub a tall 32×128 magenta sprite in place of any user art.
     img = QImage(32, 128, QImage.Format.Format_ARGB32)
@@ -2858,38 +2848,78 @@ def test_tall_sprite_render_offscreen():
     stub = QPixmap.fromImage(img)
     original = ATLAS.building_pixmap
     ATLAS.building_pixmap = lambda kind: stub  # type: ignore[method-assign]
-    try:
+
+    def _render_one(kind: str) -> tuple:
+        state = IslandState.new_game()
+        grass_cells = [
+            (i, j)
+            for i in range(20)
+            for j in range(20)
+            if state.cell(i, j).terrain == "grass"
+        ]
+        assert grass_cells, "new_game should open with 平地 cells"
+        # Prefer a near-center grass cell so the tall stub stays on-canvas.
+        gi, gj = min(
+            grass_cells,
+            key=lambda ij: abs(ij[0] - 10) + abs(ij[1] - 10),
+        )
+        state.funds = 10000
+        if kind == "quarry":
+            assert state.raise_mountain(gi, gj) == "ok"
+        assert state.place_building(gi, gj, kind) == "ok"
         widget = HakoniwaMapWidget(state)
-        widget.resize(640, 480)
+        assert widget.cell == float(DEFAULT_CELL)
+        widget.resize(1280, 720)
         widget.show()
         app.processEvents()
         rendered = widget.grab().toImage()
         ox, oy = widget._origin_offset()
-    finally:
-        ATLAS.building_pixmap = original  # type: ignore[method-assign]
-
-    def _sample(cx: float, cy: float, dy: float) -> QColor:
-        px, py = int(round(cx + ox)), int(round(cy + oy + dy))
-        return QColor(rendered.pixel(px, py))
+        return gi, gj, widget.cell, rendered, ox, oy
 
     def _is_magenta(c: QColor) -> bool:
         return c.red() > 200 and c.blue() > 200 and c.green() < 80
 
-    # Tall 採掘場: sprite bottom in the footprint and peak far above N tip.
-    qx, qy = cell_center(ti, tj, widget.cell)
-    n_tip = qy - widget.cell * 0.65 / 2.0
-    assert _is_magenta(_sample(qx, qy, 0.0)), "tall sprite missing in footprint"
-    assert _is_magenta(_sample(qx, qy, -40.0)), (
-        "tall sprite clipped: art should extend above the north tip"
+    def _check_align(label: str, kind: str) -> None:
+        i, j, cell, rendered, ox, oy = _render_one(kind)
+        bw, bh = cell_screen_size(cell)
+        sprite_h = bw * 128.0 / 32.0
+        cx, cy = cell_center(i, j, cell)
+        south_y = cy + bh / 2.0
+        n_tip_y = cy - bh / 2.0
+
+        def _sample(dx: float = 0.0, dy: float = 0.0) -> QColor:
+            px, py = int(round(cx + ox + dx)), int(round(cy + oy + dy))
+            if px < 0 or py < 0 or px >= rendered.width() or py >= rendered.height():
+                return QColor(0, 0, 0)
+            return QColor(rendered.pixel(px, py))
+
+        mid_sprite_dy = south_y - cy - sprite_h * 0.5
+        assert _is_magenta(_sample(dx=-(bw / 2.0) + 4.0, dy=mid_sprite_dy)), (
+            f"{label}: missing near West tip (draw width should be full cell W)"
+        )
+        assert _is_magenta(_sample(dx=(bw / 2.0) - 4.0, dy=mid_sprite_dy)), (
+            f"{label}: missing near East tip (draw width should be full cell W)"
+        )
+        assert _is_magenta(_sample(dy=south_y - cy - 3.0)), (
+            f"{label}: missing just above South tip (bottom should sit on S)"
+        )
+        # A few px below S tip should be empty (single building; no neighbor bleed).
+        assert not _is_magenta(_sample(dy=south_y - cy + 6.0)), (
+            f"{label}: sprite leaked below South tip"
+        )
+        assert _is_magenta(_sample(dy=(n_tip_y - cy) - 12.0)), (
+            f"{label}: clipped above North tip (building sprites are unclipped)"
+        )
+
+    try:
+        _check_align("tall quarry", "quarry")
+        _check_align("non-tall farm", "farm")
+    finally:
+        ATLAS.building_pixmap = original  # type: ignore[method-assign]
+    print(
+        "building sprite: EW full-W + S-tip align OK "
+        f"(DEFAULT_CELL={DEFAULT_CELL}, unclipped above N)"
     )
-    # Non-tall 農場 with the same sprite: stays inside the clip diamond.
-    fx_, fy_ = cell_center(fi, fj, widget.cell)
-    fn_tip = fy_ - widget.cell * 0.65 / 2.0
-    assert _is_magenta(_sample(fx_, fy_, 0.0)), "clipped sprite missing in footprint"
-    assert not _is_magenta(_sample(fx_, fy_, (fn_tip - fy_) - 8.0)), (
-        "non-tall sprite should stay clipped below the north tip"
-    )
-    print("tall sprite: unclipped above N tip OK (footprint inside diamond)")
 
 
 def test_oblique_preview_png_if_possible():
@@ -2993,7 +3023,7 @@ def main():
     test_oblique_foreshortening_invariant()
     test_terrain_top_assets()
     test_user_art_loader_hook()
-    test_tall_sprite_render_offscreen()
+    test_building_sprite_ew_south_align_offscreen()
     test_catalog_costs()
     test_new_island_and_loop()
     test_guestbook_local()

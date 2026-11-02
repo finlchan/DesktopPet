@@ -261,7 +261,7 @@ BUILDINGS = {
     None: {"label": "（無）", "color": None, "cost": 0},
     "farm": {"label": "農場", "color": (210, 190, 60), "cost": COST_FARM},
     "factory": {"label": "工場", "color": (120, 120, 130), "cost": COST_FACTORY},
-        # tall=True：用戶美術（如 quarry.png 山體）可向上超出北尖；足跡仍在菱形內
+        # tall=True：適合直式美術（如 quarry.png 山體）；繪製時一律 EW+S 對齊且可超出北尖
     "quarry": {
         "label": "採掘場",
         "color": (150, 110, 70),
