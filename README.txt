@@ -1,8 +1,8 @@
 Desktop Pet
 ==================
 
-Version: 261031.07
-Published: 2026-10-31
+Version: 261102.01
+Published: 2026-11-02
 
 A floating shortcut menu and document record gadget on the Windows desktop.
 
@@ -19,11 +19,10 @@ Features
 5. The middle section shows "Document record"; click the ">>" button to open the submenu and browse/search files.
    The Document record submenu header has an "Open folder" button to open storage folder(s) in the file manager.
 6. Below Document record, "Mini programs"; click ">>" for Text records and Calculations
-   (Level calc / Slope calc / Free station), plus Pomodoro, Translate, 箱庭島
-   (richer island sim: textured oblique map HUD, forest/harbor/monuments/mountain/
-   quarry/breakwater/oil, bank/shop/shrine/park, optional user PNG art overlay),
+   (Level calc / Slope calc / Free station), plus Pomodoro, Translate,
+   箱庭島（未完成）／Hakoniwa (WIP) (island sim entry kept; marked unfinished),
    and 透明魚缸／Fish Tank (Phase 1 local translucent aquarium below 箱庭島;
-   high slightly-oblique swim camera — not eye-level).
+   high top-down / RTS isometric swim — glass stays transparent).
 7. Drag files, folders, or URLs onto the pet to add shortcuts (prompt for name/description).
 8. The bottom has a "Settings" button to edit all configurations.
 9. Window level can be set to Normal, Always on top, or Always on bottom.
@@ -76,6 +75,39 @@ Free_Station_FAI.xls / .xlsm survey spreadsheet:
 - Output: station Easting/Northing, reduced level, and the distance-check
   residual ΔHD per accepted pair, plus an Average (mean E / N / RL) of those
   pair results. Copy button copies the result block.
+
+What's new in 261102.01 (2026-11-02)
+--------
+1. Integrate fish-tank PR #50 work onto main: clean cutouts, multi-species HD
+   sheets, and debacked 大眼雞 trial swim (尾 L/R + 背鰭 open/close; lower fins
+   static). Packaging still uses blank `packaging/config.json` only.
+2. Mini programs: label 箱庭島 as unfinished —
+   「箱庭島（未完成）／Hakoniwa (WIP)」 (entry kept, not removed).
+
+What's new in 261031.11 (2026-11-01)
+--------
+1. Transparent Fish Tank: debacked 大眼雞 trial motion simplified after user
+   feedback — **尾 L/R + 背鰭 open/close only**; lower fins static. Alpha kept.
+   Other species unchanged pending trial OK.
+
+What's new in 261031.10 (2026-11-01)
+--------
+1. Transparent Fish Tank: trial swim dynamics from user **already-debacked**
+   大眼雞 8-dir sheet (alpha authoritative — no re-key). 4 frames/facing with
+   visible tail L/R, dorsal open/close, lower-fin stretch+swing. Other species
+   unchanged pending user OK on this trial.
+
+What's new in 261031.09 (2026-11-01)
+--------
+1. Transparent Fish Tank: 18 user HD 8-dir species sheets → clean transparent
+   cutouts + 4-frame swim cycles (tail + dorsal + lower/pectoral 魚翼). Rare =
+   palette remap. Legacy RTS kept for 獅子魚／金鼓／塘虱 until HD art arrives.
+
+What's new in 261031.08 (2026-11-01)
+--------
+1. Transparent Fish Tank: reprocess 青衣 8-dir swim-cycle cutouts — strip navy
+   plate backdrop, sheet labels/frame text, and soft shadows so only the fish
+   remains (transparent PNG). Other species unchanged.
 
 What's new in 261031.07 (2026-11-01)
 --------

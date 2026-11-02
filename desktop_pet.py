@@ -54,7 +54,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261031.07"
+APP_VERSION = "261102.01"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -4703,7 +4703,8 @@ class MiniProgramsSubMenu(PopupPanel):
         btn_translate.clicked.connect(self.open_translate)
         layout.addWidget(btn_translate)
 
-        btn_hakoniwa = QPushButton("箱庭島")
+        # Marked unfinished per user 2026-11-02 — keep entry, show WIP clearly.
+        btn_hakoniwa = QPushButton("箱庭島（未完成）／Hakoniwa (WIP)")
         btn_hakoniwa.setStyleSheet(menu_button_style("#2a4a6e"))
         btn_hakoniwa.clicked.connect(self.open_hakoniwa)
         layout.addWidget(btn_hakoniwa)

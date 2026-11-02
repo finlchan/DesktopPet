@@ -589,7 +589,7 @@ class HakoniwaIslandDialog(QDialog):
         self.setAutoFillBackground(False)
         self._drag_grips = []
 
-        self.setWindowTitle("箱庭島")
+        self.setWindowTitle("箱庭島（未完成）／Hakoniwa (WIP)")
         self.setMinimumSize(720, 720)
         self.resize(900, 780)
         self.setStyleSheet(dp.CALC_DIALOG_STYLE + getattr(dp, "MINI_PROGRAM_STYLE", ""))
@@ -604,7 +604,7 @@ class HakoniwaIslandDialog(QDialog):
 
         root = dp.install_ornate_calc_frame(self)
         root.setSpacing(4)
-        root.addWidget(dp.make_draggable_title(self, "箱庭島"))
+        root.addWidget(dp.make_draggable_title(self, "箱庭島（未完成）／Hakoniwa (WIP)"))
 
         # Map fills the body; all numeric/function UI is in-viewport HUD.
         # (No top instruction banner — controls live in 工具／設定.)

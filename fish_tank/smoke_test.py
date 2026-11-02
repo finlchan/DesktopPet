@@ -35,7 +35,10 @@ def main() -> int:
     )
     from . import world as world_sim
 
-    assert len(FISH_KEYS) == 5, FISH_KEYS
+    from .species import HD_FISH_KEYS
+
+    assert len(FISH_KEYS) >= 18, FISH_KEYS
+    assert len(HD_FISH_KEYS) >= 18, HD_FISH_KEYS
     assert PLANT_KEY in SPECIES and SPECIES[PLANT_KEY].is_plant
     assert "（" in SPECIES["catfish"].display_market_zh() or "(" in SPECIES["catfish"].display_market_zh()
     assert DIR_COUNT == 8 and len(DIRS) == 8
@@ -49,10 +52,11 @@ def main() -> int:
             assert not pix.isNull() and pix.width() == fw and pix.height() == fh
         side = side_pixmap(key, True)
         assert not side.isNull()
-    # 青衣: HD cell + 4-frame swim cycle.
-    gw, gh = swim_frame_size("grouper")
-    assert gw >= 96 and gh >= 80, (gw, gh)
-    assert swim_cycle_frames("grouper") == 4
+    # HD user sheets: 120×100 cells + 4-frame swim cycle (tail+dorsal+魚翼).
+    for key in HD_FISH_KEYS:
+        gw, gh = swim_frame_size(key)
+        assert gw >= 96 and gh >= 80, (key, gw, gh)
+        assert swim_cycle_frames(key) == 4, key
     assert swim_cycle_frames("lionfish") == 1
     a = swim_pixmap("grouper", False, 2, 0).toImage()
     b = swim_pixmap("grouper", False, 2, 1).toImage()
