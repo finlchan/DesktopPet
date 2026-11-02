@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout, QHBoxLayout, QGridLayout,
     QPushButton, QLineEdit, QTextEdit, QListWidget, QListWidgetItem,
     QFileDialog, QDialog, QFormLayout, QTabWidget, QComboBox,
-    QSpinBox, QDoubleSpinBox, QCheckBox, QMessageBox, QMenu, QStyle,
+    QSpinBox, QDoubleSpinBox, QTimeEdit, QCheckBox, QMessageBox, QMenu, QStyle,
     QSystemTrayIcon, QPlainTextEdit, QFrame, QRadioButton, QButtonGroup,
     QScrollArea, QSizePolicy, QProgressBar,
     QStackedWidget, QTableWidget, QTableWidgetItem, QAbstractItemView,
@@ -55,7 +55,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261102.04"
+APP_VERSION = "261102.05"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -3974,14 +3974,17 @@ POMODORO_PRESETS = (25, 5, 15)
 
 
 class PomodoroDialog(FramelessCalcDialog):
-    """Pomodoro — countdown with current clock, target end time, presets, progress."""
+    """Pomodoro — duration presets or wall-clock target; Now / Target / Countdown."""
+
+    MODE_DURATION = "duration"
+    MODE_WALLCLOCK = "wallclock"
 
     def __init__(self, config_manager, parent=None):
         super().__init__(parent)
         self.cfg = config_manager
         self.setWindowTitle("Pomodoro")
-        self.setMinimumSize(400, 310)
-        self.resize(420, 340)
+        self.setMinimumSize(420, 360)
+        self.resize(440, 400)
         self.setStyleSheet(CALC_DIALOG_STYLE + MINI_PROGRAM_STYLE)
         root = install_ornate_calc_frame(self)
         root.setSpacing(6)
@@ -3995,9 +3998,10 @@ class PomodoroDialog(FramelessCalcDialog):
         self.total_seconds = min(max(saved or 25, 1), 600) * 60
         self.remaining_seconds = self.total_seconds
         self.running = False
-        self.target_end = None  # datetime when active session should end
+        self.target_end = None  # datetime when active / planned session should end
+        self.mode = self.MODE_DURATION
 
-        # 現在時間 / 目標時間 — bilingual labels (user request); rest of dialog stays EN.
+        # 現在時間 / 目標時間
         clock_grid = QGridLayout()
         clock_grid.setHorizontalSpacing(8)
         clock_grid.setVerticalSpacing(2)
@@ -4031,7 +4035,10 @@ class PomodoroDialog(FramelessCalcDialog):
         self.progress.setValue(0)
         root.addWidget(self.progress)
 
-        # Presets + custom minutes: 25 / 5 / 15, or any value 1–600.
+        # Mode A — duration presets + custom minutes (kept).
+        duration_cap = QLabel("時長模式／Duration")
+        duration_cap.setObjectName("pomodoroClockRow")
+        root.addWidget(duration_cap)
         preset_row = QHBoxLayout()
         preset_row.setSpacing(4)
         for minutes in POMODORO_PRESETS:
@@ -4051,6 +4058,24 @@ class PomodoroDialog(FramelessCalcDialog):
         preset_row.addStretch()
         root.addLayout(preset_row)
 
+        # Mode B — wall-clock target; auto-compute seconds until that time.
+        wall_cap = QLabel("鐘點模式／End at (wall clock)")
+        wall_cap.setObjectName("pomodoroClockRow")
+        root.addWidget(wall_cap)
+        wall_row = QHBoxLayout()
+        wall_row.setSpacing(4)
+        self.wall_time_edit = QTimeEdit()
+        self.wall_time_edit.setDisplayFormat("HH:mm:ss")
+        self.wall_time_edit.setTime(datetime.now().time())
+        self.wall_time_edit.setFixedWidth(110)
+        wall_row.addWidget(self.wall_time_edit)
+        apply_wall_btn = QPushButton("套用目標／Apply target")
+        apply_wall_btn.setObjectName("calcAction")
+        apply_wall_btn.clicked.connect(self._apply_wall_target)
+        wall_row.addWidget(apply_wall_btn)
+        wall_row.addStretch()
+        root.addLayout(wall_row)
+
         control_row = QHBoxLayout()
         control_row.setSpacing(4)
         self.start_btn = QPushButton("Start")
@@ -4065,19 +4090,18 @@ class PomodoroDialog(FramelessCalcDialog):
         reset_btn.clicked.connect(self._reset)
         root.addLayout(control_row)
 
-        self.status = QLabel("Ready")
+        self.status = QLabel("Ready · 時長模式／Duration")
         self.status.setObjectName("calcResult")
         self.status.setWordWrap(True)
         root.addWidget(self.status)
 
-        # Session tick (countdown). Separate clock timer keeps 現在時間 live while idle.
         self.timer = QTimer(self)
         self.timer.setInterval(1000)
         self.timer.timeout.connect(self._tick)
 
         self.clock_timer = QTimer(self)
         self.clock_timer.setInterval(1000)
-        self.clock_timer.timeout.connect(self._refresh_clock_rows)
+        self.clock_timer.timeout.connect(self._on_clock_tick)
         self.clock_timer.start()
         self._refresh_clock_rows()
 
@@ -4089,26 +4113,67 @@ class PomodoroDialog(FramelessCalcDialog):
         root.addLayout(close_row)
 
     def _format_clock(self, total_seconds):
-        minutes, seconds = divmod(max(total_seconds, 0), 60)
+        total_seconds = int(max(total_seconds, 0))
+        hours, rem = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(rem, 60)
+        if hours:
+            return f"{hours:d}:{minutes:02d}:{seconds:02d}"
         return f"{minutes:02d}:{seconds:02d}"
 
     @staticmethod
     def _format_wall_time(when):
         return when.strftime("%H:%M:%S")
 
+    def _resolve_wall_target(self, now=None):
+        """Map QTimeEdit to the next datetime at that clock (today, or tomorrow if past)."""
+        now = now or datetime.now()
+        qtime = self.wall_time_edit.time()
+        candidate = now.replace(
+            hour=qtime.hour(),
+            minute=qtime.minute(),
+            second=qtime.second(),
+            microsecond=0,
+        )
+        if candidate <= now:
+            candidate = candidate + timedelta(days=1)
+        return candidate
+
+    def _seconds_until(self, target, now=None):
+        now = now or datetime.now()
+        return max(0, int((target - now).total_seconds()))
+
+    def _on_clock_tick(self):
+        # While idle in wall-clock mode, keep remaining aligned to the chosen end time.
+        if (
+            not self.running
+            and self.mode == self.MODE_WALLCLOCK
+            and self.target_end is not None
+        ):
+            secs = self._seconds_until(self.target_end)
+            self.remaining_seconds = secs
+            self.total_seconds = max(self.total_seconds, secs) if secs else self.total_seconds
+            if secs <= 0:
+                self.target_end = None
+                self.status.setText("目標已過／Target passed — pick a new time")
+        self._refresh()
+
     def _refresh_clock_rows(self):
         now = datetime.now()
         self.now_value.setText(self._format_wall_time(now))
-        if self.running and self.target_end is not None:
+        if self.target_end is not None and (
+            self.running or self.mode == self.MODE_WALLCLOCK
+        ):
             self.target_value.setText(self._format_wall_time(self.target_end))
         elif self.remaining_seconds > 0 and self.remaining_seconds < self.total_seconds:
-            # Paused mid-session: show when it would end if resumed now.
             preview = now + timedelta(seconds=self.remaining_seconds)
-            self.target_value.setText(f"{self._format_wall_time(preview)} (if resume)")
+            self.target_value.setText(
+                f"{self._format_wall_time(preview)} (if resume／若繼續)"
+            )
         else:
             self.target_value.setText("—")
 
     def _set_minutes(self, minutes):
+        self.mode = self.MODE_DURATION
         self.total_seconds = int(minutes) * 60
         self.remaining_seconds = self.total_seconds
         self.target_end = None
@@ -4119,30 +4184,81 @@ class PomodoroDialog(FramelessCalcDialog):
         self._persist_minutes(int(minutes))
         self._refresh(reset_status=True)
 
+    def _apply_wall_target(self):
+        """Switch to wall-clock mode: remaining = now → chosen clock time."""
+        if self.running:
+            self.status.setText("請先暫停／Pause before changing target")
+            return
+        now = datetime.now()
+        target = self._resolve_wall_target(now)
+        secs = self._seconds_until(target, now)
+        if secs <= 0:
+            self.status.setText("目標須晚於現在／Target must be after now")
+            return
+        self.mode = self.MODE_WALLCLOCK
+        self.target_end = target
+        self.total_seconds = secs
+        self.remaining_seconds = secs
+        # Sync spin for display only (may exceed 600 for long waits — clamp UI spin).
+        self.minutes_spin.blockSignals(True)
+        self.minutes_spin.setValue(min(600, max(1, (secs + 59) // 60)))
+        self.minutes_spin.blockSignals(False)
+        self._stop_ticking()
+        self.status.setText(
+            f"鐘點模式／End at {self._format_wall_time(target)} "
+            f"({self._format_clock(secs)} left／剩餘)"
+        )
+        self._refresh()
+
     def _persist_minutes(self, minutes):
         if self.cfg is not None:
             self.cfg.set(["pomodoro", "minutes"], int(minutes))
 
     def _start(self):
-        if self.running or self.remaining_seconds <= 0:
+        if self.running:
             return
+        if self.mode == self.MODE_WALLCLOCK:
+            # Re-resolve so Start uses the live wall clock (and next-day if needed).
+            now = datetime.now()
+            target = self._resolve_wall_target(now)
+            secs = self._seconds_until(target, now)
+            if secs <= 0:
+                self.status.setText("目標須晚於現在／Target must be after now")
+                return
+            self.target_end = target
+            self.total_seconds = secs
+            self.remaining_seconds = secs
+        elif self.remaining_seconds <= 0:
+            return
+        else:
+            self.target_end = datetime.now() + timedelta(seconds=self.remaining_seconds)
         self.running = True
-        self.target_end = datetime.now() + timedelta(seconds=self.remaining_seconds)
         self.timer.start()
-        self.status.setText("Running…")
-        self._persist_minutes(self.total_seconds // 60)
+        self.status.setText(
+            "Running… 鐘點模式／wall clock"
+            if self.mode == self.MODE_WALLCLOCK
+            else "Running… 時長模式／duration"
+        )
+        if self.mode == self.MODE_DURATION:
+            self._persist_minutes(max(1, self.total_seconds // 60))
         self._refresh_clock_rows()
+        self._refresh()
 
     def _pause(self):
         if not self.running:
             return
         self._stop_ticking()
-        self.target_end = None
+        if self.mode != self.MODE_WALLCLOCK:
+            self.target_end = None
         self.status.setText("Paused")
         self._refresh_clock_rows()
 
     def _reset(self):
         self._stop_ticking()
+        if self.mode == self.MODE_WALLCLOCK:
+            # Re-apply current wall edit as a fresh plan.
+            self._apply_wall_target()
+            return
         self.remaining_seconds = self.total_seconds
         self.target_end = None
         self._refresh(reset_status=True)
@@ -4152,7 +4268,10 @@ class PomodoroDialog(FramelessCalcDialog):
         self.timer.stop()
 
     def _tick(self):
-        self.remaining_seconds -= 1
+        if self.mode == self.MODE_WALLCLOCK and self.target_end is not None:
+            self.remaining_seconds = self._seconds_until(self.target_end)
+        else:
+            self.remaining_seconds -= 1
         if self.remaining_seconds <= 0:
             self.remaining_seconds = 0
             self.target_end = None
@@ -4168,17 +4287,22 @@ class PomodoroDialog(FramelessCalcDialog):
         )
         self._refresh_clock_rows()
         if reset_status and not self.running:
-            self.status.setText("Ready")
+            mode_zh = (
+                "鐘點模式／wall clock"
+                if self.mode == self.MODE_WALLCLOCK
+                else "時長模式／Duration"
+            )
+            self.status.setText(f"Ready · {mode_zh}")
 
     def _on_finished(self):
-        self.status.setText("Time is up!")
+        self.status.setText("Time is up!／時間到")
         self._refresh_clock_rows()
         QApplication.beep()
         tray = getattr(QApplication.instance(), "_tray_icon", None)
         if tray is not None:
             tray.showMessage(
                 "Pomodoro",
-                "Time is up.",
+                "Time is up.／時間到",
                 QSystemTrayIcon.MessageIcon.Information,
                 4000,
             )
