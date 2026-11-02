@@ -1,7 +1,7 @@
 Desktop Pet
 ==================
 
-Version: 261102.05
+Version: 261102.06
 Published: 2026-11-02
 
 A floating shortcut menu and document record gadget on the Windows desktop.
@@ -76,6 +76,11 @@ Free_Station_FAI.xls / .xlsm survey spreadsheet:
 - Output: station Easting/Northing, reduced level, and the distance-check
   residual ΔHD per accepted pair, plus an Average (mean E / N / RL) of those
   pair results. Copy button copies the result block.
+
+What's new in 261102.06 (2026-11-02)
+--------
+1. Pomodoro: fix vertically squashed Now/Target and Countdown digits (min-height
+   + size policy so Windows no longer clips the large monospace text).
 
 What's new in 261102.05 (2026-11-02)
 --------

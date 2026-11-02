@@ -24,7 +24,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QPixmap, QPainter, QColor, QCursor, QIcon, QAction, QMovie, QDesktopServices,
-    QPainterPath, QLinearGradient, QBrush, QPen,
+    QPainterPath, QLinearGradient, QBrush, QPen, QFont,
 )
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout, QHBoxLayout, QGridLayout,
@@ -55,7 +55,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261102.05"
+APP_VERSION = "261102.06"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -3896,25 +3896,45 @@ class FreeStationDialog(FramelessCalcDialog):
 # Mini-program: Pomodoro / Translate
 # ---------------------------------------------------------------------------
 MINI_PROGRAM_STYLE = f"""
-    QLabel#pomodoroDisplay {{
+    /* Countdown chrome on the wrapper frame; digit QLabel has no QSS padding
+       (padding+border inside a tight QLabel clips glyph descents on Windows). */
+    QFrame#pomodoroDisplayFrame {{
         background-color: rgba(16, 26, 16, {CALC_PANEL_ALPHA});
-        color: #7CFC7C;
         border: 1px solid #2d5a2d;
         border-radius: 4px;
-        padding: 6px 10px;
-        font-family: "Consolas", "Courier New", monospace;
-        font-size: 24pt;
+        min-height: 110px;
+    }}
+    QLabel#pomodoroDisplay {{
+        color: #7CFC7C;
+        background-color: transparent;
+        border: none;
+        padding: 0px;
+        margin: 0px;
     }}
     QLabel#pomodoroClockRow {{
         color: #d8d8d8;
         font-size: 10pt;
-        padding: 1px 2px;
+        padding: 2px 2px;
+        min-height: 20px;
     }}
     QLabel#pomodoroClockValue {{
         color: #e8f5e8;
-        font-family: "Consolas", "Courier New", monospace;
-        font-size: 11pt;
-        padding: 1px 2px;
+        background-color: transparent;
+        border: none;
+        padding: 0px;
+        margin: 0px;
+    }}
+    QPushButton#pomodoroWideAction {{
+        background-color: rgba(44, 44, 44, 230);
+        color: #f0f0f0;
+        border: 1px solid #555;
+        border-radius: 3px;
+        min-height: 24px;
+        max-height: 30px;
+        min-width: 180px;
+        max-width: 260px;
+        padding: 3px 12px;
+        font-size: 9pt;
     }}
     QProgressBar#pomodoroProgress {{
         background-color: rgba(42, 42, 42, 210);
@@ -3941,6 +3961,16 @@ MINI_PROGRAM_STYLE = f"""
         selection-color: #ffffff;
     }}
     QSpinBox:focus {{ border: 1px solid #c9a84c; }}
+    QTimeEdit {{
+        background-color: rgba(42, 42, 42, 230);
+        color: #f0f0f0;
+        border: 1px solid #666;
+        border-radius: 3px;
+        padding: 2px 4px;
+        min-height: 22px;
+        max-height: 28px;
+    }}
+    QTimeEdit:focus {{ border: 1px solid #c9a84c; }}
     QPlainTextEdit#translateSource {{
         background-color: rgba(42, 42, 42, 230);
         color: #f0f0f0;
@@ -3983,11 +4013,12 @@ class PomodoroDialog(FramelessCalcDialog):
         super().__init__(parent)
         self.cfg = config_manager
         self.setWindowTitle("Pomodoro")
-        self.setMinimumSize(420, 360)
-        self.resize(440, 400)
+        # Tall enough that large countdown + clock rows are not vertically crushed.
+        self.setMinimumSize(460, 460)
+        self.resize(480, 500)
         self.setStyleSheet(CALC_DIALOG_STYLE + MINI_PROGRAM_STYLE)
         root = install_ornate_calc_frame(self)
-        root.setSpacing(6)
+        root.setSpacing(8)
 
         root.addWidget(make_draggable_title(self, "Pomodoro"))
 
@@ -4001,10 +4032,10 @@ class PomodoroDialog(FramelessCalcDialog):
         self.target_end = None  # datetime when active / planned session should end
         self.mode = self.MODE_DURATION
 
-        # 現在時間 / 目標時間
+        # 現在時間 / 目標時間 — QFont only (no QSS padding on value labels).
         clock_grid = QGridLayout()
         clock_grid.setHorizontalSpacing(8)
-        clock_grid.setVerticalSpacing(2)
+        clock_grid.setVerticalSpacing(10)
         now_cap = QLabel("現在時間／Now")
         now_cap.setObjectName("pomodoroClockRow")
         self.now_value = QLabel("--:--:--")
@@ -4013,6 +4044,23 @@ class PomodoroDialog(FramelessCalcDialog):
         target_cap.setObjectName("pomodoroClockRow")
         self.target_value = QLabel("—")
         self.target_value.setObjectName("pomodoroClockValue")
+        clock_font = QFont("Consolas")
+        if not clock_font.exactMatch():
+            clock_font = QFont("Courier New")
+        clock_font.setStyleHint(QFont.StyleHint.TypeWriter)
+        clock_font.setPixelSize(18)
+        clock_font.setBold(True)
+        for lbl in (now_cap, target_cap):
+            lbl.setMinimumHeight(24)
+            lbl.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        for lbl in (self.now_value, self.target_value):
+            lbl.setFont(clock_font)
+            fm = lbl.fontMetrics()
+            # Extra headroom for Windows DPI / ClearType glyph overhang.
+            lbl.setFixedHeight(max(40, fm.lineSpacing() + 20))
+            lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+            lbl.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
         clock_grid.addWidget(now_cap, 0, 0)
         clock_grid.addWidget(self.now_value, 0, 1)
         clock_grid.addWidget(target_cap, 1, 0)
@@ -4022,12 +4070,36 @@ class PomodoroDialog(FramelessCalcDialog):
 
         countdown_cap = QLabel("倒數／Countdown")
         countdown_cap.setObjectName("pomodoroClockRow")
+        countdown_cap.setMinimumHeight(24)
         root.addWidget(countdown_cap)
 
+        # Frame owns border/background; inner QLabel is only the digits.
+        display_frame = QFrame()
+        display_frame.setObjectName("pomodoroDisplayFrame")
+        display_frame.setMinimumHeight(110)
+        display_frame.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        display_layout = QVBoxLayout(display_frame)
+        display_layout.setContentsMargins(16, 20, 16, 20)
+        display_layout.setSpacing(0)
         self.display = QLabel(self._format_clock(self.remaining_seconds))
         self.display.setObjectName("pomodoroDisplay")
         self.display.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        root.addWidget(self.display)
+        display_font = QFont("Consolas")
+        if not display_font.exactMatch():
+            display_font = QFont("Courier New")
+        display_font.setStyleHint(QFont.StyleHint.TypeWriter)
+        display_font.setPixelSize(40)
+        display_font.setBold(True)
+        self.display.setFont(display_font)
+        self.display.setMinimumHeight(self.display.fontMetrics().lineSpacing() + 12)
+        self.display.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
+        self.display.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+        display_layout.addWidget(self.display)
+        root.addWidget(display_frame)
 
         self.progress = QProgressBar()
         self.progress.setObjectName("pomodoroProgress")
@@ -4070,7 +4142,7 @@ class PomodoroDialog(FramelessCalcDialog):
         self.wall_time_edit.setFixedWidth(110)
         wall_row.addWidget(self.wall_time_edit)
         apply_wall_btn = QPushButton("套用目標／Apply target")
-        apply_wall_btn.setObjectName("calcAction")
+        apply_wall_btn.setObjectName("pomodoroWideAction")
         apply_wall_btn.clicked.connect(self._apply_wall_target)
         wall_row.addWidget(apply_wall_btn)
         wall_row.addStretch()
