@@ -54,7 +54,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261102.01"
+APP_VERSION = "261102.02"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -4709,8 +4709,8 @@ class MiniProgramsSubMenu(PopupPanel):
         btn_hakoniwa.clicked.connect(self.open_hakoniwa)
         layout.addWidget(btn_hakoniwa)
 
-        # Transparent Fish Tank — below 箱庭島 (Phase 1 local, high-oblique swim).
-        btn_fish_tank = QPushButton("透明魚缸／Fish Tank")
+        # Transparent Fish Tank — below 箱庭島; marked unfinished (2026-11-02).
+        btn_fish_tank = QPushButton("透明魚缸（未完成）／Fish Tank (WIP)")
         btn_fish_tank.setStyleSheet(menu_button_style("#1a5a6e"))
         btn_fish_tank.clicked.connect(self.open_fish_tank)
         layout.addWidget(btn_fish_tank)

@@ -281,7 +281,7 @@ class FishTankDialog(QDialog):
         super().__init__(parent)
         self.cfg = config_manager
         self.setObjectName("FishTankDialog")
-        self.setWindowTitle("透明魚缸／Transparent Fish Tank")
+        self.setWindowTitle("透明魚缸（未完成）／Fish Tank (WIP)")
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.Window
@@ -310,7 +310,7 @@ class FishTankDialog(QDialog):
         )
 
         # Slim top status chip (title + live stats) — no text button strip.
-        self.status_chip = QLabel("透明魚缸／Fish Tank", self)
+        self.status_chip = QLabel("透明魚缸（未完成）／Fish Tank (WIP)", self)
         self.status_chip.setObjectName("fishTankStatusChip")
         self.status_chip.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
 
@@ -461,7 +461,7 @@ class FishTankDialog(QDialog):
         msg = f"魚／Fish {n}  擁有／Owned {owned}  外出／Away {away}  縮放／Zoom {z:.2f}"
         if self._log_flash:
             msg = f"{msg}  ·  {self._log_flash}"
-        self.status_chip.setText(f"透明魚缸／Fish Tank  ·  {msg}")
+        self.status_chip.setText(f"透明魚缸（未完成）／Fish Tank (WIP)  ·  {msg}")
         self.toolbar.set_status(msg)
 
     # --- toolbar actions ------------------------------------------------
