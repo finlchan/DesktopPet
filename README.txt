@@ -1,7 +1,7 @@
 Desktop Pet
 ==================
 
-Version: 261103.01
+Version: 261103.02
 Published: 2026-11-03
 
 A floating shortcut menu and document record gadget on the Windows desktop.
@@ -76,6 +76,13 @@ Free_Station_FAI.xls / .xlsm survey spreadsheet:
 - Output: station Easting/Northing, reduced level, and the distance-check
   residual ΔHD per accepted pair, plus an Average (mean E / N / RL) of those
   pair results. Copy button copies the result block.
+
+What's new in 261103.02 (2026-11-03)
+--------
+1. Folder shortcuts: 清單列滑入填滿／List Row Fill — numbered rows with name
+   and right arrow, thin dividers; hover (~0.5s) fills from the left, name
+   shifts right, arrow slides in, text inverts; leave exits fill to the right.
+   Theme steel-blue palette only.
 
 What's new in 261103.01 (2026-11-03)
 --------
