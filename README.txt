@@ -1,8 +1,8 @@
 Desktop Pet
 ==================
 
-Version: 261102.06
-Published: 2026-11-02
+Version: 261103.01
+Published: 2026-11-03
 
 A floating shortcut menu and document record gadget on the Windows desktop.
 
@@ -76,6 +76,11 @@ Free_Station_FAI.xls / .xlsm survey spreadsheet:
 - Output: station Easting/Northing, reduced level, and the distance-check
   residual ΔHD per accepted pair, plus an Average (mean E / N / RL) of those
   pair results. Copy button copies the result block.
+
+What's new in 261103.01 (2026-11-03)
+--------
+1. Pet click: 心跳放大／Heartbeat Zoom — one scale thud + two theme-gold
+   circular ripples from center (~1.3s). Colors match existing gilt accents.
 
 What's new in 261102.06 (2026-11-02)
 --------

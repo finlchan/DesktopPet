@@ -19,8 +19,8 @@ import urllib.request
 from urllib.parse import quote, urlparse
 
 from PySide6.QtCore import (
-    Qt, QTimer, QSize, Signal, QEvent, QLockFile, QUrl, QPoint,
-    QObject, QRunnable, QThreadPool,
+    Qt, QTimer, QSize, Signal, QEvent, QLockFile, QUrl, QPoint, QRect,
+    QObject, QRunnable, QThreadPool, QElapsedTimer, QEasingCurve,
 )
 from PySide6.QtGui import (
     QPixmap, QPainter, QColor, QCursor, QIcon, QAction, QMovie, QDesktopServices,
@@ -55,7 +55,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261102.06"
+APP_VERSION = "261103.01"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -5415,6 +5415,137 @@ class PetMenu(PopupPanel):
 # ---------------------------------------------------------------------------
 # Main pet window
 # ---------------------------------------------------------------------------
+# Heartbeat Zoom — one thud + two fading ripples (~1.3s). Theme gilt accents.
+HEARTBEAT_DURATION_MS = 1300
+HEARTBEAT_SCALE_PEAK = 1.20
+# Match ornate / focus golds already used in CALC_DIALOG_STYLE (no new palette).
+HEARTBEAT_RIPPLE_A = QColor(201, 168, 76, 220)   # #c9a84c
+HEARTBEAT_RIPPLE_B = QColor(232, 212, 139, 200)  # #e8d48b
+
+
+class HeartbeatOverlay(QWidget):
+    """Frameless overlay: scale pet pixmap once, paint two center ripples that fade."""
+
+    def __init__(self, host: "PetWindow", pet_pixmap: QPixmap):
+        super().__init__(None)
+        self._host = host
+        self._pix = QPixmap(pet_pixmap)
+        self._progress = 0.0
+        self._saved_opacity = host.windowOpacity()
+        self._elapsed = QElapsedTimer()
+        self._timer = QTimer(self)
+        self._timer.setInterval(16)
+        self._timer.timeout.connect(self._tick)
+
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.Tool
+            | Qt.WindowType.WindowStaysOnTopHint
+        )
+
+        pet_size = max(host.width(), host.height(), 48)
+        # Room for ripples beyond the scaled pet.
+        side = int(pet_size * 2.6)
+        self._pet_size = pet_size
+        self.setFixedSize(side, side)
+        center = host.frameGeometry().center()
+        self.move(center.x() - side // 2, center.y() - side // 2)
+
+    def start(self):
+        self._host.setWindowOpacity(0.0)
+        self._elapsed.start()
+        self._progress = 0.0
+        self.show()
+        self.raise_()
+        self._timer.start()
+        self.update()
+
+    def _tick(self):
+        t = min(1.0, self._elapsed.elapsed() / float(HEARTBEAT_DURATION_MS))
+        self._progress = t
+        self.update()
+        if t >= 1.0:
+            self._finish()
+
+    def _finish(self):
+        self._timer.stop()
+        try:
+            self._host.setWindowOpacity(self._saved_opacity)
+        except RuntimeError:
+            pass
+        self.close()
+        self.deleteLater()
+
+    def _scale_at(self, t: float) -> float:
+        """One thud: ease up to peak ~28% through the beat, then ease back to 1."""
+        peak_t = 0.28
+        if t <= 0.0:
+            return 1.0
+        if t >= 1.0:
+            return 1.0
+        if t <= peak_t:
+            u = t / peak_t
+            eased = QEasingCurve(QEasingCurve.Type.OutCubic).valueForProgress(u)
+            return 1.0 + (HEARTBEAT_SCALE_PEAK - 1.0) * eased
+        u = (t - peak_t) / (1.0 - peak_t)
+        eased = QEasingCurve(QEasingCurve.Type.InOutCubic).valueForProgress(u)
+        return HEARTBEAT_SCALE_PEAK + (1.0 - HEARTBEAT_SCALE_PEAK) * eased
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        cx = self.width() / 2.0
+        cy = self.height() / 2.0
+        t = self._progress
+        max_r = min(self.width(), self.height()) * 0.48
+
+        # Two circular ripples from center (staggered), fade out.
+        ripples = (
+            (0.00, HEARTBEAT_RIPPLE_A, 1.0),
+            (0.18, HEARTBEAT_RIPPLE_B, 0.92),
+        )
+        for start, color, reach in ripples:
+            if t <= start:
+                continue
+            local = (t - start) / max(1e-6, 1.0 - start)
+            local = min(1.0, local)
+            radius = max_r * reach * QEasingCurve(
+                QEasingCurve.Type.OutCubic
+            ).valueForProgress(local)
+            alpha = int(color.alpha() * (1.0 - local) * (1.0 - local))
+            if alpha <= 0 or radius <= 0.5:
+                continue
+            pen_c = QColor(color)
+            pen_c.setAlpha(alpha)
+            fill_c = QColor(color)
+            fill_c.setAlpha(max(0, alpha // 5))
+            pen = QPen(pen_c, max(2.0, 3.0 * (1.0 - local)))
+            painter.setPen(pen)
+            painter.setBrush(QBrush(fill_c))
+            painter.drawEllipse(
+                QPoint(int(cx), int(cy)), int(radius), int(radius)
+            )
+
+        # Pet thud (scale up then back).
+        scale = self._scale_at(t)
+        if not self._pix.isNull():
+            pw = max(1, int(self._pix.width() * scale))
+            ph = max(1, int(self._pix.height() * scale))
+            scaled = self._pix.scaled(
+                pw,
+                ph,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            x = int(cx - scaled.width() / 2.0)
+            y = int(cy - scaled.height() / 2.0)
+            painter.drawPixmap(x, y, scaled)
+        painter.end()
+
+
 class PetWindow(QWidget):
     def __init__(self, config_manager):
         super().__init__(None)
@@ -5424,6 +5555,7 @@ class PetWindow(QWidget):
         self.drag_pos = None
         self.moved_distance = 0
         self._ignore_release = False
+        self._heartbeat = None
         self.image_list = []
         self.current_image_index = 0
         self._movie = None
@@ -5655,7 +5787,25 @@ class PetWindow(QWidget):
         if moved >= 8:
             save_pet_geometry(self.cfg, self, persist=True)
         else:
+            # 心跳放大／Heartbeat Zoom on pet image click (menu still opens).
+            self.play_heartbeat()
             self.click_timer.start(QApplication.doubleClickInterval())
+
+    def play_heartbeat(self):
+        """One ~1.3s thud + two theme-gold ripples from the pet center."""
+        if self._heartbeat is not None:
+            try:
+                if self._heartbeat.isVisible():
+                    return
+            except RuntimeError:
+                self._heartbeat = None
+        pix = self.grab()
+        if pix.isNull():
+            pix = self.label.grab()
+        overlay = HeartbeatOverlay(self, pix)
+        self._heartbeat = overlay
+        overlay.destroyed.connect(lambda *_: setattr(self, "_heartbeat", None))
+        overlay.start()
 
     def mouseDoubleClickEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton:
