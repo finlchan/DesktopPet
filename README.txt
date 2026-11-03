@@ -1,7 +1,7 @@
 Desktop Pet
 ==================
 
-Version: 261103.03
+Version: 261103.04
 Published: 2026-11-03
 
 A floating shortcut menu and document record gadget on the Windows desktop.
@@ -16,17 +16,18 @@ Features
 2. Click the icon to open a semi-transparent menu.
 3. The top of the menu shows "Folder Shortcuts フォルダー ショートカット"
    for opening local folders (with search/filter; Float Drift title motion).
-4. Below that, "File / URL shortcuts"; click ">>" to open the submenu (search/filter; files and web links).
-5. The middle section shows "Document record"; click the ">>" button to open the submenu and browse/search files.
-   The Document record submenu header has an "Open folder" button to open storage folder(s) in the file manager.
-6. Below Document record, "Mini programs"; click ">>" for Text records and Calculations
-   (Level calc / Slope calc / Free station), plus Pomodoro, Translate,
+4. Below that, four Social Icon Fill circles: File / URL shortcuts (arrow),
+   Document record (paper), Mini programs (calculator), Settings (gear).
+5. Document record submenu: browse/search files; header has an "Open folder"
+   button to open storage folder(s) in the file manager.
+6. Mini programs: Text records and Calculations (Level calc / Slope calc /
+   Free station), plus Pomodoro, Translate,
    箱庭島（未完成）／Hakoniwa (WIP) (island sim entry kept; marked unfinished),
    and 透明魚缸（未完成）／Fish Tank (WIP) (Phase 1 local translucent aquarium
    below 箱庭島; high top-down / RTS isometric swim — glass stays transparent;
    marked unfinished).
 7. Drag files, folders, or URLs onto the pet to add shortcuts (prompt for name/description).
-8. The bottom has a "Settings" button to edit all configurations.
+8. Settings circle opens the configuration dialog.
 9. Window level can be set to Normal, Always on top, or Always on bottom.
 10. Optional "Start with Windows" login autostart (Windows only).
 11. Remembers pet position across monitors and resolution changes.
@@ -77,6 +78,14 @@ Free_Station_FAI.xls / .xlsm survey spreadsheet:
 - Output: station Easting/Northing, reduced level, and the distance-check
   residual ΔHD per accepted pair, plus an Average (mean E / N / RL) of those
   pair results. Copy button copies the result block.
+
+What's new in 261103.04 (2026-11-03)
+--------
+1. Main menu: File/URL, Document record, Mini programs, Settings use
+   圖示填滿／Social Icon Fill — circular outlined line icons (shortcut arrow,
+   paper, calculator, gear); hover (~0.45s) fill rises from bottom, idle icon
+   slides up out / inverted icon slides in from below, button lifts; leave
+   reverses. Theme steel-blue palette only.
 
 What's new in 261103.03 (2026-11-03)
 --------
