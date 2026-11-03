@@ -57,7 +57,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261103.02"
+APP_VERSION = "261103.03"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -5122,6 +5122,144 @@ class MiniProgramsSubMenu(PopupPanel):
 
 
 # ---------------------------------------------------------------------------
+# Float Drift — dreamy per-character title motion (theme steel-blue palette)
+# ---------------------------------------------------------------------------
+# 「漂浮（Float Drift）」: each glyph drifts up/down/left/right at its own
+# speed (~3–4.5s cycle), with a slight rotation and soft sky glow.
+FOLDER_SHORTCUTS_TITLE = "Folder Shortcuts フォルダー ショートカット"
+FLOAT_DRIFT_TEXT = QColor(255, 255, 255)
+FLOAT_DRIFT_GLOW = QColor(135, 206, 250, 100)     # menu border sky
+FLOAT_DRIFT_GLOW_SOFT = QColor(176, 224, 255, 55)
+FLOAT_DRIFT_PAD_X = 6.0
+FLOAT_DRIFT_PAD_Y = 5.0
+
+
+class FloatDriftLabel(QWidget):
+    """Title label: each character floats independently (Float Drift)."""
+
+    def __init__(self, text: str, parent=None):
+        super().__init__(parent)
+        self._text = text or ""
+        self._chars = list(self._text)
+        self._params = []
+        for i, _ch in enumerate(self._chars):
+            # Periods spread across 3.0–4.5s; phases staggered for a dreamy feel.
+            period = 3.0 + ((i * 0.41) % 1.5)
+            phase = (i * 1.6180339887) % (2.0 * math.pi)
+            phase2 = (i * 2.399) % (2.0 * math.pi)
+            amp_x = 1.2 + (i % 5) * 0.35
+            amp_y = 1.8 + (i % 4) * 0.45
+            amp_rot = 3.5 + (i % 3) * 2.0  # degrees
+            self._params.append(
+                {
+                    "period": period,
+                    "phase": phase,
+                    "phase2": phase2,
+                    "amp_x": amp_x,
+                    "amp_y": amp_y,
+                    "amp_rot": amp_rot,
+                    # Slightly different horizontal vs vertical tempo.
+                    "period_y": 3.0 + ((i * 0.53) % 1.5),
+                }
+            )
+
+        font = QFont(self.font())
+        font.setFamily("Microsoft JhengHei")
+        font.setPointSize(9)
+        font.setBold(True)
+        self._font = font
+
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._recompute_size()
+
+        self._elapsed = QElapsedTimer()
+        self._timer = QTimer(self)
+        self._timer.setInterval(33)  # ~30 fps — soft, not frantic
+        self._timer.timeout.connect(self.update)
+
+    def _recompute_size(self) -> None:
+        fm = QFontMetrics(self._font)
+        width = sum(fm.horizontalAdvance(ch) for ch in self._chars)
+        # Room for drift + glow halo.
+        self.setMinimumHeight(int(fm.height() + FLOAT_DRIFT_PAD_Y * 2 + 6))
+        self.setMinimumWidth(int(width + FLOAT_DRIFT_PAD_X * 2 + 8))
+        self.updateGeometry()
+
+    def sizeHint(self):  # noqa: N802
+        return QSize(self.minimumWidth(), self.minimumHeight())
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        if not self._elapsed.isValid():
+            self._elapsed.start()
+        if not self._timer.isActive():
+            self._timer.start()
+        super().showEvent(event)
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        self._timer.stop()
+        super().hideEvent(event)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        painter.setFont(self._font)
+        fm = QFontMetrics(self._font)
+        t_sec = (self._elapsed.elapsed() / 1000.0) if self._elapsed.isValid() else 0.0
+
+        x = FLOAT_DRIFT_PAD_X
+        base_y = FLOAT_DRIFT_PAD_Y + fm.ascent() + 2.0
+
+        for ch, p in zip(self._chars, self._params):
+            advance = float(fm.horizontalAdvance(ch))
+            if ch == " ":
+                x += advance
+                continue
+
+            ang_x = (2.0 * math.pi * t_sec / p["period"]) + p["phase"]
+            ang_y = (2.0 * math.pi * t_sec / p["period_y"]) + p["phase2"]
+            dx = p["amp_x"] * math.sin(ang_x)
+            dy = p["amp_y"] * math.sin(ang_y)
+            # Soft secondary sway so paths feel less circular.
+            dx += 0.4 * p["amp_x"] * math.sin(ang_y * 0.7 + 0.5)
+            dy += 0.35 * p["amp_y"] * math.cos(ang_x * 0.85)
+            rot = p["amp_rot"] * math.sin(ang_x * 0.9 + p["phase2"])
+
+            cx = x + advance * 0.5 + dx
+            cy = base_y + dy
+
+            painter.save()
+            painter.translate(cx, cy)
+            painter.rotate(rot)
+
+            # Soft glow (outer sky → inner white), then solid glyph.
+            for radius, color in (
+                (2.6, FLOAT_DRIFT_GLOW_SOFT),
+                (1.4, FLOAT_DRIFT_GLOW),
+            ):
+                painter.setPen(color)
+                for ox, oy in (
+                    (-radius, 0.0),
+                    (radius, 0.0),
+                    (0.0, -radius),
+                    (0.0, radius),
+                    (-radius * 0.7, -radius * 0.7),
+                    (radius * 0.7, radius * 0.7),
+                ):
+                    painter.drawText(QPointF(-advance * 0.5 + ox, oy), ch)
+
+            painter.setPen(FLOAT_DRIFT_TEXT)
+            painter.drawText(QPointF(-advance * 0.5, 0.0), ch)
+            painter.restore()
+
+            x += advance
+
+        painter.end()
+
+
+# ---------------------------------------------------------------------------
 # List Row Fill — folder-shortcut row (theme steel-blue palette)
 # ---------------------------------------------------------------------------
 # Qt take on CSS “List Row Fill”:
@@ -5310,8 +5448,7 @@ class PetMenu(PopupPanel):
         self.main_layout.setContentsMargins(8, 8, 8, 8)
         self.main_layout.setSpacing(4)
 
-        self.shortcuts_title = QLabel("Folder shortcuts")
-        self.shortcuts_title.setStyleSheet("color: white; font-weight: bold;")
+        self.shortcuts_title = FloatDriftLabel(FOLDER_SHORTCUTS_TITLE, self)
         self.main_layout.addWidget(self.shortcuts_title)
 
         self.folder_search_edit = QLineEdit()
