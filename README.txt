@@ -1,7 +1,7 @@
 Desktop Pet
 ==================
 
-Version: 261103.05
+Version: 261103.06
 Published: 2026-11-03
 
 A floating shortcut menu and document record gadget on the Windows desktop.
@@ -19,8 +19,8 @@ Features
 4. Below that, four Social Icon Fill circles: File/URL Shortcuts (arrow),
    Document record (paper), Mini programs (calculator), Settings (gear).
    File/URL submenu title uses 顫抖穩定／Jitter Settle motion.
-5. Document record submenu: browse/search files; header has an "Open folder"
-   button to open storage folder(s) in the file manager.
+5. Document record submenu: browse/search files; header title uses
+   崩落／Crumble Down motion; "Open folder" opens storage folder(s).
 6. Mini programs: Text records and Calculations (Level calc / Slope calc /
    Free station), plus Pomodoro, Translate,
    箱庭島（未完成）／Hakoniwa (WIP) (island sim entry kept; marked unfinished),
@@ -79,6 +79,12 @@ Free_Station_FAI.xls / .xlsm survey spreadsheet:
 - Output: station Easting/Northing, reduced level, and the distance-check
   residual ΔHD per accepted pair, plus an Average (mean E / N / RL) of those
   pair results. Copy button copies the result block.
+
+What's new in 261103.06 (2026-11-03)
+--------
+1. Document record submenu title: 崩落／Crumble Down — each character tilts,
+   then falls with gravity + rotate + fade; they drop back from above to
+   reassemble (~3.4s). Theme steel-blue palette only.
 
 What's new in 261103.05 (2026-11-03)
 --------
