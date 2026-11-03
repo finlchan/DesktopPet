@@ -1,7 +1,7 @@
 Desktop Pet
 ==================
 
-Version: 261103.02
+Version: 261103.03
 Published: 2026-11-03
 
 A floating shortcut menu and document record gadget on the Windows desktop.
@@ -14,7 +14,8 @@ Features
 --------
 1. Displays a small icon on the desktop (custom image or auto-rotating image set).
 2. Click the icon to open a semi-transparent menu.
-3. The top of the menu shows "Folder shortcuts" for opening local folders (with search/filter).
+3. The top of the menu shows "Folder Shortcuts フォルダー ショートカット"
+   for opening local folders (with search/filter; Float Drift title motion).
 4. Below that, "File / URL shortcuts"; click ">>" to open the submenu (search/filter; files and web links).
 5. The middle section shows "Document record"; click the ">>" button to open the submenu and browse/search files.
    The Document record submenu header has an "Open folder" button to open storage folder(s) in the file manager.
@@ -76,6 +77,12 @@ Free_Station_FAI.xls / .xlsm survey spreadsheet:
 - Output: station Easting/Northing, reduced level, and the distance-check
   residual ΔHD per accepted pair, plus an Average (mean E / N / RL) of those
   pair results. Copy button copies the result block.
+
+What's new in 261103.03 (2026-11-03)
+--------
+1. Folder shortcuts title: 「Folder Shortcuts フォルダー ショートカット」 with
+   漂浮／Float Drift — each character drifts up/down/left/right at its own
+   ~3–4.5s tempo, slight rotation, soft sky glow. Theme steel-blue palette only.
 
 What's new in 261103.02 (2026-11-03)
 --------
