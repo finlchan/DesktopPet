@@ -19,12 +19,14 @@ import urllib.request
 from urllib.parse import quote, urlparse
 
 from PySide6.QtCore import (
-    Qt, QTimer, QSize, Signal, QEvent, QLockFile, QUrl, QPoint, QRect,
+    Qt, QTimer, QSize, Signal, QEvent, QLockFile, QUrl, QPoint, QPointF,
+    QRect, QRectF,
     QObject, QRunnable, QThreadPool, QElapsedTimer, QEasingCurve,
+    QPropertyAnimation, Property,
 )
 from PySide6.QtGui import (
     QPixmap, QPainter, QColor, QCursor, QIcon, QAction, QMovie, QDesktopServices,
-    QPainterPath, QLinearGradient, QBrush, QPen, QFont,
+    QPainterPath, QLinearGradient, QBrush, QPen, QFont, QFontMetrics,
 )
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout, QHBoxLayout, QGridLayout,
@@ -55,7 +57,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261103.01"
+APP_VERSION = "261103.02"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -5120,6 +5122,163 @@ class MiniProgramsSubMenu(PopupPanel):
 
 
 # ---------------------------------------------------------------------------
+# List Row Fill — folder-shortcut row (theme steel-blue palette)
+# ---------------------------------------------------------------------------
+# Qt take on CSS “List Row Fill”:
+# - Row: index number · name · right arrow; thin divider under each row
+# - Hover (~0.5s): solid fill scaleX 0→1 from left origin; name shifts right;
+#   arrow slides in from the left; text color inverts
+# - Leave: fill scaleX 1→0 with origin on the right (exits to the right)
+LIST_ROW_IDLE_BG = QColor(61, 90, 128, 230)       # #3d5a80 (folder btn)
+LIST_ROW_FILL = QColor(232, 242, 248, 245)        # light sky (menu border family)
+LIST_ROW_TEXT_IDLE = QColor(255, 255, 255)
+LIST_ROW_TEXT_ON = QColor(42, 58, 74)             # dark steel on light fill
+LIST_ROW_DIVIDER = QColor(135, 206, 250, 110)     # menu border sky, soft
+LIST_ROW_ANIM_MS = 500
+LIST_ROW_NAME_SHIFT = 10.0
+LIST_ROW_ARROW_SLIDE = 18.0
+LIST_ROW_HEIGHT = 28
+
+
+class ListRowFillItem(QWidget):
+    """One Folder-shortcuts row with List Row Fill hover."""
+
+    clicked = Signal()
+
+    def __init__(self, index: int, name: str, parent=None):
+        super().__init__(parent)
+        self._index = int(index)
+        self._name = name or "Unnamed"
+        self._hover_t = 0.0
+        self._origin_left = True  # enter: left; leave: right
+        self.setFixedHeight(LIST_ROW_HEIGHT)
+        self.setMinimumWidth(180)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setMouseTracking(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+        self._anim = QPropertyAnimation(self, b"hoverProgress", self)
+        self._anim.setDuration(LIST_ROW_ANIM_MS)
+        self._anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+
+    def _get_hover_progress(self) -> float:
+        return self._hover_t
+
+    def _set_hover_progress(self, value: float) -> None:
+        self._hover_t = max(0.0, min(1.0, float(value)))
+        self.update()
+
+    hoverProgress = Property(float, _get_hover_progress, _set_hover_progress)
+
+    def _animate_to(self, target: float, *, origin_left: bool) -> None:
+        self._origin_left = bool(origin_left)
+        self._anim.stop()
+        self._anim.setStartValue(self._hover_t)
+        self._anim.setEndValue(target)
+        self._anim.start()
+
+    def enterEvent(self, event) -> None:  # noqa: N802
+        self._animate_to(1.0, origin_left=True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        self._animate_to(0.0, origin_left=False)
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton:
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton and self.rect().contains(
+            event.position().toPoint()
+        ):
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        del event
+        t = self._hover_t
+        w = float(self.width())
+        h = float(self.height())
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+
+        # Idle face
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(LIST_ROW_IDLE_BG)
+        painter.drawRect(QRectF(0, 0, w, h))
+
+        # Solid fill — enter: scaleX from left; leave: scaleX toward right
+        fill_rect = QRectF()
+        if t > 0.001:
+            fill_w = w * t
+            if self._origin_left:
+                fill_rect = QRectF(0.0, 0.0, fill_w, h)
+            else:
+                fill_rect = QRectF(w - fill_w, 0.0, fill_w, h)
+            painter.setBrush(LIST_ROW_FILL)
+            painter.drawRect(fill_rect)
+
+        font = QFont(self.font())
+        font.setPointSize(9)
+        painter.setFont(font)
+        fm = QFontMetrics(font)
+        pad_l = 8.0
+        pad_r = 10.0
+        num_w = float(fm.horizontalAdvance("00"))
+        arrow = "→"
+        arrow_w = float(fm.horizontalAdvance(arrow))
+        baseline = (h + fm.ascent() - fm.descent()) * 0.5
+
+        num_text = f"{self._index:02d}"
+        name_x = pad_l + num_w + 10.0 + LIST_ROW_NAME_SHIFT * t
+        name_right = w - pad_r - arrow_w - 8.0
+        name_max = max(20.0, name_right - name_x)
+        elided = fm.elidedText(self._name, Qt.TextElideMode.ElideRight, int(name_max))
+        arrow_rest_x = w - pad_r - arrow_w
+        arrow_x = arrow_rest_x - LIST_ROW_ARROW_SLIDE * (1.0 - t)
+        arrow_alpha = int(40 + 215 * t)
+
+        def _draw_row_text(color: QColor) -> None:
+            painter.setPen(color)
+            painter.drawText(QPointF(pad_l, baseline), num_text)
+            painter.drawText(QPointF(name_x, baseline), elided)
+            ac = QColor(color)
+            ac.setAlpha(min(255, arrow_alpha))
+            painter.setPen(ac)
+            painter.drawText(QPointF(arrow_x, baseline), arrow)
+
+        # Idle (light) text on uncovered area; inverted (dark) text clipped to fill
+        if fill_rect.width() > 0.5:
+            # Uncovered = full row minus fill
+            uncovered = QPainterPath()
+            uncovered.addRect(QRectF(0.0, 0.0, w, h))
+            filled = QPainterPath()
+            filled.addRect(fill_rect)
+            uncovered = uncovered.subtracted(filled)
+            painter.setClipPath(uncovered)
+            _draw_row_text(LIST_ROW_TEXT_IDLE)
+            painter.setClipPath(filled)
+            _draw_row_text(LIST_ROW_TEXT_ON)
+            painter.setClipping(False)
+        else:
+            _draw_row_text(LIST_ROW_TEXT_IDLE)
+
+        # Thin divider along the bottom edge
+        painter.setPen(QPen(LIST_ROW_DIVIDER, 1.0))
+        y = h - 0.5
+        painter.drawLine(QPointF(0.0, y), QPointF(w, y))
+        painter.end()
+
+
+# ---------------------------------------------------------------------------
 # Main menu (semi-transparent popup)
 # ---------------------------------------------------------------------------
 class PetMenu(PopupPanel):
@@ -5166,7 +5325,7 @@ class PetMenu(PopupPanel):
         self.main_layout.addWidget(self.folder_search_edit)
 
         self.shortcuts_container = QVBoxLayout()
-        self.shortcuts_container.setSpacing(3)
+        self.shortcuts_container.setSpacing(0)
         self.main_layout.addLayout(self.shortcuts_container)
 
         sep0 = QLabel()
@@ -5282,20 +5441,19 @@ class PetMenu(PopupPanel):
             btn.setStyleSheet("color: #dddddd; background-color: transparent;")
             self.shortcuts_container.addWidget(btn)
         else:
-            for sc in shortcuts:
+            for i, sc in enumerate(shortcuts, start=1):
                 name = sc.get("name", "Unnamed")
                 path = sc.get("path", "")
                 desc = sc.get("description", "")
-                text = name
+                label = name
                 if desc:
-                    text += f" ({desc})"
-                btn = QPushButton(text)
-                btn.setToolTip(path)
-                btn.setStyleSheet(self.button_style("#3d5a80"))
-                btn.clicked.connect(
-                    lambda checked=False, p=path: self.open_shortcut.emit(p, "folder")
+                    label += f" ({desc})"
+                row = ListRowFillItem(i, label, self)
+                row.setToolTip(path)
+                row.clicked.connect(
+                    lambda p=path: self.open_shortcut.emit(p, "folder")
                 )
-                self.shortcuts_container.addWidget(btn)
+                self.shortcuts_container.addWidget(row)
         self.adjustSize()
 
     def refresh(self):
