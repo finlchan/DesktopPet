@@ -25,7 +25,8 @@ from PySide6.QtCore import (
     QPropertyAnimation, Property,
 )
 from PySide6.QtGui import (
-    QPixmap, QPainter, QColor, QCursor, QIcon, QAction, QMovie, QDesktopServices,
+    QPixmap, QImage, QPainter, QColor, QCursor, QIcon, QAction, QMovie,
+    QDesktopServices,
     QPainterPath, QLinearGradient, QBrush, QPen, QFont, QFontMetrics,
 )
 from PySide6.QtWidgets import (
@@ -57,7 +58,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261103.06"
+APP_VERSION = "261103.07"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -5207,8 +5208,211 @@ class OperationsSubMenu(PopupPanel):
 
 
 # ---------------------------------------------------------------------------
-# Mini programs submenu (Text records + Calculations)
 # ---------------------------------------------------------------------------
+# Particle Network — Mini programs panel ambient (theme steel-blue palette)
+# ---------------------------------------------------------------------------
+# 「粒子連線（Particle Network）」: Qt take on Canvas 2D + rAF + DPR demos.
+# Particles drift & bounce; nearby pairs link (opacity ∝ distance); cursor
+# attracts nearby dots and draws links. Layering (top→bottom):
+#   text → program button solid fills → particle canvas → translucent panel bg
+PARTICLE_COUNT = 48
+PARTICLE_LINK_DIST = 72.0
+PARTICLE_CURSOR_DIST = 96.0
+PARTICLE_CURSOR_PULL = 0.045
+PARTICLE_DOT = QColor(232, 242, 248, 200)         # light sky
+PARTICLE_DOT_CORE = QColor(255, 255, 255, 230)
+PARTICLE_LINK = QColor(135, 206, 250, 160)        # menu border sky
+PARTICLE_CURSOR_LINK = QColor(176, 224, 255, 200)
+
+
+class ParticleNetworkCanvas(QWidget):
+    """HiDPI particle-network layer (QPainter ≈ Canvas2D, QTimer ≈ rAF)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._particles: list[dict] = []
+        self._cursor: QPointF | None = None
+        self._seeded = False
+        self._buf: QImage | None = None
+        self._buf_w = 0
+        self._buf_h = 0
+        self._timer = QTimer(self)
+        self._timer.setInterval(16)  # ~60 fps requestAnimationFrame stand-in
+        self._timer.timeout.connect(self._tick)
+
+    def _ensure_particles(self, w: float, h: float) -> None:
+        if self._seeded and self._particles:
+            return
+        self._particles = []
+        for i in range(PARTICLE_COUNT):
+            self._particles.append(
+                {
+                    "x": random.uniform(4.0, max(5.0, w - 4.0)),
+                    "y": random.uniform(4.0, max(5.0, h - 4.0)),
+                    "vx": random.uniform(-0.55, 0.55),
+                    "vy": random.uniform(-0.55, 0.55),
+                    "r": random.uniform(1.3, 2.4),
+                }
+            )
+        self._seeded = True
+
+    def _sync_buffer(self, logical_w: int, logical_h: int) -> tuple[QImage, float]:
+        dpr = float(self.devicePixelRatioF())
+        bw = max(1, int(math.ceil(logical_w * dpr)))
+        bh = max(1, int(math.ceil(logical_h * dpr)))
+        if (
+            self._buf is None
+            or self._buf_w != bw
+            or self._buf_h != bh
+            or self._buf.isNull()
+        ):
+            self._buf = QImage(bw, bh, QImage.Format.Format_ARGB32_Premultiplied)
+            self._buf.setDevicePixelRatio(dpr)
+            self._buf_w = bw
+            self._buf_h = bh
+        return self._buf, dpr
+
+    def start(self) -> None:
+        if not self._timer.isActive():
+            self._timer.start()
+
+    def stop(self) -> None:
+        self._timer.stop()
+
+    def _poll_cursor(self) -> None:
+        # Poll global cursor (canvas ignores mouse so buttons stay clickable).
+        local = self.mapFromGlobal(QCursor.pos())
+        if self.rect().contains(local):
+            self._cursor = QPointF(float(local.x()), float(local.y()))
+        else:
+            self._cursor = None
+
+    def _tick(self) -> None:
+        w = float(max(1, self.width()))
+        h = float(max(1, self.height()))
+        self._ensure_particles(w, h)
+        self._poll_cursor()
+        cur = self._cursor
+
+        for p in self._particles:
+            if cur is not None:
+                dx = cur.x() - p["x"]
+                dy = cur.y() - p["y"]
+                dist = math.hypot(dx, dy)
+                if 0.5 < dist < PARTICLE_CURSOR_DIST:
+                    # Soft attract toward cursor.
+                    pull = PARTICLE_CURSOR_PULL * (1.0 - dist / PARTICLE_CURSOR_DIST)
+                    p["vx"] += dx / dist * pull
+                    p["vy"] += dy / dist * pull
+
+            # Light damping so attract doesn't runaway.
+            p["vx"] *= 0.992
+            p["vy"] *= 0.992
+            # Keep a minimum drift so the field never freezes.
+            speed = math.hypot(p["vx"], p["vy"])
+            if speed < 0.12:
+                ang = random.uniform(0.0, 2.0 * math.pi)
+                p["vx"] += 0.08 * math.cos(ang)
+                p["vy"] += 0.08 * math.sin(ang)
+            elif speed > 1.35:
+                p["vx"] *= 1.35 / speed
+                p["vy"] *= 1.35 / speed
+
+            p["x"] += p["vx"]
+            p["y"] += p["vy"]
+
+            # Bounce off edges.
+            if p["x"] < 2.0:
+                p["x"] = 2.0
+                p["vx"] = abs(p["vx"])
+            elif p["x"] > w - 2.0:
+                p["x"] = w - 2.0
+                p["vx"] = -abs(p["vx"])
+            if p["y"] < 2.0:
+                p["y"] = 2.0
+                p["vy"] = abs(p["vy"])
+            elif p["y"] > h - 2.0:
+                p["y"] = h - 2.0
+                p["vy"] = -abs(p["vy"])
+
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        del event
+        lw = max(1, self.width())
+        lh = max(1, self.height())
+        self._ensure_particles(float(lw), float(lh))
+        buf, dpr = self._sync_buffer(lw, lh)
+        buf.fill(Qt.GlobalColor.transparent)
+
+        painter = QPainter(buf)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        # Draw in logical pixels; QImage DPR handles device pixels.
+        painter.scale(dpr, dpr)
+
+        pts = self._particles
+        n = len(pts)
+        # Pair links — opacity by distance.
+        for i in range(n):
+            a = pts[i]
+            for j in range(i + 1, n):
+                b = pts[j]
+                dx = a["x"] - b["x"]
+                dy = a["y"] - b["y"]
+                dist = math.hypot(dx, dy)
+                if dist > PARTICLE_LINK_DIST or dist < 0.01:
+                    continue
+                alpha = int(PARTICLE_LINK.alpha() * (1.0 - dist / PARTICLE_LINK_DIST))
+                if alpha < 8:
+                    continue
+                col = QColor(PARTICLE_LINK)
+                col.setAlpha(alpha)
+                pen = QPen(col)
+                pen.setWidthF(1.0)
+                painter.setPen(pen)
+                painter.drawLine(QPointF(a["x"], a["y"]), QPointF(b["x"], b["y"]))
+
+        # Cursor links + attract halo.
+        cur = self._cursor
+        if cur is not None:
+            for p in pts:
+                dx = p["x"] - cur.x()
+                dy = p["y"] - cur.y()
+                dist = math.hypot(dx, dy)
+                if dist > PARTICLE_CURSOR_DIST or dist < 0.01:
+                    continue
+                alpha = int(
+                    PARTICLE_CURSOR_LINK.alpha()
+                    * (1.0 - dist / PARTICLE_CURSOR_DIST)
+                )
+                if alpha < 10:
+                    continue
+                col = QColor(PARTICLE_CURSOR_LINK)
+                col.setAlpha(alpha)
+                pen = QPen(col)
+                pen.setWidthF(1.15)
+                painter.setPen(pen)
+                painter.drawLine(cur, QPointF(p["x"], p["y"]))
+
+        # Dots
+        painter.setPen(Qt.PenStyle.NoPen)
+        for p in pts:
+            r = p["r"]
+            painter.setBrush(PARTICLE_DOT)
+            painter.drawEllipse(QPointF(p["x"], p["y"]), r, r)
+            painter.setBrush(PARTICLE_DOT_CORE)
+            painter.drawEllipse(QPointF(p["x"], p["y"]), r * 0.45, r * 0.45)
+
+        painter.end()
+
+        screen = QPainter(self)
+        screen.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        screen.drawImage(0, 0, buf)
+        screen.end()
+
+
 class MiniProgramsSubMenu(PopupPanel):
     """Second-level menu under Mini programs: Text records + Calculations."""
 
@@ -5228,16 +5432,27 @@ class MiniProgramsSubMenu(PopupPanel):
         top_layout.setContentsMargins(0, 0, 0, 0)
         top_layout.setSpacing(0)
 
+        # Layering top→bottom: content (text/buttons) > particles > panel bg
         self.container = QFrame(self)
         self.container.setObjectName("subMenuContainer")
         top_layout.addWidget(self.container)
 
-        layout = QVBoxLayout(self.container)
+        self.particles = ParticleNetworkCanvas(self.container)
+        self.particles.lower()
+
+        self.content = QWidget(self.container)
+        self.content.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.content.setStyleSheet("background: transparent;")
+        self.content.raise_()
+
+        layout = QVBoxLayout(self.content)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(4)
 
         title = QLabel("Mini programs")
-        title.setStyleSheet("color: white; font-weight: bold;")
+        title.setStyleSheet(
+            "color: white; font-weight: bold; background: transparent;"
+        )
         layout.addWidget(title)
 
         sep = QLabel()
@@ -5249,7 +5464,9 @@ class MiniProgramsSubMenu(PopupPanel):
         text_row = QHBoxLayout()
         text_row.setSpacing(4)
         text_lbl = QLabel("Text records")
-        text_lbl.setStyleSheet("color: white; font-weight: bold;")
+        text_lbl.setStyleSheet(
+            "color: white; font-weight: bold; background: transparent;"
+        )
         btn_text = QPushButton(">>")
         btn_text.setFixedWidth(30)
         btn_text.setStyleSheet("text-align: center;" + menu_button_style("#4a4a4a"))
@@ -5263,7 +5480,9 @@ class MiniProgramsSubMenu(PopupPanel):
         ops_row = QHBoxLayout()
         ops_row.setSpacing(4)
         ops_lbl = QLabel("Calculations")
-        ops_lbl.setStyleSheet("color: white; font-weight: bold;")
+        ops_lbl.setStyleSheet(
+            "color: white; font-weight: bold; background: transparent;"
+        )
         btn_ops = QPushButton(">>")
         btn_ops.setFixedWidth(30)
         btn_ops.setStyleSheet("text-align: center;" + menu_button_style("#4a4a4a"))
@@ -5278,6 +5497,7 @@ class MiniProgramsSubMenu(PopupPanel):
         sep2.setStyleSheet("background-color: rgba(255,255,255,120);")
         layout.addWidget(sep2)
 
+        # Solid fills sit above the particle canvas (opaque button faces).
         btn_pomodoro = QPushButton("Pomodoro")
         btn_pomodoro.setStyleSheet(menu_button_style("#6e4a2a"))
         btn_pomodoro.clicked.connect(self.open_pomodoro)
@@ -5304,8 +5524,35 @@ class MiniProgramsSubMenu(PopupPanel):
             MiniProgramsSubMenu { background-color: transparent; }
         """)
 
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._sync_layers()
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self._sync_layers()
+        self.particles.start()
+
+    def _sync_layers(self) -> None:
+        if not hasattr(self, "container"):
+            return
+        r = self.container.rect()
+        self.particles.setGeometry(r)
+        self.content.setGeometry(r)
+        self.particles.lower()
+        self.content.raise_()
+
     def refresh_and_show(self, anchor_geometry):
+        self.content.adjustSize()
+        # Size the panel from the content layout, not the empty container.
+        hint = self.content.sizeHint()
+        margins = 0
+        self.container.setFixedSize(
+            max(hint.width(), 220),
+            max(hint.height(), 160),
+        )
         self.adjustSize()
+        self._sync_layers()
         screen_geo = screen_available_geometry(self)
         x = anchor_geometry.x() + anchor_geometry.width()
         y = anchor_geometry.y()
@@ -5317,6 +5564,7 @@ class MiniProgramsSubMenu(PopupPanel):
         self.show()
         self.raise_()
         self.activateWindow()
+        self.particles.start()
 
     def _hide_nested(self, keep=None):
         if keep != "text" and self.text_records_submenu is not None:
@@ -5384,6 +5632,8 @@ class MiniProgramsSubMenu(PopupPanel):
         self._suppress_hide = False
 
     def hideEvent(self, event):
+        if hasattr(self, "particles"):
+            self.particles.stop()
         if self.text_records_submenu is not None:
             self.text_records_submenu.hide()
         if self.operations_submenu is not None:

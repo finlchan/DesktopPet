@@ -1,7 +1,7 @@
 Desktop Pet
 ==================
 
-Version: 261103.06
+Version: 261103.07
 Published: 2026-11-03
 
 A floating shortcut menu and document record gadget on the Windows desktop.
@@ -26,7 +26,7 @@ Features
    箱庭島（未完成）／Hakoniwa (WIP) (island sim entry kept; marked unfinished),
    and 透明魚缸（未完成）／Fish Tank (WIP) (Phase 1 local translucent aquarium
    below 箱庭島; high top-down / RTS isometric swim — glass stays transparent;
-   marked unfinished).
+   marked unfinished). Panel uses 粒子連線／Particle Network ambient.
 7. Drag files, folders, or URLs onto the pet to add shortcuts (prompt for name/description).
 8. Settings circle opens the configuration dialog.
 9. Window level can be set to Normal, Always on top, or Always on bottom.
@@ -79,6 +79,13 @@ Free_Station_FAI.xls / .xlsm survey spreadsheet:
 - Output: station Easting/Northing, reduced level, and the distance-check
   residual ΔHD per accepted pair, plus an Average (mean E / N / RL) of those
   pair results. Copy button copies the result block.
+
+What's new in 261103.07 (2026-11-03)
+--------
+1. Mini programs panel: 粒子連線／Particle Network — dozens of drifting
+   particles bounce and link by distance; cursor attracts nearby dots and
+   links. Layering: text > solid program buttons > particle canvas >
+   translucent blue panel. Theme steel-blue palette only (HiDPI canvas).
 
 What's new in 261103.06 (2026-11-03)
 --------
