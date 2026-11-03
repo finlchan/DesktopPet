@@ -57,7 +57,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261103.04"
+APP_VERSION = "261103.05"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -2762,10 +2762,142 @@ class DocumentSubMenu(PopupPanel):
 
 
 # ---------------------------------------------------------------------------
-# File shortcuts submenu (opened via >> like Document record)
+# ---------------------------------------------------------------------------
+# Jitter Settle — strong shake that damps to rest (theme steel-blue palette)
+# ---------------------------------------------------------------------------
+# 「顫抖穩定（Jitter Settle）」: each glyph shakes hard (XY + rotate), the
+# motion damps to rest, pauses, then the cycle restarts (~2.4s).
+FILE_URL_SHORTCUTS_TITLE = "File/URL Shortcuts"
+JITTER_SETTLE_TEXT = QColor(255, 255, 255)
+JITTER_SETTLE_GLOW = QColor(135, 206, 250, 70)  # soft sky halo
+JITTER_SETTLE_CYCLE_S = 2.4
+JITTER_SETTLE_SHAKE_S = 1.15  # damp window; remainder is pause at rest
+JITTER_SETTLE_PAD_X = 8.0
+JITTER_SETTLE_PAD_Y = 7.0
+
+
+class JitterSettleLabel(QWidget):
+    """Title label: per-character Jitter Settle shake → rest → repeat."""
+
+    def __init__(self, text: str, parent=None):
+        super().__init__(parent)
+        self._text = text or ""
+        self._chars = list(self._text)
+        self._params = []
+        for i, _ch in enumerate(self._chars):
+            self._params.append(
+                {
+                    "phase": (i * 1.734) % (2.0 * math.pi),
+                    "phase2": (i * 2.513) % (2.0 * math.pi),
+                    "freq": 38.0 + (i % 5) * 4.5,   # rad/s — fast jitter
+                    "freq2": 31.0 + (i % 4) * 5.0,
+                    "freq_rot": 44.0 + (i % 3) * 6.0,
+                    "amp_x": 3.8 + (i % 5) * 0.55,
+                    "amp_y": 3.2 + (i % 4) * 0.6,
+                    "amp_rot": 11.0 + (i % 3) * 3.5,  # degrees
+                }
+            )
+
+        font = QFont(self.font())
+        font.setFamily("Microsoft JhengHei")
+        font.setPointSize(9)
+        font.setBold(True)
+        self._font = font
+
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._recompute_size()
+
+        self._elapsed = QElapsedTimer()
+        self._timer = QTimer(self)
+        self._timer.setInterval(16)  # ~60 fps for sharp shake
+        self._timer.timeout.connect(self.update)
+
+    def _recompute_size(self) -> None:
+        fm = QFontMetrics(self._font)
+        width = sum(fm.horizontalAdvance(ch) for ch in self._chars)
+        self.setMinimumHeight(int(fm.height() + JITTER_SETTLE_PAD_Y * 2 + 8))
+        self.setMinimumWidth(int(width + JITTER_SETTLE_PAD_X * 2 + 10))
+        self.updateGeometry()
+
+    def sizeHint(self):  # noqa: N802
+        return QSize(self.minimumWidth(), self.minimumHeight())
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        if not self._elapsed.isValid():
+            self._elapsed.start()
+        if not self._timer.isActive():
+            self._timer.start()
+        super().showEvent(event)
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        self._timer.stop()
+        super().hideEvent(event)
+
+    @staticmethod
+    def _envelope(t_local: float) -> float:
+        """Strong start → exponential damp to ~0 by SHAKE_S; 0 during pause."""
+        if t_local >= JITTER_SETTLE_SHAKE_S or t_local < 0.0:
+            return 0.0
+        u = t_local / JITTER_SETTLE_SHAKE_S  # 0..1
+        # Fast decay with a little residual taper so it truly settles.
+        return math.exp(-4.8 * u) * (1.0 - u * 0.2)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        painter.setFont(self._font)
+        fm = QFontMetrics(self._font)
+        t_sec = (self._elapsed.elapsed() / 1000.0) if self._elapsed.isValid() else 0.0
+        t_local = t_sec % JITTER_SETTLE_CYCLE_S
+        env = self._envelope(t_local)
+
+        x = JITTER_SETTLE_PAD_X
+        base_y = JITTER_SETTLE_PAD_Y + fm.ascent() + 2.0
+
+        for ch, p in zip(self._chars, self._params):
+            advance = float(fm.horizontalAdvance(ch))
+            if ch == " ":
+                x += advance
+                continue
+
+            if env < 0.002:
+                dx = dy = rot = 0.0
+            else:
+                dx = p["amp_x"] * env * math.sin(p["freq"] * t_local + p["phase"])
+                dy = p["amp_y"] * env * math.cos(p["freq2"] * t_local + p["phase2"])
+                rot = p["amp_rot"] * env * math.sin(
+                    p["freq_rot"] * t_local + p["phase"]
+                )
+
+            cx = x + advance * 0.5 + dx
+            cy = base_y + dy
+
+            painter.save()
+            painter.translate(cx, cy)
+            painter.rotate(rot)
+
+            if env > 0.15:
+                # Soft sky smear while shaking hard
+                painter.setPen(JITTER_SETTLE_GLOW)
+                painter.drawText(QPointF(-advance * 0.5 + 1.0, 0.0), ch)
+                painter.drawText(QPointF(-advance * 0.5 - 1.0, 0.0), ch)
+
+            painter.setPen(JITTER_SETTLE_TEXT)
+            painter.drawText(QPointF(-advance * 0.5, 0.0), ch)
+            painter.restore()
+
+            x += advance
+
+        painter.end()
+
+
+# File shortcuts submenu (opened via Social Icon Fill on the main menu)
 # ---------------------------------------------------------------------------
 class FileShortcutsSubMenu(PopupPanel):
-    """Submenu listing file/URL shortcuts; opened from the main pet menu >> control."""
+    """Submenu listing file/URL shortcuts; opened from the main pet menu icon."""
 
     open_shortcut = Signal(str, str)  # path, type
 
@@ -2788,8 +2920,7 @@ class FileShortcutsSubMenu(PopupPanel):
         self.main_layout.setContentsMargins(8, 8, 8, 8)
         self.main_layout.setSpacing(4)
 
-        self.title_label = QLabel("File shortcuts")
-        self.title_label.setStyleSheet("color: white; font-weight: bold;")
+        self.title_label = JitterSettleLabel(FILE_URL_SHORTCUTS_TITLE, self)
         self.main_layout.addWidget(self.title_label)
 
         self.search_edit = QLineEdit()
@@ -5707,7 +5838,7 @@ class PetMenu(PopupPanel):
         nav_row.addStretch()
 
         self.btn_file_sc_open = MenuSocialIconFillButton(
-            "shortcut", "File / URL shortcuts", self
+            "shortcut", FILE_URL_SHORTCUTS_TITLE, self
         )
         self.btn_file_sc_open.clicked.connect(self.open_file_shortcuts_submenu)
         nav_row.addWidget(self.btn_file_sc_open)
@@ -5750,7 +5881,7 @@ class PetMenu(PopupPanel):
             return lab
 
         cap_row.addStretch()
-        cap_row.addWidget(_cap("File / URL"))
+        cap_row.addWidget(_cap("File/URL"))
         self.doc_title = _cap("Document record")
         cap_row.addWidget(self.doc_title)
         cap_row.addWidget(_cap("Mini programs"))

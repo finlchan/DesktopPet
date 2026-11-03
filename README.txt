@@ -1,7 +1,7 @@
 Desktop Pet
 ==================
 
-Version: 261103.04
+Version: 261103.05
 Published: 2026-11-03
 
 A floating shortcut menu and document record gadget on the Windows desktop.
@@ -16,8 +16,9 @@ Features
 2. Click the icon to open a semi-transparent menu.
 3. The top of the menu shows "Folder Shortcuts フォルダー ショートカット"
    for opening local folders (with search/filter; Float Drift title motion).
-4. Below that, four Social Icon Fill circles: File / URL shortcuts (arrow),
+4. Below that, four Social Icon Fill circles: File/URL Shortcuts (arrow),
    Document record (paper), Mini programs (calculator), Settings (gear).
+   File/URL submenu title uses 顫抖穩定／Jitter Settle motion.
 5. Document record submenu: browse/search files; header has an "Open folder"
    button to open storage folder(s) in the file manager.
 6. Mini programs: Text records and Calculations (Level calc / Slope calc /
@@ -45,7 +46,7 @@ Settings
 --------
 1. Pet Image: choose a single image or an image folder for automatic rotation.
 2. Folder shortcuts: set "Item name", "Folder path", and "Description" (list has search/filter).
-3. File shortcuts: set Type (File or URL), "Item name", path/URL, and "Description" (list has search/filter).
+3. File/URL Shortcuts: set Type (File or URL), "Item name", path/URL, and "Description" (list has search/filter).
 4. Document record: set the "Title" and one or more "Data storage folders"
    (click Add to add additional folders);
    the app will automatically list all files in those folders.
@@ -78,6 +79,12 @@ Free_Station_FAI.xls / .xlsm survey spreadsheet:
 - Output: station Easting/Northing, reduced level, and the distance-check
   residual ΔHD per accepted pair, plus an Average (mean E / N / RL) of those
   pair results. Copy button copies the result block.
+
+What's new in 261103.05 (2026-11-03)
+--------
+1. File shortcuts submenu title: 「File/URL Shortcuts」 with
+   顫抖穩定／Jitter Settle — strong per-character XY+rotate shake that damps
+   to rest, pauses, then restarts (~2.4s). Theme steel-blue palette only.
 
 What's new in 261103.04 (2026-11-03)
 --------
