@@ -57,7 +57,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261103.03"
+APP_VERSION = "261103.04"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -5417,6 +5417,236 @@ class ListRowFillItem(QWidget):
 
 
 # ---------------------------------------------------------------------------
+# Menu Social Icon Fill — first-page circular nav (theme steel-blue palette)
+# ---------------------------------------------------------------------------
+# Qt take on CSS “Social Icon Fill” (same motion as fish_tank/social_toolbar):
+# - Circular outline + centered line icon
+# - Hover (~0.45s): solid fill rises from bottom; idle icon slides up out;
+#   inverted icon slides up from below; button lifts; leave reverses.
+MENU_SIF_OUTLINE = QColor(135, 206, 250, 200)       # menu border sky
+MENU_SIF_OUTLINE_HOVER = QColor(176, 224, 255, 230)
+MENU_SIF_ICON_IDLE = QColor(232, 242, 248)          # light on glass
+MENU_SIF_ICON_ON = QColor(42, 58, 74)               # dark steel on light fill
+MENU_SIF_FILL = QColor(232, 242, 248, 245)          # light sky fill
+MENU_SIF_BG_IDLE = QColor(61, 90, 128, 90)          # soft #3d5a80 glass
+MENU_SIF_BTN_SIZE = 44
+MENU_SIF_ANIM_MS = 450
+MENU_SIF_LIFT_PX = 5.0
+
+
+def _menu_sif_pen(color: QColor, width: float = 1.8) -> QPen:
+    pen = QPen(color)
+    pen.setWidthF(width)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    return pen
+
+
+def draw_menu_icon_shortcut(p: QPainter, c: QPointF, r: float, color: QColor) -> None:
+    """Diagonal NE shortcut arrow (line icon; matches shortcut-arrow ref)."""
+    p.setPen(_menu_sif_pen(color, 2.0))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    # Shaft: lower-left → upper-right
+    x0, y0 = c.x() - r * 0.42, c.y() + r * 0.42
+    x1, y1 = c.x() + r * 0.38, c.y() - r * 0.38
+    p.drawLine(QPointF(x0, y0), QPointF(x1, y1))
+    # Arrowhead
+    head = r * 0.42
+    p.drawLine(QPointF(x1, y1), QPointF(x1 - head, y1))
+    p.drawLine(QPointF(x1, y1), QPointF(x1, y1 + head))
+
+
+def draw_menu_icon_document(p: QPainter, c: QPointF, r: float, color: QColor) -> None:
+    """Paper / document page with folded corner + lines."""
+    p.setPen(_menu_sif_pen(color, 1.7))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    left = c.x() - r * 0.4
+    top = c.y() - r * 0.5
+    w = r * 0.8
+    h = r * 1.0
+    fold = r * 0.28
+    path = QPainterPath()
+    path.moveTo(left, top)
+    path.lineTo(left + w - fold, top)
+    path.lineTo(left + w, top + fold)
+    path.lineTo(left + w, top + h)
+    path.lineTo(left, top + h)
+    path.closeSubpath()
+    p.drawPath(path)
+    # Fold lines
+    p.drawLine(
+        QPointF(left + w - fold, top),
+        QPointF(left + w - fold, top + fold),
+    )
+    p.drawLine(
+        QPointF(left + w - fold, top + fold),
+        QPointF(left + w, top + fold),
+    )
+    # Text lines
+    for i in range(3):
+        y = c.y() - r * 0.08 + i * r * 0.22
+        p.drawLine(
+            QPointF(c.x() - r * 0.28, y),
+            QPointF(c.x() + r * 0.22, y),
+        )
+
+
+def draw_menu_icon_calculator(p: QPainter, c: QPointF, r: float, color: QColor) -> None:
+    """Calculator — mini programs."""
+    p.setPen(_menu_sif_pen(color, 1.7))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    body = QRectF(c.x() - r * 0.45, c.y() - r * 0.55, r * 0.9, r * 1.1)
+    p.drawRoundedRect(body, 3.0, 3.0)
+    # Display
+    disp = QRectF(c.x() - r * 0.32, c.y() - r * 0.42, r * 0.64, r * 0.28)
+    p.drawRoundedRect(disp, 2.0, 2.0)
+    # Button grid 3×3 dots/rects
+    for row in range(3):
+        for col in range(3):
+            bx = c.x() - r * 0.28 + col * r * 0.28
+            by = c.y() - r * 0.02 + row * r * 0.26
+            p.drawRoundedRect(QRectF(bx - r * 0.08, by - r * 0.08, r * 0.16, r * 0.16), 1.5, 1.5)
+
+
+def draw_menu_icon_gear(p: QPainter, c: QPointF, r: float, color: QColor) -> None:
+    """Settings gear."""
+    p.setPen(_menu_sif_pen(color, 1.7))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    # Outer ring
+    p.drawEllipse(QRectF(c.x() - r * 0.32, c.y() - r * 0.32, r * 0.64, r * 0.64))
+    # Hub
+    p.drawEllipse(QRectF(c.x() - r * 0.12, c.y() - r * 0.12, r * 0.24, r * 0.24))
+    # Teeth (8 radial ticks)
+    for i in range(8):
+        ang = i * (math.pi / 4.0)
+        inner = r * 0.38
+        outer = r * 0.58
+        p.drawLine(
+            QPointF(c.x() + inner * math.cos(ang), c.y() + inner * math.sin(ang)),
+            QPointF(c.x() + outer * math.cos(ang), c.y() + outer * math.sin(ang)),
+        )
+
+
+MENU_SIF_DRAWERS = {
+    "shortcut": draw_menu_icon_shortcut,
+    "document": draw_menu_icon_document,
+    "calculator": draw_menu_icon_calculator,
+    "gear": draw_menu_icon_gear,
+}
+
+
+class MenuSocialIconFillButton(QWidget):
+    """One circular Social Icon Fill control for the pet main menu."""
+
+    clicked = Signal()
+
+    def __init__(self, icon_key: str, tip: str, parent=None):
+        super().__init__(parent)
+        self.icon_key = icon_key
+        self._drawer = MENU_SIF_DRAWERS[icon_key]
+        self._hover_t = 0.0
+        self.setFixedSize(
+            MENU_SIF_BTN_SIZE,
+            MENU_SIF_BTN_SIZE + int(MENU_SIF_LIFT_PX) + 2,
+        )
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip(tip)
+        self.setMouseTracking(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+
+        self._anim = QPropertyAnimation(self, b"hoverProgress", self)
+        self._anim.setDuration(MENU_SIF_ANIM_MS)
+        self._anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+
+    def _get_hover_progress(self) -> float:
+        return self._hover_t
+
+    def _set_hover_progress(self, value: float) -> None:
+        self._hover_t = max(0.0, min(1.0, float(value)))
+        self.update()
+
+    hoverProgress = Property(float, _get_hover_progress, _set_hover_progress)
+
+    def _animate_to(self, target: float) -> None:
+        self._anim.stop()
+        self._anim.setStartValue(self._hover_t)
+        self._anim.setEndValue(target)
+        self._anim.start()
+
+    def enterEvent(self, event) -> None:  # noqa: N802
+        self._animate_to(1.0)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        self._animate_to(0.0)
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton:
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton and self.rect().contains(
+            event.position().toPoint()
+        ):
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        del event
+        t = self._hover_t
+        lift = t * MENU_SIF_LIFT_PX
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        size = float(MENU_SIF_BTN_SIZE)
+        rect = QRectF(
+            0.5,
+            float(self.height() - MENU_SIF_BTN_SIZE) + 0.5,
+            size - 1.0,
+            size - 1.0,
+        )
+        rect.translate(0.0, -lift)
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(MENU_SIF_BG_IDLE)
+        painter.drawEllipse(rect)
+
+        clip = QPainterPath()
+        clip.addEllipse(rect)
+        painter.setClipPath(clip)
+
+        if t > 0.001:
+            h = rect.height()
+            fill_top = rect.top() + h * (1.0 - t)
+            fill_rect = QRectF(rect.left() - 1, fill_top, rect.width() + 2, h * t + 3)
+            painter.setBrush(MENU_SIF_FILL)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawRect(fill_rect)
+
+        center = rect.center()
+        icon_r = size * 0.30
+        idle_y = center.y() - t * rect.height()
+        hover_y = center.y() + (1.0 - t) * rect.height()
+        self._drawer(painter, QPointF(center.x(), idle_y), icon_r, MENU_SIF_ICON_IDLE)
+        self._drawer(painter, QPointF(center.x(), hover_y), icon_r, MENU_SIF_ICON_ON)
+
+        painter.setClipping(False)
+
+        pen = QPen(MENU_SIF_OUTLINE_HOVER if t > 0.2 else MENU_SIF_OUTLINE)
+        pen.setWidthF(1.6)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(rect)
+        painter.end()
+
+
+# ---------------------------------------------------------------------------
 # Main menu (semi-transparent popup)
 # ---------------------------------------------------------------------------
 class PetMenu(PopupPanel):
@@ -5470,72 +5700,63 @@ class PetMenu(PopupPanel):
         sep0.setStyleSheet("background-color: rgba(255,255,255,120);")
         self.main_layout.addWidget(sep0)
 
-        # File / URL shortcuts: collapsed header + >> (same pattern as Document record)
-        file_sc_header = QHBoxLayout()
-        file_sc_header.setSpacing(4)
-        self.file_shortcuts_title = QLabel("File / URL shortcuts")
-        self.file_shortcuts_title.setStyleSheet("color: white; font-weight: bold;")
-        self.btn_file_sc_open = QPushButton(">>")
-        self.btn_file_sc_open.setFixedWidth(30)
-        self.btn_file_sc_open.setStyleSheet(
-            "text-align: center;" + menu_button_style("#4a4a4a")
+        # First-page nav: Social Icon Fill circles (shortcut / document / mini / settings)
+        nav_row = QHBoxLayout()
+        nav_row.setSpacing(10)
+        nav_row.setContentsMargins(4, 6, 4, 2)
+        nav_row.addStretch()
+
+        self.btn_file_sc_open = MenuSocialIconFillButton(
+            "shortcut", "File / URL shortcuts", self
         )
         self.btn_file_sc_open.clicked.connect(self.open_file_shortcuts_submenu)
-        file_sc_header.addWidget(self.file_shortcuts_title)
-        file_sc_header.addStretch()
-        file_sc_header.addWidget(self.btn_file_sc_open)
-        self.main_layout.addLayout(file_sc_header)
+        nav_row.addWidget(self.btn_file_sc_open)
 
-        sep1 = QLabel()
-        sep1.setFixedHeight(1)
-        sep1.setStyleSheet("background-color: rgba(255,255,255,120);")
-        self.main_layout.addWidget(sep1)
-
-        doc_header = QHBoxLayout()
-        doc_header.setSpacing(4)
-        self.doc_title = QLabel("Document record")
-        self.doc_title.setStyleSheet("color: white; font-weight: bold;")
-        self.btn_doc_open = QPushButton(">>")
-        self.btn_doc_open.setFixedWidth(30)
-        self.btn_doc_open.setStyleSheet(
-            "text-align: center;" + menu_button_style("#4a4a4a")
+        self.btn_doc_open = MenuSocialIconFillButton(
+            "document", "Document record", self
         )
         self.btn_doc_open.clicked.connect(self.open_document_submenu)
-        doc_header.addWidget(self.doc_title)
-        doc_header.addStretch()
-        doc_header.addWidget(self.btn_doc_open)
-        self.main_layout.addLayout(doc_header)
+        nav_row.addWidget(self.btn_doc_open)
 
-        sep2 = QLabel()
-        sep2.setFixedHeight(1)
-        sep2.setStyleSheet("background-color: rgba(255,255,255,120);")
-        self.main_layout.addWidget(sep2)
-
-        # Mini programs: collapsed header + >> (Text records + Calculations live inside)
-        mini_header = QHBoxLayout()
-        mini_header.setSpacing(4)
-        self.mini_programs_title = QLabel("Mini programs")
-        self.mini_programs_title.setStyleSheet("color: white; font-weight: bold;")
-        self.btn_mini_open = QPushButton(">>")
-        self.btn_mini_open.setFixedWidth(30)
-        self.btn_mini_open.setStyleSheet(
-            "text-align: center;" + menu_button_style("#4a4a4a")
+        self.btn_mini_open = MenuSocialIconFillButton(
+            "calculator", "Mini programs", self
         )
         self.btn_mini_open.clicked.connect(self.open_mini_programs_submenu)
-        mini_header.addWidget(self.mini_programs_title)
-        mini_header.addStretch()
-        mini_header.addWidget(self.btn_mini_open)
-        self.main_layout.addLayout(mini_header)
+        nav_row.addWidget(self.btn_mini_open)
 
-        sep3 = QLabel()
-        sep3.setFixedHeight(1)
-        sep3.setStyleSheet("background-color: rgba(255,255,255,120);")
-        self.main_layout.addWidget(sep3)
-
-        self.btn_settings = QPushButton("Settings")
-        self.btn_settings.setStyleSheet(self.button_style("#4a4a4a"))
+        self.btn_settings = MenuSocialIconFillButton("gear", "Settings", self)
         self.btn_settings.clicked.connect(self.open_settings.emit)
-        self.main_layout.addWidget(self.btn_settings)
+        nav_row.addWidget(self.btn_settings)
+
+        nav_row.addStretch()
+        self.main_layout.addLayout(nav_row)
+
+        # Captions under the icon row (document caption updates from Settings title)
+        cap_row = QHBoxLayout()
+        cap_row.setSpacing(6)
+        cap_row.setContentsMargins(2, 0, 2, 2)
+        cap_style = (
+            "color: rgba(255,255,255,210); font-size: 7.5pt; "
+            "background: transparent; font-weight: normal;"
+        )
+        cap_w = MENU_SIF_BTN_SIZE + 8
+
+        def _cap(text: str) -> QLabel:
+            lab = QLabel(text)
+            lab.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+            lab.setWordWrap(True)
+            lab.setFixedWidth(cap_w)
+            lab.setStyleSheet(cap_style)
+            return lab
+
+        cap_row.addStretch()
+        cap_row.addWidget(_cap("File / URL"))
+        self.doc_title = _cap("Document record")
+        cap_row.addWidget(self.doc_title)
+        cap_row.addWidget(_cap("Mini programs"))
+        cap_row.addWidget(_cap("Settings"))
+        cap_row.addStretch()
+        self.main_layout.addLayout(cap_row)
 
         self.setStyleSheet(MENU_STYLE + """
             PetMenu { background-color: transparent; }
@@ -5604,6 +5825,7 @@ class PetMenu(PopupPanel):
 
         title = self.cfg.get("document_area", "title") or "Document record"
         self.doc_title.setText(title)
+        self.btn_doc_open.setToolTip(title)
         self.adjustSize()
 
     def _hide_other_submenus(self, keep=None):
