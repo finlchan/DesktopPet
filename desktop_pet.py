@@ -57,7 +57,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261103.05"
+APP_VERSION = "261103.06"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -2452,6 +2452,188 @@ class PopupPanel(QWidget):
 # ---------------------------------------------------------------------------
 # Document Record submenu (with pagination)
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Crumble Down — tilt, fall, fade, then reassemble from above (theme palette)
+# ---------------------------------------------------------------------------
+# 「崩落（Crumble Down）」: each glyph tilts, then falls with gravity + spin +
+# fade; after a beat they drop back in from above to reassemble (~3.4s).
+DOCUMENT_RECORD_TITLE_DEFAULT = "Document record"
+CRUMBLE_TEXT = QColor(255, 255, 255)
+CRUMBLE_GLOW = QColor(135, 206, 250, 55)
+CRUMBLE_CYCLE_S = 3.4
+CRUMBLE_PAD_X = 6.0
+CRUMBLE_PAD_Y = 6.0
+CRUMBLE_FALL_ROOM = 36.0   # px below baseline while crumbling
+CRUMBLE_DROP_ROOM = 28.0   # px above baseline while reassembling
+
+
+class CrumbleDownLabel(QWidget):
+    """Title label: per-character Crumble Down → reassemble loop."""
+
+    def __init__(self, text: str, parent=None):
+        super().__init__(parent)
+        font = QFont(self.font())
+        font.setFamily("Microsoft JhengHei")
+        font.setPointSize(9)
+        font.setBold(True)
+        self._font = font
+
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+        self._elapsed = QElapsedTimer()
+        self._timer = QTimer(self)
+        self._timer.setInterval(16)
+        self._timer.timeout.connect(self.update)
+
+        self._chars: list[str] = []
+        self._params: list[dict] = []
+        self.setText(text or DOCUMENT_RECORD_TITLE_DEFAULT)
+
+    def setText(self, text: str) -> None:  # noqa: N802
+        self._text = text or DOCUMENT_RECORD_TITLE_DEFAULT
+        self._chars = list(self._text)
+        self._params = []
+        for i, _ch in enumerate(self._chars):
+            # Alternate lean direction; stagger fall / reassemble starts.
+            sign = 1.0 if (i % 2 == 0) else -1.0
+            self._params.append(
+                {
+                    "tilt0": sign * (8.0 + (i % 4) * 3.5),
+                    "spin": sign * (55.0 + (i % 5) * 12.0),
+                    "drift": sign * (4.0 + (i % 3) * 2.5),
+                    "fall_t0": 0.14 + i * 0.065,
+                    "fall_dur": 0.85 + (i % 3) * 0.04,
+                    "reass_t0": 1.88 + i * 0.055,
+                    "reass_dur": 0.70 + (i % 3) * 0.03,
+                    "g": 62.0 + (i % 4) * 6.0,  # fall distance scale
+                }
+            )
+        self._recompute_size()
+        self.update()
+
+    def text(self) -> str:
+        return self._text
+
+    def _recompute_size(self) -> None:
+        fm = QFontMetrics(self._font)
+        width = sum(fm.horizontalAdvance(ch) for ch in self._chars)
+        height = (
+            fm.height()
+            + CRUMBLE_PAD_Y * 2
+            + CRUMBLE_FALL_ROOM * 0.35
+            + CRUMBLE_DROP_ROOM * 0.25
+            + 4
+        )
+        self.setMinimumHeight(int(height))
+        self.setMinimumWidth(int(width + CRUMBLE_PAD_X * 2 + 8))
+        self.updateGeometry()
+
+    def sizeHint(self):  # noqa: N802
+        return QSize(self.minimumWidth(), self.minimumHeight())
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        if not self._elapsed.isValid():
+            self._elapsed.start()
+        if not self._timer.isActive():
+            self._timer.start()
+        super().showEvent(event)
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        self._timer.stop()
+        super().hideEvent(event)
+
+    def _state_for(self, p: dict, t: float):
+        """Return (dx, dy, rot_deg, alpha) for one glyph at cycle time t."""
+        fall_t0 = p["fall_t0"]
+        fall_dur = p["fall_dur"]
+        reass_t0 = p["reass_t0"]
+        reass_dur = p["reass_dur"]
+        pre_tilt_start = max(0.0, fall_t0 - 0.22)
+
+        if t < pre_tilt_start:
+            return 0.0, 0.0, 0.0, 1.0
+
+        if t < fall_t0:
+            # Wind-up tilt before the drop.
+            u = (t - pre_tilt_start) / max(1e-6, fall_t0 - pre_tilt_start)
+            return 0.0, 0.0, p["tilt0"] * u, 1.0
+
+        if t < fall_t0 + fall_dur:
+            # Gravity fall + spin + fade.
+            u = (t - fall_t0) / fall_dur  # 0..1
+            u2 = u * u
+            dy = p["g"] * u2
+            dx = p["drift"] * u
+            rot = p["tilt0"] + p["spin"] * u
+            alpha = max(0.0, 1.0 - u2 * 1.05)
+            return dx, dy, rot, alpha
+
+        if t < reass_t0:
+            # Off-stage between crumble and reassemble.
+            return 0.0, p["g"], p["tilt0"] + p["spin"], 0.0
+
+        if t < reass_t0 + reass_dur:
+            # Drop in from above → ease into rest.
+            u = (t - reass_t0) / reass_dur  # 0..1
+            ease = 1.0 - (1.0 - u) ** 3  # ease-out cubic
+            remain = 1.0 - ease
+            dy = -CRUMBLE_DROP_ROOM * 1.55 * remain
+            dx = p["drift"] * 0.35 * remain
+            rot = p["spin"] * 0.35 * remain
+            alpha = min(1.0, u * 1.6)
+            return dx, dy, rot, alpha
+
+        return 0.0, 0.0, 0.0, 1.0
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        painter.setFont(self._font)
+        fm = QFontMetrics(self._font)
+        t_sec = (self._elapsed.elapsed() / 1000.0) if self._elapsed.isValid() else 0.0
+        t_local = t_sec % CRUMBLE_CYCLE_S
+
+        x = CRUMBLE_PAD_X
+        base_y = CRUMBLE_PAD_Y + CRUMBLE_DROP_ROOM * 0.35 + fm.ascent()
+
+        for ch, p in zip(self._chars, self._params):
+            advance = float(fm.horizontalAdvance(ch))
+            if ch == " ":
+                x += advance
+                continue
+
+            dx, dy, rot, alpha = self._state_for(p, t_local)
+            if alpha < 0.02:
+                x += advance
+                continue
+
+            cx = x + advance * 0.5 + dx
+            cy = base_y + dy
+
+            painter.save()
+            painter.translate(cx, cy)
+            painter.rotate(rot)
+
+            if 0.08 < alpha < 0.95:
+                glow = QColor(CRUMBLE_GLOW)
+                glow.setAlpha(int(CRUMBLE_GLOW.alpha() * alpha))
+                painter.setPen(glow)
+                painter.drawText(QPointF(-advance * 0.5 + 0.8, 0.0), ch)
+
+            col = QColor(CRUMBLE_TEXT)
+            col.setAlpha(int(255 * alpha))
+            painter.setPen(col)
+            painter.drawText(QPointF(-advance * 0.5, 0.0), ch)
+            painter.restore()
+
+            x += advance
+
+        painter.end()
+
+
 class DocumentSubMenu(PopupPanel):
     """Submenu for Document record; auto-paginates when there are many files."""
 
@@ -2482,8 +2664,7 @@ class DocumentSubMenu(PopupPanel):
 
         header = QHBoxLayout()
         header.setSpacing(4)
-        self.title_label = QLabel("Document record")
-        self.title_label.setStyleSheet("color: white; font-weight: bold;")
+        self.title_label = CrumbleDownLabel(DOCUMENT_RECORD_TITLE_DEFAULT, self)
         self.btn_open_folder = QPushButton()
         self.btn_open_folder.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon)
