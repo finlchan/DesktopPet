@@ -5497,6 +5497,187 @@ class ParticleNetworkCanvas(QWidget):
         screen.end()
 
 
+# ---------------------------------------------------------------------------
+# Shine Sweep Button — metal/glass glint on solid Mini-program tiles
+# ---------------------------------------------------------------------------
+# 「光澤掃過按鈕（Shine Sweep Button）」: Qt take on CSS overflow:hidden +
+# ::after skewX(-20deg) gradient band sweeping left→right (~2.4s idle;
+# faster on hover) with slight lift + deeper shadow.
+SHINE_IDLE_MS = 2400
+SHINE_HOVER_MS = 900
+SHINE_LIFT_PX = 3.0
+SHINE_BAND_FRAC = 0.32
+SHINE_SKEW_DEG = -20.0
+SHINE_BTN_H = 28
+SHINE_RADIUS = 6.0
+
+
+def _qcolor_from_hex(hex_color: str, alpha: int = 255) -> QColor:
+    text = (hex_color or "").strip().lstrip("#")
+    if len(text) != 6:
+        return QColor(74, 74, 74, alpha)
+    try:
+        return QColor(int(text[0:2], 16), int(text[2:4], 16), int(text[4:6], 16), alpha)
+    except ValueError:
+        return QColor(74, 74, 74, alpha)
+
+
+class ShineSweepButton(QWidget):
+    """Opaque solid tile with a looping diagonal shine sweep."""
+
+    clicked = Signal()
+
+    def __init__(self, text: str, base_color: str, parent=None):
+        super().__init__(parent)
+        self._text = text or ""
+        self._base = _qcolor_from_hex(base_color, 255)
+        self._hover_fill = _qcolor_from_hex(darken_color(base_color, 0.72), 255)
+        self._hovering = False
+        self._lift_t = 0.0  # 0 idle → 1 full hover lift
+        self.setMinimumHeight(SHINE_BTN_H + int(SHINE_LIFT_PX) + 2)
+        self.setMinimumWidth(180)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setMouseTracking(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+        self._lift_anim = QPropertyAnimation(self, b"liftProgress", self)
+        self._lift_anim.setDuration(180)
+        self._lift_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+        self._elapsed = QElapsedTimer()
+        self._timer = QTimer(self)
+        self._timer.setInterval(16)
+        self._timer.timeout.connect(self.update)
+
+    def _get_lift_progress(self) -> float:
+        return self._lift_t
+
+    def _set_lift_progress(self, value: float) -> None:
+        self._lift_t = max(0.0, min(1.0, float(value)))
+        self.update()
+
+    liftProgress = Property(float, _get_lift_progress, _set_lift_progress)
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        if not self._elapsed.isValid():
+            self._elapsed.start()
+        if not self._timer.isActive():
+            self._timer.start()
+        super().showEvent(event)
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        self._timer.stop()
+        super().hideEvent(event)
+
+    def enterEvent(self, event) -> None:  # noqa: N802
+        self._hovering = True
+        self._lift_anim.stop()
+        self._lift_anim.setStartValue(self._lift_t)
+        self._lift_anim.setEndValue(1.0)
+        self._lift_anim.start()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        self._hovering = False
+        self._lift_anim.stop()
+        self._lift_anim.setStartValue(self._lift_t)
+        self._lift_anim.setEndValue(0.0)
+        self._lift_anim.start()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton:
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton and self.rect().contains(
+            event.position().toPoint()
+        ):
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def _shine_progress(self) -> float:
+        period = SHINE_HOVER_MS if self._hovering else SHINE_IDLE_MS
+        if not self._elapsed.isValid() or period <= 0:
+            return 0.0
+        return (self._elapsed.elapsed() % period) / float(period)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        del event
+        w = float(self.width())
+        h = float(self.height())
+        lift = self._lift_t * SHINE_LIFT_PX
+        btn_h = float(SHINE_BTN_H)
+        # Button rests near the bottom; hover lifts it (paint-only).
+        top = h - btn_h - 1.0 - lift
+        rect = QRectF(0.5, top, w - 1.0, btn_h)
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+
+        # Soft shadow under the tile (deepens with lift).
+        if self._lift_t > 0.01:
+            shadow = QColor(0, 0, 0, int(40 + 70 * self._lift_t))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(shadow)
+            painter.drawRoundedRect(
+                QRectF(rect.left() + 1.0, rect.top() + lift + 2.5, rect.width(), rect.height()),
+                SHINE_RADIUS,
+                SHINE_RADIUS,
+            )
+
+        # Clip = overflow:hidden
+        clip = QPainterPath()
+        clip.addRoundedRect(rect, SHINE_RADIUS, SHINE_RADIUS)
+        painter.setClipPath(clip)
+
+        fill = self._hover_fill if self._hovering else self._base
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(fill)
+        painter.drawRoundedRect(rect, SHINE_RADIUS, SHINE_RADIUS)
+
+        # Diagonal shine band (skewX ≈ -20°), sweeps left → right.
+        t = self._shine_progress()
+        band_w = max(18.0, rect.width() * SHINE_BAND_FRAC)
+        # Travel from fully left of tile to fully right.
+        x = rect.left() - band_w + t * (rect.width() + 2.0 * band_w)
+        painter.save()
+        painter.translate(x + band_w * 0.5, rect.center().y())
+        painter.shear(math.tan(math.radians(SHINE_SKEW_DEG)), 0.0)
+        grad = QLinearGradient(-band_w * 0.5, 0.0, band_w * 0.5, 0.0)
+        peak = QColor(255, 255, 255, 95 if self._hovering else 70)
+        grad.setColorAt(0.0, QColor(255, 255, 255, 0))
+        grad.setColorAt(0.45, peak)
+        grad.setColorAt(0.55, peak)
+        grad.setColorAt(1.0, QColor(255, 255, 255, 0))
+        painter.setBrush(QBrush(grad))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRect(QRectF(-band_w * 0.5, -rect.height(), band_w, rect.height() * 2.0))
+        painter.restore()
+
+        painter.setClipping(False)
+
+        # Label — match menu QPushButton (white, left, padded).
+        font = QFont(self.font())
+        font.setPointSize(9)
+        painter.setFont(font)
+        painter.setPen(QColor(255, 255, 255))
+        text_rect = QRectF(rect.left() + 7.0, rect.top(), rect.width() - 14.0, rect.height())
+        painter.drawText(
+            text_rect,
+            int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
+            self._text,
+        )
+        painter.end()
+
+
 class MiniProgramsSubMenu(PopupPanel):
     """Second-level menu under Mini programs: Text records + Calculations."""
 
@@ -5541,9 +5722,7 @@ class MiniProgramsSubMenu(PopupPanel):
         sep.setStyleSheet("background-color: rgba(255,255,255,120);")
         layout.addWidget(sep)
 
-        # Text records / Calculations — same List Row Fill as Folder Shortcuts.
-        # (Solid idle face sits above the particle canvas; colored program
-        # buttons below stay unchanged.)
+        # Text records / Calculations — Folder Shortcuts List Row Fill (no shine).
         self.btn_text_records = ListRowFillItem(1, "Text records", self.content)
         self.btn_text_records.clicked.connect(self.open_text_records)
         layout.addWidget(self.btn_text_records)
@@ -5552,28 +5731,28 @@ class MiniProgramsSubMenu(PopupPanel):
         self.btn_calculations.clicked.connect(self.open_operations)
         layout.addWidget(self.btn_calculations)
 
-        # Solid fills sit above the particle canvas (opaque button faces).
-        btn_pomodoro = QPushButton("Pomodoro")
-        btn_pomodoro.setStyleSheet(menu_button_style("#6e4a2a"))
-        btn_pomodoro.clicked.connect(self.open_pomodoro)
-        layout.addWidget(btn_pomodoro)
+        # Solid Mini-program tiles — Shine Sweep (existing tile colors kept).
+        self.btn_pomodoro = ShineSweepButton("Pomodoro", "#6e4a2a", self.content)
+        self.btn_pomodoro.clicked.connect(self.open_pomodoro)
+        layout.addWidget(self.btn_pomodoro)
 
-        btn_translate = QPushButton("Translate")
-        btn_translate.setStyleSheet(menu_button_style("#2a5a4a"))
-        btn_translate.clicked.connect(self.open_translate)
-        layout.addWidget(btn_translate)
+        self.btn_translate = ShineSweepButton("Translate", "#2a5a4a", self.content)
+        self.btn_translate.clicked.connect(self.open_translate)
+        layout.addWidget(self.btn_translate)
 
         # Marked unfinished per user 2026-11-02 — keep entry, show WIP clearly.
-        btn_hakoniwa = QPushButton("箱庭島（未完成）／Hakoniwa (WIP)")
-        btn_hakoniwa.setStyleSheet(menu_button_style("#2a4a6e"))
-        btn_hakoniwa.clicked.connect(self.open_hakoniwa)
-        layout.addWidget(btn_hakoniwa)
+        self.btn_hakoniwa = ShineSweepButton(
+            "箱庭島（未完成）／Hakoniwa (WIP)", "#2a4a6e", self.content
+        )
+        self.btn_hakoniwa.clicked.connect(self.open_hakoniwa)
+        layout.addWidget(self.btn_hakoniwa)
 
         # Transparent Fish Tank — below 箱庭島; marked unfinished (2026-11-02).
-        btn_fish_tank = QPushButton("透明魚缸（未完成）／Fish Tank (WIP)")
-        btn_fish_tank.setStyleSheet(menu_button_style("#1a5a6e"))
-        btn_fish_tank.clicked.connect(self.open_fish_tank)
-        layout.addWidget(btn_fish_tank)
+        self.btn_fish_tank = ShineSweepButton(
+            "透明魚缸（未完成）／Fish Tank (WIP)", "#1a5a6e", self.content
+        )
+        self.btn_fish_tank.clicked.connect(self.open_fish_tank)
+        layout.addWidget(self.btn_fish_tank)
 
         self.setStyleSheet(MENU_STYLE + """
             MiniProgramsSubMenu { background-color: transparent; }
