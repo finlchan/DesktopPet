@@ -69,6 +69,7 @@ from .model import (
     COST_SHIPYARD,
     COST_SHRINE,
     COST_SUPERMARKET,
+    COST_UNDERSEA_BASE,
     FOOD_BUY_LOT,
     FOOD_EXPORT_LOT,
     FUNDS_PER_FOOD_BUY,
@@ -79,6 +80,7 @@ from .model import (
     MAX_GUEST_TEXT,
     MOUNTAIN_ONLY_BUILDINGS,
     PLACEABLE_BUILDINGS,
+    SEA_ONLY_BUILDINGS,
     SHALLOW_ONLY_BUILDINGS,
     TREE_MIN,
     food_buy_cost,
@@ -409,6 +411,7 @@ TOOL_SPECS: Tuple[Tuple[str, str, Optional[int], str], ...] = (
     ("aquafarm", "建設養殖場", COST_AQUAFARM, "V"),
     ("amusement_park", "建設遊樂園", COST_AMUSEMENT_PARK, "Shift+V"),
     ("power_plant", "建設發電廠", COST_POWER_PLANT, "Shift+P"),
+    ("undersea_base", "建設海底基地", COST_UNDERSEA_BASE, "Shift+S"),
 )
 
 
@@ -501,6 +504,9 @@ def tool_enabled(
         elif kind in SHALLOW_ONLY_BUILDINGS:
             if c.terrain != "shallow":
                 return False, "養殖場須建在淺灘"
+        elif kind in SEA_ONLY_BUILDINGS:
+            if c.terrain != "sea":
+                return False, "海底基地須建在深海"
         elif c.terrain not in BUILDABLE:
             return False, "須在平地建設"
         if kind in COASTAL_BUILDINGS and not state._adjacent_to_sea(i, j):
@@ -988,7 +994,7 @@ class HakoniwaIslandDialog(QDialog):
                 f" · 費用 {shown_cost}" if shown_cost is not None else " · 免費"
             )
             if key == "missile" and self.state.has_missile_base():
-                tip += "（飛彈基地優惠）"
+                tip += "（飛彈／海底基地優惠）"
             if reason:
                 tip += f"\n不可用：{reason}"
             elif key == "wait" and self.state.has_monster():
@@ -996,7 +1002,12 @@ class HakoniwaIslandDialog(QDialog):
             elif key == "defense":
                 tip += "\n周圍 2 格減怪獸出現／踩踏；踩上自爆清怪"
             elif key == "missile_base":
-                tip += "\n有基地時飛彈更便宜"
+                tip += "\n有基地時飛彈更便宜；觀光者眼中偽裝成森"
+            elif key == "undersea_base":
+                tip += (
+                    "\n深海色塊（不可淺灘／油田）：同飛彈基地優惠；"
+                    "觀光者眼中為海"
+                )
             elif key == "afforest":
                 tip += "\n空平地→森（新林 100 本）"
             elif key == "harvest" and ok and self.selected is not None:
@@ -1533,7 +1544,7 @@ class TourismIslandDialog(QDialog):
         hint.setWordWrap(True)
         root.addWidget(hint)
 
-        self.map = HakoniwaMapWidget(self.state)
+        self.map = HakoniwaMapWidget(self.state, tourist_mode=True)
         self.map.cell_clicked.connect(self._on_cell_clicked)
         self.hud = HakoniwaMapHud(self.map)
         self.stats = self.hud.stats
@@ -1638,8 +1649,8 @@ class TourismIslandDialog(QDialog):
 
     def _on_cell_clicked(self, i: int, j: int) -> None:
         self.selected = (i, j)
-        c = self.state.cell(i, j)
-        t = TERRAIN[c.terrain]["label"]
-        b = BUILDINGS[c.building]["label"] if c.building else "（無）"
+        terrain_key, building_key = self.state.tourist_appearance(i, j)
+        t = TERRAIN[terrain_key]["label"]
+        b = BUILDINGS[building_key]["label"] if building_key else "（無）"
         self.sel_label.setText(f"格子 ({i},{j})\n地形：{t}\n建築：{b}\n（觀光唯讀）")
         self.map.select(i, j)

@@ -55,6 +55,7 @@ from hakoniwa.model import (
     COST_MONUMENT,
     COST_PARK,
     COST_POWER_PLANT,
+    COST_UNDERSEA_BASE,
     COST_QUARRY,
     COST_RAISE,
     COST_RESEARCH_LAB,
@@ -122,6 +123,7 @@ from hakoniwa.model import (
     SCORE_PER_SHRINE,
     SCORE_PER_SUPERMARKET,
     SCORE_PER_POWER_PLANT,
+    SCORE_PER_UNDERSEA_BASE,
     SCORE_PER_UNIVERSITY,
     UNIVERSITY_TECH_DISCOUNT,
     TIMBER_LOT,
@@ -261,6 +263,7 @@ def test_catalog_costs():
     assert COST_AQUAFARM == 300
     assert COST_AMUSEMENT_PARK == 1300
     assert COST_POWER_PLANT == 650
+    assert COST_UNDERSEA_BASE == 8000
     assert SCORE_PER_MONUMENT == 2000
     assert SCORE_PER_QUARRY == 70
     assert SCORE_PER_BREAKWATER == 50
@@ -279,6 +282,7 @@ def test_catalog_costs():
     assert SCORE_PER_AQUAFARM == 60
     assert SCORE_PER_AMUSEMENT_PARK == 350
     assert SCORE_PER_POWER_PLANT == 130
+    assert SCORE_PER_UNDERSEA_BASE == 500
     assert UNIVERSITY_TECH_DISCOUNT == 200
     assert 0 < RESEARCH_LAB_DISASTER_FACTOR < 1
     assert HAPPINESS_POP_PER_MONUMENT == 5
@@ -322,7 +326,7 @@ def test_catalog_costs():
     assert FUNDS_PER_FOOD_BUY == 8
     assert FUNDS_PER_QUARRY == 8
     assert FUNDS_PER_OILFIELD == 50
-    assert SAVE_VERSION == 15
+    assert SAVE_VERSION == 16
     assert 0 < OIL_DISCOVER_CHANCE <= 1
     assert 0 < OIL_DEPLETION_CHANCE < 1
     assert TSUNAMI_BASE_CHANCE > 0
@@ -1963,19 +1967,20 @@ def test_aquafarm_amusement_power():
     ]
     assert len(grass) >= 3
 
-    # 養殖場：須建在淺灘（先填海造一格淺灘）；平地不可.
-    sea = next(
+    # 養殖場：須建在淺灘；平地不可.
+    # Opening map already rings land with 淺灘 (#58)；深海不再鄰陸，勿再找海填成淺灘.
+    shallow = next(
         (
             (i, j)
             for i in range(20)
             for j in range(20)
-            if state.can_landfill(i, j) and state.cell(i, j).terrain == "sea"
+            if state.cell(i, j).terrain == "shallow"
+            and state.cell(i, j).building is None
         ),
         None,
     )
-    assert sea is not None
-    assert state.landfill(*sea) == "ok"
-    si, sj = sea
+    assert shallow is not None
+    si, sj = shallow
     assert state.cell(si, sj).terrain == "shallow"
     ok, reason = tool_enabled(state, "aquafarm", grass[0])
     assert ok is False and "淺灘" in reason
@@ -2059,6 +2064,105 @@ def test_aquafarm_amusement_power():
         model_mod.MONSTER_BASE_CHANCE = old_mon
 
     print("aquafarm/amusement/power: placement + yields + score OK")
+
+
+def test_undersea_base_and_tourism_camo():
+    """海底基地：深海建設、飛彈優惠、觀光偽裝（基地→海／飛彈基地→森）、存檔."""
+    state = IslandState.new_game()
+    land = [(i, j) for i in range(20) for j in range(20) if state.is_land(i, j)]
+    for i, j in land:
+        if state.cell(i, j).terrain == "dirt":
+            assert state.level_land(i, j) == "ok"
+    grass = [
+        (i, j)
+        for i, j in land
+        if state.cell(i, j).terrain == "grass" and state.cell(i, j).building is None
+    ]
+    assert grass
+
+    # Deep sea (not shallow/oilfield) far from coast if possible.
+    deep_sea = next(
+        (
+            (i, j)
+            for i in range(20)
+            for j in range(20)
+            if state.cell(i, j).terrain == "sea"
+            and state.cell(i, j).building is None
+        ),
+        None,
+    )
+    assert deep_sea is not None
+    si, sj = deep_sea
+
+    # Wrong terrain: grass / shallow rejected.
+    ok, reason = tool_enabled(state, "undersea_base", grass[0])
+    assert ok is False and "深海" in reason
+    # Opening 淺灘 ring — pick one.
+    shallow = next(
+        (
+            (i, j)
+            for i in range(20)
+            for j in range(20)
+            if state.cell(i, j).terrain == "shallow"
+        ),
+        None,
+    )
+    assert shallow is not None
+    ok, reason = tool_enabled(state, "undersea_base", shallow)
+    assert ok is False and "深海" in reason
+
+    state.funds = COST_UNDERSEA_BASE - 1
+    ok, reason = tool_enabled(state, "undersea_base", (si, sj))
+    assert ok is False and "資金" in reason
+
+    state.funds = COST_UNDERSEA_BASE + 50
+    ok, _ = tool_enabled(state, "undersea_base", (si, sj))
+    assert ok is True
+    assert state.place_building(si, sj, "undersea_base") == "ok"
+    assert state.cell(si, sj).building == "undersea_base"
+    assert state.undersea_base_count() == 1
+    assert state.has_missile_base()
+    assert state.missile_cost() == COST_MISSILE_CHEAP
+    assert state.island_score() >= SCORE_PER_UNDERSEA_BASE
+
+    # Landfill blocked while base occupies the sea cell (if still coastal).
+    if state._adjacent_to_land(si, sj):
+        assert state.can_landfill(si, sj) is False
+
+    # Tourism camouflage: undersea → sea／無建築；missile_base → 森.
+    terr, bld = state.tourist_appearance(si, sj)
+    assert terr == "sea" and bld is None
+
+    mi, mj = grass[0]
+    state.funds = max(state.funds, COST_MISSILE_BASE)
+    assert state.place_building(mi, mj, "missile_base") == "ok"
+    terr_m, bld_m = state.tourist_appearance(mi, mj)
+    assert terr_m == "forest" and bld_m is None
+    # Owner view unchanged.
+    assert state.cell(mi, mj).building == "missile_base"
+    assert state.cell(si, sj).building == "undersea_base"
+
+    keys = {k for k, *_ in TOOL_SPECS}
+    assert "undersea_base" in keys
+
+    blob = state.to_dict()
+    assert blob["version"] == SAVE_VERSION
+    loaded = IslandState.from_dict(blob)
+    assert loaded.undersea_base_count() == 1
+    assert loaded.has_missile_base()
+    assert loaded.missile_cost() == COST_MISSILE_CHEAP
+    assert loaded.tourist_appearance(si, sj) == ("sea", None)
+    assert loaded.island_score() == state.island_score()
+
+    # Remove undersea base; land missile_base still grants launch privilege.
+    assert loaded.remove_building(si, sj) == "ok"
+    assert loaded.cell(si, sj).terrain == "sea"
+    assert loaded.cell(si, sj).building is None
+    assert loaded.undersea_base_count() == 0
+    assert loaded.building_count("missile_base") == 1
+    assert loaded.has_missile_base()
+
+    print("undersea_base + tourism camo: placement + missile + save OK")
 
 
 def test_settlements_and_disasters():
@@ -3271,6 +3375,7 @@ def main():
     test_hotel_casino_tourism()
     test_university_research_lab()
     test_aquafarm_amusement_power()
+    test_undersea_base_and_tourism_camo()
     test_local_demos()
     test_save_load_roundtrip()
     test_remote_url_normalize()
