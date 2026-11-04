@@ -46,6 +46,7 @@ from .model import (
     COST_BANK,
     COST_BREAKWATER,
     COST_DEFENSE,
+    COST_DECOY,
     COST_EXCAVATE,
     COST_FACTORY,
     COST_FARM,
@@ -387,6 +388,7 @@ TOOL_SPECS: Tuple[Tuple[str, str, Optional[int], str], ...] = (
     ("wait", "觀望怪獸", None, "8"),
     ("defense", "建設防衛設施", COST_DEFENSE, "9"),
     ("missile_base", "建設飛彈基地", COST_MISSILE_BASE, "B"),
+    ("decoy", "建設紙糊假設施", COST_DECOY, "Shift+B"),
     ("harbor", "建設港灣", COST_HARBOR, "H"),
     ("shipyard", "建設造船所", COST_SHIPYARD, "Y"),
     ("export", "貿易輸出", None, "E"),
@@ -482,8 +484,10 @@ def tool_enabled(
     c = state.cell(i, j)
 
     if kind == "missile":
-        if state.monster_at(i, j) is None:
-            return False, "此格沒有怪獸"
+        has_monster = state.monster_at(i, j) is not None
+        has_decoy = c.building == "decoy"
+        if not has_monster and not has_decoy:
+            return False, "此格沒有怪獸／紙糊"
         cost = state.missile_cost()
         if state.funds < cost:
             return False, f"資金不足（需 {cost}）"
@@ -493,6 +497,11 @@ def tool_enabled(
         cost = int(BUILDINGS[kind]["cost"])
         if state.monster_at(i, j) is not None:
             return False, "此格有怪獸"
+        # 防衛再建設＝自爆（定本）：已有防衛時改為自爆指令.
+        if kind == "defense" and c.building == "defense":
+            if state.funds < COST_DEFENSE:
+                return False, f"資金不足（自爆需 {COST_DEFENSE}）"
+            return True, ""
         if c.building is not None:
             return False, "此格已有建築"
         if kind in MOUNTAIN_ONLY_BUILDINGS:
@@ -995,8 +1004,13 @@ class HakoniwaIslandDialog(QDialog):
                 tip += "\n本回合不攻擊；下回合怪獸會行動"
             elif key == "defense":
                 tip += "\n周圍 2 格減怪獸出現／踩踏；踩上自爆清怪"
+                tip += "\n再點建設＝自爆清周圍怪獸（同額費用）"
             elif key == "missile_base":
-                tip += "\n有基地時飛彈更便宜"
+                tip += "\n有基地時飛彈更便宜；觀光者眼中偽裝成森"
+            elif key == "decoy":
+                tip += "\n外觀像防衛、無實防、易毀；觀光者眼中顯示為防衛"
+            elif key == "missile":
+                tip += "\n可打怪獸；亦可拆毀紙糊假設施"
             elif key == "afforest":
                 tip += "\n空平地→森（新林 100 本）"
             elif key == "harvest" and ok and self.selected is not None:
@@ -1175,6 +1189,10 @@ class HakoniwaIslandDialog(QDialog):
             hints.append("可建大學")
         if self.state.can_place_building(i, j, "research_lab"):
             hints.append("可建研究所")
+        if self.state.can_place_building(i, j, "decoy"):
+            hints.append("可建紙糊假設施")
+        if c.building == "defense":
+            hints.append("再建設防衛＝自爆")
         tree_line = ""
         if c.terrain == "forest":
             trees = c.trees if c.trees > 0 else TREE_MIN
@@ -1527,13 +1545,14 @@ class TourismIslandDialog(QDialog):
         hint = QLabel(
             "箱庭斜視 · 觀光模式（唯讀地圖）· 色塊佔位　"
             "滾輪縮放 · 中／右鍵平移　"
-            "可瀏覽格子與留言；建設／地形／回合已鎖定"
+            "可瀏覽格子與留言；建設／地形／回合已鎖定　"
+            "飛彈基地偽裝成森、紙糊假設施顯示為防衛"
         )
         hint.setObjectName("calcResult")
         hint.setWordWrap(True)
         root.addWidget(hint)
 
-        self.map = HakoniwaMapWidget(self.state)
+        self.map = HakoniwaMapWidget(self.state, tourist_mode=True)
         self.map.cell_clicked.connect(self._on_cell_clicked)
         self.hud = HakoniwaMapHud(self.map)
         self.stats = self.hud.stats
@@ -1638,8 +1657,8 @@ class TourismIslandDialog(QDialog):
 
     def _on_cell_clicked(self, i: int, j: int) -> None:
         self.selected = (i, j)
-        c = self.state.cell(i, j)
-        t = TERRAIN[c.terrain]["label"]
-        b = BUILDINGS[c.building]["label"] if c.building else "（無）"
+        terrain_key, building_key = self.state.tourist_appearance(i, j)
+        t = TERRAIN[terrain_key]["label"]
+        b = BUILDINGS[building_key]["label"] if building_key else "（無）"
         self.sel_label.setText(f"格子 ({i},{j})\n地形：{t}\n建築：{b}\n（觀光唯讀）")
         self.map.select(i, j)

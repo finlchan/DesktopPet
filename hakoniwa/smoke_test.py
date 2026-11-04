@@ -39,6 +39,7 @@ from hakoniwa.model import (
     COST_BREAKWATER,
     COST_CASINO,
     COST_DEFENSE,
+    COST_DECOY,
     COST_EXCAVATE,
     COST_FACTORY,
     COST_FARM,
@@ -111,6 +112,7 @@ from hakoniwa.model import (
     SCORE_PER_BANK,
     SCORE_PER_BREAKWATER,
     SCORE_PER_CASINO,
+    SCORE_PER_DECOY,
     SCORE_PER_HOTEL,
     SCORE_PER_MONUMENT,
     SCORE_PER_OILFIELD,
@@ -243,6 +245,8 @@ def test_catalog_costs():
     assert COST_MISSILE_CHEAP == 10
     assert COST_MISSILE_BASE == 300
     assert COST_DEFENSE == 1000
+    assert COST_DECOY == 1
+    assert SCORE_PER_DECOY == 5
     assert COST_HARBOR == 800
     assert COST_SHIPYARD == 500
     assert COST_MONUMENT == 9999
@@ -322,7 +326,7 @@ def test_catalog_costs():
     assert FUNDS_PER_FOOD_BUY == 8
     assert FUNDS_PER_QUARRY == 8
     assert FUNDS_PER_OILFIELD == 50
-    assert SAVE_VERSION == 15
+    assert SAVE_VERSION == 16
     assert 0 < OIL_DISCOVER_CHANCE <= 1
     assert 0 < OIL_DEPLETION_CHANCE < 1
     assert TSUNAMI_BASE_CHANCE > 0
@@ -1963,19 +1967,20 @@ def test_aquafarm_amusement_power():
     ]
     assert len(grass) >= 3
 
-    # 養殖場：須建在淺灘（先填海造一格淺灘）；平地不可.
-    sea = next(
+    # 養殖場：須建在淺灘；平地不可.
+    # Opening map already rings land with 淺灘 (#58)；深海不再鄰陸，勿再找海填成淺灘.
+    shallow = next(
         (
             (i, j)
             for i in range(20)
             for j in range(20)
-            if state.can_landfill(i, j) and state.cell(i, j).terrain == "sea"
+            if state.cell(i, j).terrain == "shallow"
+            and state.cell(i, j).building is None
         ),
         None,
     )
-    assert sea is not None
-    assert state.landfill(*sea) == "ok"
-    si, sj = sea
+    assert shallow is not None
+    si, sj = shallow
     assert state.cell(si, sj).terrain == "shallow"
     ok, reason = tool_enabled(state, "aquafarm", grass[0])
     assert ok is False and "淺灘" in reason
@@ -2421,6 +2426,131 @@ def test_defense_and_missile_base():
     assert ok is True
     ok, reason = tool_enabled(loaded, "defense", (bi, bj))
     assert ok is False and "建築" in reason
+
+
+def test_decoy_and_tourism_camouflage():
+    """紙糊假設施＋觀光偽裝＋防衛自爆（定本ハリボテ／偽裝／再建設）."""
+    state = IslandState.new_game()
+    land = [(i, j) for i in range(20) for j in range(20) if state.is_land(i, j)]
+    grass = [
+        (i, j)
+        for i, j in land
+        if state.cell(i, j).terrain == "grass" and state.cell(i, j).building is None
+    ]
+    while len(grass) < 4:
+        for i, j in land:
+            if state.cell(i, j).terrain == "dirt" and state.cell(i, j).building is None:
+                assert state.level_land(i, j) == "ok"
+                grass.append((i, j))
+                if len(grass) >= 4:
+                    break
+        else:
+            break
+    assert len(grass) >= 4
+    bi, bj = grass[0]
+    di, dj = grass[1]
+    fi, fj = grass[2]
+    gi, gj = grass[3]
+
+    # Place missile base + decoy + real defense.
+    state.funds = max(
+        state.funds, COST_MISSILE_BASE + COST_DEFENSE + COST_DECOY + 50
+    )
+    assert state.place_building(bi, bj, "missile_base") == "ok"
+    assert state.place_building(di, dj, "decoy") == "ok"
+    assert state.cell(di, dj).building == "decoy"
+    assert state.place_building(fi, fj, "defense") == "ok"
+
+    # Decoy is NOT real defense cover.
+    assert not state.protected_by_defense(di, dj)
+    assert (di, dj) not in state.defense_positions()
+    assert state.protected_by_defense(fi, fj)
+
+    # Tourism camouflage: missile→forest, decoy→defense, true defense unchanged.
+    t_terrain, t_bldg = state.tourist_appearance(bi, bj)
+    assert t_terrain == "forest" and t_bldg is None
+    t_terrain, t_bldg = state.tourist_appearance(di, dj)
+    assert t_terrain == state.cell(di, dj).terrain and t_bldg == "defense"
+    t_terrain, t_bldg = state.tourist_appearance(fi, fj)
+    assert t_bldg == "defense"
+    # Owner truth unchanged.
+    assert state.cell(bi, bj).building == "missile_base"
+    assert state.cell(di, dj).building == "decoy"
+
+    # Tiny score weight vs real defense.
+    score_with = state.island_score()
+    state.cell(di, dj).building = None
+    score_without = state.island_score()
+    assert score_with - score_without == SCORE_PER_DECOY
+    state.cell(di, dj).building = "decoy"
+
+    # Missile can target decoy (no monster) and tears it down.
+    ok, _ = tool_enabled(state, "missile", (di, dj))
+    assert ok is True
+    funds_before = state.funds
+    cheap = state.missile_cost()
+    assert state.fire_missile(di, dj) == "ok"
+    assert state.cell(di, dj).building is None
+    assert state.funds == funds_before - cheap
+    assert any("紙糊" in line for line in state.log)
+
+    # Rebuild decoy and stomp: crushed, monster survives (no 自爆).
+    state.cell(di, dj).terrain = "grass"
+    state.cell(di, dj).building = None
+    state.funds = max(state.funds, COST_DECOY)
+    assert state.place_building(di, dj, "decoy") == "ok"
+    from hakoniwa.model import Monster
+
+    m = Monster(kind="inora", i=di, j=dj, hp=1)
+    state.monsters = [m]
+    notes = state._stomp_cell(di, dj, m)
+    assert any("紙糊" in n for n in notes)
+    assert state.has_monster()
+    assert state.cell(di, dj).building is None
+    state.monsters = []
+
+    # Defense rebuild = detonate clears nearby monsters.
+    state.funds = max(state.funds, COST_DEFENSE)
+    near = next(
+        (
+            (x, y)
+            for x, y in state.cells_within(fi, fj, DEFENSE_RADIUS)
+            if (x, y) != (fi, fj) and state.is_land(x, y)
+        ),
+        None,
+    )
+    assert near is not None
+    m2 = state.spawn_monster(*near)
+    assert m2 is not None
+    ok, _ = tool_enabled(state, "defense", (fi, fj))
+    assert ok is True  # rebuild/detonate path
+    funds_before = state.funds
+    assert state.place_building(fi, fj, "defense") == "ok"
+    assert state.cell(fi, fj).building is None
+    assert not state.has_monster()
+    assert state.funds == funds_before - COST_DEFENSE
+    assert any("自爆" in line for line in state.log)
+
+    # Toolbar: decoy on empty grass.
+    state.funds = max(state.funds, COST_DECOY)
+    ok, _ = tool_enabled(state, "decoy", (gi, gj))
+    assert ok is True
+    assert state.place_building(gi, gj, "decoy") == "ok"
+
+    # Save round-trip keeps decoy + missile_base.
+    data = state.to_dict()
+    assert data["version"] == SAVE_VERSION
+    loaded = IslandState.from_dict(data)
+    assert loaded.building_count("decoy") == 1
+    assert loaded.building_count("missile_base") == 1
+    assert loaded.tourist_appearance(bi, bj) == ("forest", None)
+    t_terrain, t_bldg = loaded.tourist_appearance(gi, gj)
+    assert t_bldg == "defense"
+
+    # Demo coral includes camouflage targets for offline 觀光.
+    coral = make_demo_coral()
+    assert coral.building_count("missile_base") >= 1
+    assert coral.building_count("decoy") >= 1
 
 
 def test_tool_enabled_rules():
@@ -3260,6 +3390,7 @@ def main():
     test_settlements_and_disasters()
     test_monster_events()
     test_defense_and_missile_base()
+    test_decoy_and_tourism_camouflage()
     test_harbor_shipyard_trade()
     test_monument_and_island_score()
     test_mountain_quarry_labor()

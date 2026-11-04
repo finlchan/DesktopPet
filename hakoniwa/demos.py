@@ -101,6 +101,7 @@ def make_demo_coral() -> IslandState:
             if oil_placed:
                 break
     # Civic color blocks after coastal breakwater so 防波堤 still gets a shore cell.
+    # Include missile_base + decoy so 觀光偽裝（基地→森／紙糊→防衛）可在示範島看見.
     civic_kinds = (
         "bank",
         "supermarket",
@@ -112,6 +113,8 @@ def make_demo_coral() -> IslandState:
         "casino",
         "university",
         "research_lab",
+        "missile_base",
+        "decoy",
     )
     free_grass = [
         (i, j)
@@ -144,7 +147,7 @@ def make_demo_coral() -> IslandState:
         name="珊瑚灘島",
         cells=cells,
         log=[
-            "示範島：珊瑚灘（觀光唯讀；防波堤／油田／銀行超市神社／公園／空港／ロケット基地／酒店賭場／大學研究所）"
+            "示範島：珊瑚灘（觀光唯讀；防波堤／油田／銀行超市神社／公園／空港／ロケット基地／酒店賭場／大學研究所／飛彈基地／紙糊）"
         ],
         comments=[
             GuestbookEntry(
