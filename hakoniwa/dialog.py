@@ -40,6 +40,8 @@ from .model import (
     COASTAL_BUILDINGS,
     COST_AFFOREST,
     COST_AIRPORT,
+    COST_AMUSEMENT_PARK,
+    COST_AQUAFARM,
     COST_ATTRACT,
     COST_BANK,
     COST_BREAKWATER,
@@ -47,6 +49,7 @@ from .model import (
     COST_EXCAVATE,
     COST_FACTORY,
     COST_FARM,
+    COST_POWER_PLANT,
     COST_CASINO,
     COST_HARBOR,
     COST_HARVEST,
@@ -76,6 +79,7 @@ from .model import (
     MAX_GUEST_TEXT,
     MOUNTAIN_ONLY_BUILDINGS,
     PLACEABLE_BUILDINGS,
+    SHALLOW_ONLY_BUILDINGS,
     TREE_MIN,
     food_buy_cost,
     food_export_funds,
@@ -402,6 +406,9 @@ TOOL_SPECS: Tuple[Tuple[str, str, Optional[int], str], ...] = (
     ("deposit", "銀行存款", None, "D"),
     ("withdraw", "銀行提款", None, "U"),
     ("buy_food", "超市買糧", None, "P"),
+    ("aquafarm", "建設養殖場", COST_AQUAFARM, "V"),
+    ("amusement_park", "建設遊樂園", COST_AMUSEMENT_PARK, "Shift+V"),
+    ("power_plant", "建設發電廠", COST_POWER_PLANT, "Shift+P"),
 )
 
 
@@ -491,6 +498,9 @@ def tool_enabled(
         if kind in MOUNTAIN_ONLY_BUILDINGS:
             if c.terrain != "mountain":
                 return False, "採掘場須建在山上"
+        elif kind in SHALLOW_ONLY_BUILDINGS:
+            if c.terrain != "shallow":
+                return False, "養殖場須建在淺灘"
         elif c.terrain not in BUILDABLE:
             return False, "須在平地建設"
         if kind in COASTAL_BUILDINGS and not state._adjacent_to_sea(i, j):
