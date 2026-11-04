@@ -3162,6 +3162,178 @@ class JitterSettleLabel(QWidget):
 
 # File shortcuts submenu (opened via Social Icon Fill on the main menu)
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Falling Petals — weather particle layer for File/URL Shortcuts (指定傳送)
+# ---------------------------------------------------------------------------
+# 「飄落花瓣（Falling Petals）」: Qt / QPainter take on Canvas 2D petals.
+# Structured so mode could later swap to snow/rain (same particle loop).
+WEATHER_MODE_PETALS = "petals"
+PETAL_COUNT = 42
+PETAL_COLORS = (
+    QColor(232, 242, 248, 200),   # light sky
+    QColor(176, 224, 255, 180),   # soft sky
+    QColor(135, 206, 250, 170),   # menu border sky
+    QColor(255, 255, 255, 160),   # white
+    QColor(200, 220, 235, 190),   # cool steel mist
+)
+
+
+class WeatherParticleCanvas(QWidget):
+    """Ambient weather particles (petals now; snow/rain-ready structure)."""
+
+    def __init__(self, parent=None, *, mode: str = WEATHER_MODE_PETALS, count: int = PETAL_COUNT):
+        super().__init__(parent)
+        self._mode = mode
+        self._count = max(8, int(count))
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._particles: list[dict] = []
+        self._seeded = False
+        self._cursor = QPointF(-9999.0, -9999.0)
+        self._prev_cursor = QPointF(-9999.0, -9999.0)
+        self._cursor_vel = QPointF(0.0, 0.0)
+        self._timer = QTimer(self)
+        self._timer.setInterval(16)
+        self._timer.timeout.connect(self._tick)
+
+    def set_mode(self, mode: str) -> None:
+        """Swap weather kind (petals / future snow / rain) and reseed."""
+        self._mode = mode or WEATHER_MODE_PETALS
+        self._seeded = False
+        self._particles.clear()
+        self.update()
+
+    def start(self) -> None:
+        if not self._timer.isActive():
+            self._timer.start()
+
+    def stop(self) -> None:
+        self._timer.stop()
+
+    def _spawn_one(self, w: float, h: float, *, at_top: bool = False) -> dict:
+        size = random.uniform(5.0, 11.0)
+        return {
+            "x": random.uniform(-8.0, w + 8.0),
+            "y": (random.uniform(-40.0, -6.0) if at_top else random.uniform(-20.0, h)),
+            "vy": random.uniform(0.35, 0.95),
+            "vx": random.uniform(-0.25, 0.25),
+            "push_vx": 0.0,
+            "push_vy": 0.0,
+            "sway_amp": random.uniform(0.6, 1.8),
+            "sway_freq": random.uniform(0.6, 1.4),
+            "sway_phase": random.uniform(0.0, 2.0 * math.pi),
+            "rot": random.uniform(0.0, 360.0),
+            "rot_v": random.uniform(-1.8, 1.8),
+            "flip_phase": random.uniform(0.0, 2.0 * math.pi),
+            "flip_freq": random.uniform(0.5, 1.2),
+            "size": size,
+            "color": random.choice(PETAL_COLORS),
+            "age": random.uniform(0.0, 100.0),
+        }
+
+    def _ensure(self, w: float, h: float) -> None:
+        if self._seeded and self._particles:
+            return
+        self._particles = [
+            self._spawn_one(w, h, at_top=False) for _ in range(self._count)
+        ]
+        self._seeded = True
+
+    def _poll_cursor(self) -> None:
+        local = self.mapFromGlobal(QCursor.pos())
+        cur = QPointF(float(local.x()), float(local.y()))
+        if self.rect().contains(local):
+            self._cursor_vel = QPointF(
+                cur.x() - self._prev_cursor.x(),
+                cur.y() - self._prev_cursor.y(),
+            )
+            self._cursor = cur
+        else:
+            self._cursor = QPointF(-9999.0, -9999.0)
+            self._cursor_vel = QPointF(0.0, 0.0)
+        self._prev_cursor = cur
+
+    def _tick(self) -> None:
+        w = float(max(1, self.width()))
+        h = float(max(1, self.height()))
+        self._ensure(w, h)
+        self._poll_cursor()
+        cur = self._cursor
+        vel = self._cursor_vel
+        speed = math.hypot(vel.x(), vel.y())
+
+        for p in self._particles:
+            p["age"] += 0.016
+            # Natural fall + sway.
+            sway = p["sway_amp"] * math.sin(
+                p["age"] * p["sway_freq"] * 2.0 * math.pi + p["sway_phase"]
+            )
+            p["x"] += p["vx"] + sway * 0.08 + p["push_vx"]
+            p["y"] += p["vy"] + p["push_vy"]
+            p["rot"] += p["rot_v"]
+
+            # Cursor push: nearby petals nudged by cursor velocity, then decay.
+            if speed > 0.4 and cur.x() > -9000:
+                dx = p["x"] - cur.x()
+                dy = p["y"] - cur.y()
+                dist = math.hypot(dx, dy)
+                if dist < 70.0 and dist > 0.5:
+                    strength = (1.0 - dist / 70.0) * min(1.0, speed / 18.0)
+                    p["push_vx"] += vel.x() * 0.12 * strength
+                    p["push_vy"] += vel.y() * 0.12 * strength
+
+            p["push_vx"] *= 0.90
+            p["push_vy"] *= 0.90
+
+            # Respawn at top when past bottom (or far sideways).
+            if p["y"] > h + 16.0 or p["x"] < -30.0 or p["x"] > w + 30.0:
+                fresh = self._spawn_one(w, h, at_top=True)
+                p.update(fresh)
+
+        self.update()
+
+    def _draw_petal(self, painter: QPainter, p: dict) -> None:
+        # Fake turn via horizontal scale; slight vertical squash.
+        flip = math.sin(p["age"] * p["flip_freq"] * 2.0 * math.pi + p["flip_phase"])
+        scale_x = 0.25 + 0.75 * abs(flip)
+        size = p["size"]
+        painter.save()
+        painter.translate(p["x"], p["y"])
+        painter.rotate(p["rot"])
+        painter.scale(scale_x, 1.0)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(p["color"])
+        # Soft teardrop / petal: ellipse + tip.
+        painter.drawEllipse(QRectF(-size * 0.45, -size * 0.7, size * 0.9, size * 1.35))
+        tip = QPainterPath()
+        tip.moveTo(0.0, -size * 0.85)
+        tip.quadTo(size * 0.35, -size * 0.2, 0.0, size * 0.55)
+        tip.quadTo(-size * 0.35, -size * 0.2, 0.0, -size * 0.85)
+        painter.drawPath(tip)
+        # Vein hint
+        vein = QColor(p["color"])
+        vein.setAlpha(min(255, p["color"].alpha() + 40))
+        pen = QPen(vein)
+        pen.setWidthF(1.0)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawLine(QPointF(0.0, -size * 0.55), QPointF(0.0, size * 0.35))
+        painter.restore()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        del event
+        w = float(max(1, self.width()))
+        h = float(max(1, self.height()))
+        self._ensure(w, h)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        if self._mode == WEATHER_MODE_PETALS:
+            for p in self._particles:
+                self._draw_petal(painter, p)
+        # Future: elif self._mode == "snow": ... elif "rain": ...
+        painter.end()
+
+
 class FileShortcutsSubMenu(PopupPanel):
     """Submenu listing file/URL shortcuts; opened from the main pet menu icon."""
 
@@ -3178,15 +3350,26 @@ class FileShortcutsSubMenu(PopupPanel):
         top_layout.setContentsMargins(0, 0, 0, 0)
         top_layout.setSpacing(0)
 
+        # Layering top→bottom: content (text/controls) > petals > panel bg
         self.container = QFrame(self)
         self.container.setObjectName("subMenuContainer")
         top_layout.addWidget(self.container)
 
-        self.main_layout = QVBoxLayout(self.container)
+        self.petals = WeatherParticleCanvas(
+            self.container, mode=WEATHER_MODE_PETALS, count=PETAL_COUNT
+        )
+        self.petals.lower()
+
+        self.content = QWidget(self.container)
+        self.content.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.content.setStyleSheet("background: transparent;")
+        self.content.raise_()
+
+        self.main_layout = QVBoxLayout(self.content)
         self.main_layout.setContentsMargins(8, 8, 8, 8)
         self.main_layout.setSpacing(4)
 
-        self.title_label = JitterSettleLabel(FILE_URL_SHORTCUTS_TITLE, self)
+        self.title_label = JitterSettleLabel(FILE_URL_SHORTCUTS_TITLE, self.content)
         self.main_layout.addWidget(self.title_label)
 
         self.search_edit = QLineEdit()
@@ -3215,6 +3398,29 @@ class FileShortcutsSubMenu(PopupPanel):
     def button_style(self, base_color):
         return menu_button_style(base_color)
 
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._sync_layers()
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self._sync_layers()
+        self.petals.start()
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        if hasattr(self, "petals"):
+            self.petals.stop()
+        super().hideEvent(event)
+
+    def _sync_layers(self) -> None:
+        if not hasattr(self, "container"):
+            return
+        r = self.container.rect()
+        self.petals.setGeometry(r)
+        self.content.setGeometry(r)
+        self.petals.lower()
+        self.content.raise_()
+
     def _filtered_shortcuts(self):
         query = (self.search_edit.text() or "").strip().lower()
         if not query:
@@ -3242,11 +3448,11 @@ class FileShortcutsSubMenu(PopupPanel):
         shortcuts = self._filtered_shortcuts()
         if not self._all_shortcuts:
             lbl = QLabel("(No file shortcuts)")
-            lbl.setStyleSheet("color: #dddddd;")
+            lbl.setStyleSheet("color: #dddddd; background: transparent;")
             self.items_container.addWidget(lbl)
         elif not shortcuts:
             lbl = QLabel("(No matching shortcuts)")
-            lbl.setStyleSheet("color: #dddddd;")
+            lbl.setStyleSheet("color: #dddddd; background: transparent;")
             self.items_container.addWidget(lbl)
         else:
             for sc in shortcuts:
@@ -3269,7 +3475,11 @@ class FileShortcutsSubMenu(PopupPanel):
                     lambda checked=False, p=path, t=sc_type: self.open_shortcut.emit(p, t)
                 )
                 self.items_container.addWidget(btn)
+        self.content.adjustSize()
+        hint = self.content.sizeHint()
+        self.container.setFixedSize(max(hint.width(), 220), max(hint.height(), 120))
         self.adjustSize()
+        self._sync_layers()
 
     def refresh_and_show(self, anchor_geometry):
         self._all_shortcuts = [
@@ -3282,7 +3492,7 @@ class FileShortcutsSubMenu(PopupPanel):
         self.search_edit.blockSignals(False)
         self._rebuild_items()
 
-        self.adjustSize()
+        self._sync_layers()
         screen_geo = screen_available_geometry(self)
         x = anchor_geometry.x() + anchor_geometry.width()
         y = anchor_geometry.y()
@@ -3294,6 +3504,7 @@ class FileShortcutsSubMenu(PopupPanel):
         self.show()
         self.raise_()
         self.activateWindow()
+        self.petals.start()
 
     def _hide_if_inactive(self):
         if self._suppress_hide or self.isActiveWindow():
