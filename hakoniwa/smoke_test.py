@@ -2539,6 +2539,12 @@ def test_dialog_import_offscreen():
     assert dlg.server_url.parent() is dlg.hud.settings_body
     assert dlg.conn_status.parent() is dlg.hud.settings_body
     assert not dlg.hud.tools_drawer.isVisible()
+    # Guestbook closed by default; open via 留言 icon.
+    assert dlg.hud.guestbook_frame.isHidden()
+    assert not dlg.hud.icon_bar.button("guestbook").isChecked()
+    # Settings live in their own drawer (設定 icon), not under tools.
+    assert dlg.hud.settings_drawer.isHidden()
+    assert dlg.hud.notify_drawer.isHidden()
     # No top instruction banner (「點選格子…」/ shortcut strip) on open.
     from PySide6.QtWidgets import QLabel
 
@@ -2546,15 +2552,20 @@ def test_dialog_import_offscreen():
     for lab in dlg.findChildren(QLabel):
         t = lab.text() or ""
         assert not any(b in t for b in banner_bits), t
-    # Tools button geometry is correct even before the dialog is shown
+    # Icon bar geometry is correct even before the dialog is shown
     # (isHidden()-based layout; was stuck at top-left with isVisible()).
+    assert not dlg.hud.icon_bar.isHidden()
     assert not dlg.hud.tools_btn.isHidden()
-    btn_geo = dlg.hud.tools_btn.geometry()
+    btn_geo = dlg.hud.icon_bar.geometry()
     assert btn_geo.y() >= dlg.hud.height() // 2, (
         btn_geo,
         dlg.hud.size(),
     )
     assert btn_geo.x() <= 16, btn_geo
+    # Five icon buttons: 通知／建築／資訊／留言／設定
+    from hakoniwa.hud_icons import ICON_KEYS
+
+    assert set(dlg.hud.icon_bar.buttons) == set(ICON_KEYS)
     # No selection → cell tools disabled；誘致不需選格（資金足夠時可點）；
     # 火箭發射無基地時仍鎖.
     dlg._refresh_toolbar()
@@ -2582,8 +2593,8 @@ def test_dialog_import_offscreen():
     dlg.resize(960, 780)
     dlg._refresh_ui()
     app.processEvents()
-    # After show: tools button still bottom-left without needing a click.
-    btn_geo = dlg.hud.tools_btn.geometry()
+    # After show: icon bar still bottom-left without needing a click.
+    btn_geo = dlg.hud.icon_bar.geometry()
     assert btn_geo.y() >= dlg.hud.height() - btn_geo.height() - 24, (
         btn_geo,
         dlg.hud.size(),
@@ -2591,12 +2602,21 @@ def test_dialog_import_offscreen():
     status_h = dlg.stats.height()
     line_h = dlg.stats.fontMetrics().height()
     assert status_h <= line_h + 16, (status_h, line_h, dlg.stats.text())
-    # Opening tools drawer exposes build toolbar + server settings.
+    # 建築 icon opens build toolbar; 設定 opens server settings separately.
     # Use isHidden() — isVisible() is false while the dialog itself is not shown.
     dlg.hud.tools_btn.setChecked(True)
     assert not dlg.hud.tools_drawer.isHidden()
+    assert dlg.hud.settings_drawer.isHidden()
     dlg.hud.tools_btn.setChecked(False)
     assert dlg.hud.tools_drawer.isHidden()
+    dlg.hud.icon_bar.button("settings").setChecked(True)
+    assert not dlg.hud.settings_drawer.isHidden()
+    dlg.hud.icon_bar.button("settings").setChecked(False)
+    # 留言 toggles guestbook (starts closed).
+    dlg.hud.icon_bar.button("guestbook").setChecked(True)
+    assert not dlg.hud.guestbook_frame.isHidden()
+    dlg.hud.icon_bar.button("guestbook").setChecked(False)
+    assert dlg.hud.guestbook_frame.isHidden()
 
     # Select a buildable grass cell → farm/factory enable.
     land = [(i, j) for i in range(20) for j in range(20) if dlg.state.is_land(i, j)]
@@ -2649,7 +2669,10 @@ def test_dialog_import_offscreen():
     assert tour.guestbook_view is not None
     assert hasattr(tour.map, "zoom_by")
     assert tour.guestbook_view.parent() is tour.hud.guestbook_frame
-    assert not tour.hud.tools_btn.isVisible()
+    assert tour.hud.tools_btn.isHidden()
+    assert tour.hud.guestbook_frame.isHidden()
+    tour.hud.icon_bar.button("guestbook").setChecked(True)
+    assert not tour.hud.guestbook_frame.isHidden()
     tour.state.add_comment("Tourist", "nice pines")
     tour._show_guestbook(tour.state.list_comments())
     assert "Tourist" in tour.guestbook_view.toPlainText()
@@ -2660,7 +2683,7 @@ def test_dialog_import_offscreen():
 
 
 def _write_ui_overlay_proof(dlg) -> None:
-    """Grab map HUD proving status/tile/log/guestbook/tools live on the map."""
+    """Grab map HUD proving status/tile/log/icon-bar/tools live on the map."""
     from PySide6.QtWidgets import QApplication
 
     out_dir = Path(__file__).resolve().parents[1] / "hakoniwa" / "testdata"
@@ -2668,7 +2691,7 @@ def _write_ui_overlay_proof(dlg) -> None:
 
     dlg.resize(960, 780)
     dlg.show()
-    dlg.hud.tools_btn.setChecked(False)
+    dlg.hud.close_bottom_panels()
     dlg._refresh_ui()
     app = QApplication.instance()
     if app is not None:
