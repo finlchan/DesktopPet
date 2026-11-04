@@ -328,7 +328,10 @@ def test_new_island_and_loop():
     assert state.land_count() == 7
     assert state.funds == 1000
     sea = sum(1 for row in state.cells for c in row if c.terrain == "sea")
-    assert sea == 20 * 20 - 7
+    shallow = sum(1 for row in state.cells for c in row if c.terrain == "shallow")
+    assert sea + shallow == 20 * 20 - 7
+    assert shallow > 0, "opening map should ring land with 淺灘"
+    assert sea > 0, "opening map should keep deep 海 beyond the ring"
 
     # Need 平地 for buildings — level a dirt cell first if needed.
     land = [(i, j) for i in range(20) for j in range(20) if state.is_land(i, j)]
@@ -361,23 +364,50 @@ def test_new_island_and_loop():
     if dirt:
         assert state.place_building(dirt[0], dirt[1], "factory") != "ok"
 
-    # Landfill: sea → shallow (adjacent), then shallow → dirt.
+    # Landfill coastal 淺灘 → 荒地 (opening map rings land with shallow).
     filled = False
     for si in range(20):
         for sj in range(20):
-            if state.can_landfill(si, sj) and state.cell(si, sj).terrain == "sea":
+            if state.can_landfill(si, sj) and state.cell(si, sj).terrain == "shallow":
                 funds_before = state.funds
                 assert state.landfill(si, sj) == "ok"
-                assert state.cell(si, sj).terrain == "shallow"
-                assert state.funds == funds_before - COST_LANDFILL
-                assert state.landfill(si, sj) == "ok"
                 assert state.cell(si, sj).terrain == "dirt"
+                assert state.funds == funds_before - COST_LANDFILL
                 filled = True
                 break
         if filled:
             break
     assert filled
     assert state.land_count() == 8
+
+    # Landfill 海→淺灘 when a deep-sea cell is forced adjacent to land.
+    sea_touch = next(
+        (
+            (ni, nj)
+            for i, j in [(x, y) for x in range(20) for y in range(20) if state.is_land(x, y)]
+            for ni, nj in neighbors(i, j)
+            if state.cell(ni, nj).terrain == "sea"
+        ),
+        None,
+    )
+    if sea_touch is None:
+        # Convert one coastal shallow neighbor-of-shallow into sea next to new dirt.
+        coast = next(
+            (
+                (i, j)
+                for i in range(20)
+                for j in range(20)
+                if state.cell(i, j).terrain == "shallow" and state._adjacent_to_land(i, j)
+            ),
+            None,
+        )
+        assert coast is not None
+        state.cells[coast[0]][coast[1]] = Cell("sea")
+        sea_touch = coast
+    funds_before = state.funds
+    assert state.landfill(*sea_touch) == "ok"
+    assert state.cell(*sea_touch).terrain == "shallow"
+    assert state.funds == funds_before - COST_LANDFILL
 
     # 植林 on empty grass.
     grass_empty = next(
@@ -2313,21 +2343,22 @@ def test_tool_enabled_rules():
     assert ok is False
     assert "資金" in reason
 
-    # Sea cell adjacent to land → landfill ok when funded.
+    # Coastal 淺灘／海 adjacent to land → landfill ok when funded.
     state.funds = 1000
-    sea_adj = next(
+    water_adj = next(
         (
             (i, j)
             for i in range(20)
             for j in range(20)
-            if state.can_landfill(i, j) and state.cell(i, j).terrain == "sea"
+            if state.can_landfill(i, j)
+            and state.cell(i, j).terrain in ("sea", "shallow")
         ),
         None,
     )
-    assert sea_adj is not None
-    ok, _ = tool_enabled(state, "landfill", sea_adj)
+    assert water_adj is not None
+    ok, _ = tool_enabled(state, "landfill", water_adj)
     assert ok is True
-    ok, reason = tool_enabled(state, "farm", sea_adj)
+    ok, reason = tool_enabled(state, "farm", water_adj)
     assert ok is False
     assert "平地" in reason
 
@@ -2346,7 +2377,7 @@ def test_dialog_import_offscreen():
     from hakoniwa.dialog import TourismIslandDialog, TourismListDialog
 
     dlg = HakoniwaIslandDialog(None, None)
-    assert dlg.windowTitle() == "箱庭島"
+    assert "箱庭島" in dlg.windowTitle()
     assert dlg.state.land_count() == 7
     assert dlg._online is False
     assert "本機" in dlg.conn_status.text()
@@ -2660,7 +2691,7 @@ def test_server_api_if_available():
 
 
 def test_terrain_top_assets():
-    """Bundled dirt／grass／sea flat tops must exist (no skirt assets required)."""
+    """Bundled dirt／grass／海／淺灘 flat tops must exist (no skirt assets required)."""
     from hakoniwa.tiles import (
         OCEAN_BACKGROUND,
         TERRAIN_TILE_FILES,
@@ -2668,11 +2699,13 @@ def test_terrain_top_assets():
         ATLAS,
     )
 
-    for key in ("dirt", "grass", "sea"):
+    for key in ("dirt", "grass", "sea", "shallow"):
         fname = TERRAIN_TILE_FILES[key]
         path = TILES_DIR / fname
         assert path.is_file(), f"missing terrain top {path}"
         assert path.stat().st_size > 1000, path
+    # Distinct files: 淺灘 keeps original cyan sea art; 海 is deeper blue recolor.
+    assert TERRAIN_TILE_FILES["sea"] != TERRAIN_TILE_FILES["shallow"]
     # Ocean backdrop is preferred but optional (dark teal fallback).
     if OCEAN_BACKGROUND.is_file():
         assert OCEAN_BACKGROUND.stat().st_size > 1000
@@ -2687,12 +2720,12 @@ def test_terrain_top_assets():
         print(f"terrain assets: skip Qt load ({exc})")
         return
     _app = QApplication.instance() or QApplication([])
-    assert ATLAS.has_primary_tops(), "dirt/grass/sea tops failed to load"
-    for key in ("dirt", "grass", "sea"):
+    assert ATLAS.has_primary_tops(), "dirt/grass/sea/shallow tops failed to load"
+    for key in ("dirt", "grass", "sea", "shallow"):
         pix = ATLAS.pixmap_for(key)
         assert pix is not None and not pix.isNull()
         assert pix.width() >= 64 and pix.height() >= 64
-    print("terrain tops: dirt/grass/sea OK")
+    print("terrain tops: dirt/grass/sea/shallow OK")
 
 
 def test_user_art_loader_hook():

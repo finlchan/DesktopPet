@@ -2,7 +2,7 @@
 
 Optional PNGs that replace 箱庭島 color-block buildings／monsters (and optionally
 terrain tops). Leave empty until you have art — the game falls back to color
-blocks and bundled sea／dirt／grass.
+blocks and bundled 海／淺灘／dirt／grass.
 
 Preferred runtime path (beside the save file):
 

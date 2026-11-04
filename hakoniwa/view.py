@@ -1,4 +1,4 @@
-"""箱庭斜視 map widget — textured diamond tops (dirt／grass／sea) + overlays.
+"""箱庭斜視 map widget — textured diamond tops (dirt／grass／海／淺灘) + overlays.
 
 Lattice is logical 1:1 diamonds with v9 stagger, then H/W≈0.65 oblique
 foreshortening (Y *= OBLIQUE_Y_SCALE) from ``hakoniwa.grid`` — NOT a flat

@@ -10,8 +10,8 @@ not a flat top-down square grid rotated 45°.
 | | |
 |---|---|
 | Projection | Logical 1:1 diamond tops → screen `H = W · 0.65` (`grid.OBLIQUE_Y_SCALE`) |
-| Lattice | v9 diagonal-strip stagger, 20×20, same-layer sea/dirt/grass |
-| Terrain | Flat top PNGs in `assets/tiles/` (dirt／grass／sea；森＝草面＋綠洗); ocean backdrop optional |
+| Lattice | v9 diagonal-strip stagger, 20×20, same-layer 海／淺灘／mud／grass |
+| Terrain | Flat top PNGs in `assets/tiles/` (dirt／grass／shallow／sea；森＝草面＋綠洗); 淺灘＝原海面貼圖、海＝同圖加深藍; ocean backdrop optional |
 | User art | Optional PNGs in `Data/hakoniwa/user/` or `assets/user/` replace building／monster color blocks and optionally terrain (see below); missing → color blocks / bundled tops |
 | Building art | User PNGs align by **alpha content AABB** (ignore canvas padding): content left↔right = diamond W↔E (full cell `W`); content bottom = S tip; top may rise above N; **no** diamond clip. Flat art（防波堤 etc.）included. Terrain tops diamond-clipped; user dirt／mountain source also uses content AABB so padding still fills the diamond. `tall=True` marks portrait-friendly keys |
 | Cell size | `DEFAULT_CELL=120`; wheel zoom `MIN_CELL…MAX_CELL` (12…256); `OBLIQUE_Y_SCALE=0.65` |
@@ -55,9 +55,10 @@ No permanent right-side build column. Server URL / 本機·連線 live under too
 
 ## User-provided art (optional)
 
-Buildings／monsters ship as **color blocks** until you drop PNGs. Sea／dirt／grass
-already have bundled tops; user files override them when present. **Do not commit
-player PNGs** — `Data/` is gitignored; `assets/user/*.png` is also ignored.
+Buildings／monsters ship as **color blocks** until you drop PNGs. 海／淺灘／dirt／grass
+already have bundled tops (`sea-01` deeper blue, `shallow-01` original cyan sea art);
+user files override them when present. **Do not commit player PNGs** — `Data/` is
+gitignored; `assets/user/*.png` is also ignored.
 
 | Search root (first hit wins) | When |
 |---|---|
@@ -78,7 +79,7 @@ portrait subjects:
 | Monsters | `inora.png` |
 
 Fallback when a file is absent: buildings／monsters → solid color; terrain → bundled
-`assets/tiles/{sea,dirt,grass}-01.png` (or color if that is missing too). Hook:
+`assets/tiles/{sea,shallow,dirt,grass}-01.png` (or color if that is missing too). Hook:
 `hakoniwa.user_art` + `TileAtlas` / map paint in `view.py`.
 
 ## Checklist after any map/view change
@@ -89,7 +90,7 @@ Fallback when a file is absent: buildings／monsters → solid color; terrain �
 4. Run `python -m hakoniwa.smoke_test` — must pass `test_oblique_foreshortening_invariant`.
 5. Keep v9 stagger, 20×20, same-layer tops, no under-tile skirts.
 6. Confirm HUD overlays still sit on the map (not outside columns).
-7. Confirm dirt／grass／sea cells show real textures (not solid color fills).
+7. Confirm dirt／grass／海／淺灘 cells show real textures (deep blue vs cyan shallow).
 8. Without user PNGs, buildings／monsters stay color blocks; with drops, those keys swap.
 9. Building user art spans W↔E tips, sits on the S tip, and may exceed the N tip (no diamond clip on sprites).
 
