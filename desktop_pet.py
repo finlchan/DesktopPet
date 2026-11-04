@@ -27,7 +27,8 @@ from PySide6.QtCore import (
 from PySide6.QtGui import (
     QPixmap, QImage, QPainter, QColor, QCursor, QIcon, QAction, QMovie,
     QDesktopServices,
-    QPainterPath, QLinearGradient, QBrush, QPen, QFont, QFontMetrics,
+    QPainterPath, QLinearGradient, QRadialGradient, QBrush, QPen, QFont,
+    QFontMetrics,
 )
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout, QHBoxLayout, QGridLayout,
@@ -2718,6 +2719,156 @@ class CrumbleDownLabel(QWidget):
         painter.end()
 
 
+# ---------------------------------------------------------------------------
+# Bokeh Lights — soft floating orbs for Document Record（文檔紀錄）
+# ---------------------------------------------------------------------------
+# 「散景光點（Bokeh Lights）」: soft radial discs float upward (~7–14s),
+# slight L/R drift, fade in then out. Theme steel-blue / sky / soft gilt.
+BOKEH_COUNT = 14
+BOKEH_COLORS = (
+    QColor(232, 242, 248, 90),    # light sky
+    QColor(176, 224, 255, 75),    # soft sky
+    QColor(135, 206, 250, 70),    # menu border sky
+    QColor(255, 255, 255, 55),    # white mist
+    QColor(232, 212, 139, 50),    # existing gilt warm (#e8d48b)
+    QColor(201, 168, 76, 45),     # existing gilt (#c9a84c)
+)
+
+
+class BokehLightsCanvas(QWidget):
+    """Dreamy soft-circle lights drifting upward behind document UI."""
+
+    def __init__(self, parent=None, *, count: int = BOKEH_COUNT):
+        super().__init__(parent)
+        self._count = max(10, int(count))
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._lights: list[dict] = []
+        self._seeded = False
+        self._timer = QTimer(self)
+        self._timer.setInterval(33)  # ~30 fps — soft, not frantic
+        self._timer.timeout.connect(self._tick)
+
+    def start(self) -> None:
+        if not self._timer.isActive():
+            self._timer.start()
+
+    def stop(self) -> None:
+        self._timer.stop()
+
+    def _spawn(self, w: float, h: float, *, fresh: bool = False) -> dict:
+        # Life span 7–14s; progress 0→1 over that window.
+        life = random.uniform(7.0, 14.0)
+        radius = random.uniform(10.0, 36.0)
+        return {
+            "x": random.uniform(radius, max(radius + 1.0, w - radius)),
+            # Start near bottom (or slightly below) when fresh; else scatter.
+            "y": (
+                h + random.uniform(4.0, 40.0)
+                if fresh
+                else random.uniform(0.0, h)
+            ),
+            "r": radius,
+            "life": life,
+            "age": 0.0 if fresh else random.uniform(0.0, life * 0.85),
+            "drift_amp": random.uniform(6.0, 22.0),
+            "drift_freq": random.uniform(0.08, 0.22),
+            "drift_phase": random.uniform(0.0, 2.0 * math.pi),
+            "base_alpha": random.uniform(0.35, 1.0),
+            "color": random.choice(BOKEH_COLORS),
+            # Vertical travel covers most of the panel height over life.
+            "rise": h + radius * 2.0 + random.uniform(10.0, 40.0),
+            "y0": 0.0,  # set on spawn
+        }
+
+    def _ensure(self, w: float, h: float) -> None:
+        if self._seeded and self._lights:
+            return
+        self._lights = []
+        for _ in range(self._count):
+            light = self._spawn(w, h, fresh=False)
+            # Back-compute start so current y matches age progress.
+            u = light["age"] / light["life"]
+            light["y0"] = light["y"] + light["rise"] * u
+            self._lights.append(light)
+        self._seeded = True
+
+    def _respawn(self, light: dict, w: float, h: float) -> None:
+        fresh = self._spawn(w, h, fresh=True)
+        fresh["y0"] = fresh["y"]
+        light.update(fresh)
+
+    def _tick(self) -> None:
+        w = float(max(1, self.width()))
+        h = float(max(1, self.height()))
+        self._ensure(w, h)
+        dt = 0.033
+        for light in self._lights:
+            light["age"] += dt
+            u = light["age"] / light["life"]  # 0..1+
+            if u >= 1.0 or light["y"] < -light["r"] - 8.0:
+                self._respawn(light, w, h)
+                continue
+            # Ease upward from y0.
+            light["y"] = light["y0"] - light["rise"] * u
+            light["x"] = light["x"] + (
+                light["drift_amp"]
+                * 0.02
+                * math.sin(
+                    light["age"] * light["drift_freq"] * 2.0 * math.pi
+                    + light["drift_phase"]
+                )
+            )
+            # Keep gently inside horizontally.
+            if light["x"] < -light["r"]:
+                light["x"] = w + light["r"] * 0.2
+            elif light["x"] > w + light["r"]:
+                light["x"] = -light["r"] * 0.2
+        self.update()
+
+    @staticmethod
+    def _fade(u: float) -> float:
+        """Fade in early, hold, fade out near the end (and near top)."""
+        if u < 0.0:
+            return 0.0
+        if u < 0.12:
+            return u / 0.12
+        if u > 0.78:
+            return max(0.0, (1.0 - u) / 0.22)
+        return 1.0
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        del event
+        w = float(max(1, self.width()))
+        h = float(max(1, self.height()))
+        self._ensure(w, h)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+
+        for light in self._lights:
+            u = light["age"] / light["life"]
+            fade = self._fade(u) * light["base_alpha"]
+            if fade < 0.02:
+                continue
+            r = light["r"]
+            # Soft “blur”: radial gradient disc (CSS bokeh stand-in).
+            grad = QRadialGradient(QPointF(light["x"], light["y"]), r)
+            core = QColor(light["color"])
+            mid = QColor(light["color"])
+            edge = QColor(light["color"])
+            core.setAlpha(int(core.alpha() * fade))
+            mid.setAlpha(int(mid.alpha() * fade * 0.45))
+            edge.setAlpha(0)
+            grad.setColorAt(0.0, core)
+            grad.setColorAt(0.45, mid)
+            grad.setColorAt(1.0, edge)
+            painter.setBrush(QBrush(grad))
+            painter.drawEllipse(QPointF(light["x"], light["y"]), r, r)
+
+        painter.end()
+
+
 class DocumentSubMenu(PopupPanel):
     """Submenu for Document record; auto-paginates when there are many files."""
 
@@ -2738,17 +2889,26 @@ class DocumentSubMenu(PopupPanel):
         top_layout.setContentsMargins(0, 0, 0, 0)
         top_layout.setSpacing(0)
 
+        # Layering top→bottom: content (title/text/controls) > bokeh > panel bg
         self.container = QFrame(self)
         self.container.setObjectName("subMenuContainer")
         top_layout.addWidget(self.container)
 
-        self.main_layout = QVBoxLayout(self.container)
+        self.bokeh = BokehLightsCanvas(self.container, count=BOKEH_COUNT)
+        self.bokeh.lower()
+
+        self.content = QWidget(self.container)
+        self.content.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.content.setStyleSheet("background: transparent;")
+        self.content.raise_()
+
+        self.main_layout = QVBoxLayout(self.content)
         self.main_layout.setContentsMargins(8, 8, 8, 8)
         self.main_layout.setSpacing(4)
 
         header = QHBoxLayout()
         header.setSpacing(4)
-        self.title_label = CrumbleDownLabel(DOCUMENT_RECORD_TITLE_DEFAULT, self)
+        self.title_label = CrumbleDownLabel(DOCUMENT_RECORD_TITLE_DEFAULT, self.content)
         self.btn_open_folder = QPushButton()
         self.btn_open_folder.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon)
@@ -2790,6 +2950,36 @@ class DocumentSubMenu(PopupPanel):
         self.setStyleSheet(MENU_STYLE + """
             DocumentSubMenu { background-color: transparent; }
         """)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._sync_layers()
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self._sync_layers()
+        self.bokeh.start()
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        if hasattr(self, "bokeh"):
+            self.bokeh.stop()
+        super().hideEvent(event)
+
+    def _sync_layers(self) -> None:
+        if not hasattr(self, "container"):
+            return
+        r = self.container.rect()
+        self.bokeh.setGeometry(r)
+        self.content.setGeometry(r)
+        self.bokeh.lower()
+        self.content.raise_()
+
+    def _fit_to_content(self) -> None:
+        self.content.adjustSize()
+        hint = self.content.sizeHint()
+        self.container.setFixedSize(max(hint.width(), 240), max(hint.height(), 120))
+        self.adjustSize()
+        self._sync_layers()
 
     def button_style(self, base_color):
         return menu_button_style(base_color)
@@ -2919,7 +3109,7 @@ class DocumentSubMenu(PopupPanel):
 
         self.show_page(0)
 
-        self.adjustSize()
+        self._fit_to_content()
         screen_geo = screen_available_geometry(self)
         x = anchor_geometry.x() + anchor_geometry.width()
         y = anchor_geometry.y()
@@ -2931,6 +3121,7 @@ class DocumentSubMenu(PopupPanel):
         self.show()
         self.raise_()
         self.activateWindow()
+        self.bokeh.start()
 
     def _clear_layout(self, layout):
         while layout.count():
@@ -2949,9 +3140,9 @@ class DocumentSubMenu(PopupPanel):
         if not visible:
             hint = "(No matching files)" if (self.search_edit.text() or "").strip() else "(No files)"
             lbl = QLabel(hint)
-            lbl.setStyleSheet("color: #dddddd;")
+            lbl.setStyleSheet("color: #dddddd; background: transparent;")
             self.files_container.addWidget(lbl)
-            self.adjustSize()
+            self._fit_to_content()
             return
 
         total_pages = max(1, (len(visible) + self.items_per_page - 1) // self.items_per_page)
@@ -2992,6 +3183,7 @@ class DocumentSubMenu(PopupPanel):
             prev_btn.setEnabled(self.current_page > 0)
             prev_btn.clicked.connect(lambda checked=False: self.show_page(self.current_page - 1))
             page_label = QLabel(f"{self.current_page + 1} / {total_pages}")
+            page_label.setStyleSheet("color: white; background: transparent;")
             next_btn = QPushButton("Next")
             next_btn.setEnabled(self.current_page < total_pages - 1)
             next_btn.clicked.connect(lambda checked=False: self.show_page(self.current_page + 1))
@@ -3000,7 +3192,7 @@ class DocumentSubMenu(PopupPanel):
             self.pagination_container.addWidget(next_btn)
             self.pagination_container.addStretch()
 
-        self.adjustSize()
+        self._fit_to_content()
 
     def open_path(self, path):
         try:
