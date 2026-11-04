@@ -1,8 +1,8 @@
 Desktop Pet
 ==================
 
-Version: 261102.06
-Published: 2026-11-02
+Version: 261104.02
+Published: 2026-11-04
 
 A floating shortcut menu and document record gadget on the Windows desktop.
 
@@ -13,29 +13,34 @@ was dropped when the app UI was fully translated to English.
 Features
 --------
 1. Displays a small icon on the desktop (custom image or auto-rotating image set).
-2. Click the icon to open a semi-transparent menu.
-3. The top of the menu shows "Folder shortcuts" for opening local folders (with search/filter).
-4. Below that, "File / URL shortcuts"; click ">>" to open the submenu (search/filter; files and web links).
-5. The middle section shows "Document record"; click the ">>" button to open the submenu and browse/search files.
-   The Document record submenu header has an "Open folder" button to open storage folder(s) in the file manager.
-6. Below Document record, "Mini programs"; click ">>" for Text records and Calculations
-   (Level calc / Slope calc / Free station), plus Pomodoro, Translate,
+2. Click the icon to toggle the Folder Shortcuts menu (open if closed,
+   close the whole UI if open).
+3. The top of the menu shows "Folder Shortcuts フォルダー ショートカット"
+   for opening local folders (with search/filter; Float Drift title motion).
+4. Below that, four Social Icon Fill circles: File/URL Shortcuts 指定傳送
+   (arrow), Document Record 文檔紀錄 (paper), Mini Programs 副程式
+   (calculator), Settings (gear). File/URL submenu title uses
+   顫抖穩定／Jitter Settle; soft sky glow on titles.
+5. Document Record 文檔紀錄 submenu: browse/search files; header title uses
+   崩落／Crumble Down motion; "Open folder" opens storage folder(s).
+6. Mini Programs 副程式: Text records and Calculations (Level calc / Slope
+   calc / Free station), plus Pomodoro, Translate,
    箱庭島（未完成）／Hakoniwa (WIP) (island sim entry kept; marked unfinished),
    and 透明魚缸（未完成）／Fish Tank (WIP) (Phase 1 local translucent aquarium
    below 箱庭島; high top-down / RTS isometric swim — glass stays transparent;
-   marked unfinished).
+   marked unfinished). Panel uses 粒子連線／Particle Network ambient.
 7. Drag files, folders, or URLs onto the pet to add shortcuts (prompt for name/description).
-8. The bottom has a "Settings" button to edit all configurations.
+8. Settings circle opens the configuration dialog.
 9. Window level can be set to Normal, Always on top, or Always on bottom.
 10. Optional "Start with Windows" login autostart (Windows only).
 11. Remembers pet position across monitors and resolution changes.
 
 Quick Usage
 --------
-- Left-click the pet: open menu
+- Left-click the pet: toggle Folder Shortcuts (open ↔ close whole UI)
 - Drag the pet: move position
 - Double-click the pet: open settings
-- Right-click the pet: open menu
+- Right-click the pet: toggle Folder Shortcuts
 - Drag-and-drop a file/folder/URL onto the pet: add a shortcut
 - Right-click a file item: edit Time / Comment / Publisher / Version
 
@@ -43,7 +48,7 @@ Settings
 --------
 1. Pet Image: choose a single image or an image folder for automatic rotation.
 2. Folder shortcuts: set "Item name", "Folder path", and "Description" (list has search/filter).
-3. File shortcuts: set Type (File or URL), "Item name", path/URL, and "Description" (list has search/filter).
+3. File/URL Shortcuts: set Type (File or URL), "Item name", path/URL, and "Description" (list has search/filter).
 4. Document record: set the "Title" and one or more "Data storage folders"
    (click Add to add additional folders);
    the app will automatically list all files in those folders.
@@ -76,6 +81,64 @@ Free_Station_FAI.xls / .xlsm survey spreadsheet:
 - Output: station Easting/Northing, reduced level, and the distance-check
   residual ΔHD per accepted pair, plus an Average (mean E / N / RL) of those
   pair results. Copy button copies the result block.
+
+What's new in 261104.02 (2026-11-04)
+--------
+1. Pet image click toggles Folder Shortcuts: first click opens the menu;
+   second click closes the entire Folder Shortcuts UI (main panel +
+   submenus), not only a nested panel.
+
+What's new in 261104.01 (2026-11-04)
+--------
+1. Panel titles renamed with soft sky glow (like Folder Shortcuts):
+   「File/URL Shortcuts 指定傳送」, 「Document Record 文檔紀錄」,
+   「Mini Programs 副程式」. Existing title animations kept (Jitter Settle /
+   Crumble Down). Theme steel-blue palette only.
+
+What's new in 261103.07 (2026-11-03)
+--------
+1. Mini programs panel: 粒子連線／Particle Network — dozens of drifting
+   particles bounce and link by distance; cursor attracts nearby dots and
+   links. Layering: text > solid program buttons > particle canvas >
+   translucent blue panel. Theme steel-blue palette only (HiDPI canvas).
+
+What's new in 261103.06 (2026-11-03)
+--------
+1. Document record submenu title: 崩落／Crumble Down — each character tilts,
+   then falls with gravity + rotate + fade; they drop back from above to
+   reassemble (~3.4s). Theme steel-blue palette only.
+
+What's new in 261103.05 (2026-11-03)
+--------
+1. File shortcuts submenu title: 「File/URL Shortcuts」 with
+   顫抖穩定／Jitter Settle — strong per-character XY+rotate shake that damps
+   to rest, pauses, then restarts (~2.4s). Theme steel-blue palette only.
+
+What's new in 261103.04 (2026-11-03)
+--------
+1. Main menu: File/URL, Document record, Mini programs, Settings use
+   圖示填滿／Social Icon Fill — circular outlined line icons (shortcut arrow,
+   paper, calculator, gear); hover (~0.45s) fill rises from bottom, idle icon
+   slides up out / inverted icon slides in from below, button lifts; leave
+   reverses. Theme steel-blue palette only.
+
+What's new in 261103.03 (2026-11-03)
+--------
+1. Folder shortcuts title: 「Folder Shortcuts フォルダー ショートカット」 with
+   漂浮／Float Drift — each character drifts up/down/left/right at its own
+   ~3–4.5s tempo, slight rotation, soft sky glow. Theme steel-blue palette only.
+
+What's new in 261103.02 (2026-11-03)
+--------
+1. Folder shortcuts: 清單列滑入填滿／List Row Fill — numbered rows with name
+   and right arrow, thin dividers; hover (~0.5s) fills from the left, name
+   shifts right, arrow slides in, text inverts; leave exits fill to the right.
+   Theme steel-blue palette only.
+
+What's new in 261103.01 (2026-11-03)
+--------
+1. Pet click: 心跳放大／Heartbeat Zoom — one scale thud + two theme-gold
+   circular ripples from center (~1.3s). Colors match existing gilt accents.
 
 What's new in 261102.06 (2026-11-02)
 --------

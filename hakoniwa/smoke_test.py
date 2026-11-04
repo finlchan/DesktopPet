@@ -2850,6 +2850,167 @@ def test_user_art_loader_hook():
         print("user art loader: naming + optional PNG hook OK")
 
 
+def test_building_sprite_ew_south_align_offscreen():
+    """Building user art: alpha-content AABB → full cell W, bottom at S tip.
+
+    Portrait stub (32×128) and a **padded** flat stub (canvas larger than
+    content — like 防波堤) must both span W↔E, sit content on the S tip, and
+    (when tall) paint above the N tip. Placement ignores transparent margins.
+    """
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    try:
+        from PySide6.QtGui import QColor, QImage, QPixmap
+        from PySide6.QtWidgets import QApplication
+        from hakoniwa.grid import DEFAULT_CELL, cell_center, cell_screen_size
+        from hakoniwa.tiles import ATLAS, alpha_content_rect
+        from hakoniwa.view import MAX_CELL, HakoniwaMapWidget
+    except Exception as exc:  # pragma: no cover - optional GUI
+        print(f"building sprite align: skip render check ({exc})")
+        return
+
+    assert DEFAULT_CELL == 120, DEFAULT_CELL
+    assert MAX_CELL >= DEFAULT_CELL, (MAX_CELL, DEFAULT_CELL)
+
+    app = QApplication.instance() or QApplication([])
+
+    # Tall solid stub (no padding).
+    tall_img = QImage(32, 128, QImage.Format.Format_ARGB32)
+    tall_img.fill(QColor(255, 0, 255))
+    tall_stub = QPixmap.fromImage(tall_img)
+
+    # Flat stub with large transparent margins (simulates breakwater PNG padding).
+    pad_img = QImage(64, 64, QImage.Format.Format_ARGB32)
+    pad_img.fill(QColor(0, 0, 0, 0))
+    for y in range(20, 44):
+        for x in range(12, 52):
+            pad_img.setPixelColor(x, y, QColor(255, 0, 255))
+    pad_stub = QPixmap.fromImage(pad_img)
+    content = alpha_content_rect(pad_stub)
+    assert content.width() == 40 and content.height() == 24, (
+        content.x(),
+        content.y(),
+        content.width(),
+        content.height(),
+    )
+
+    original = ATLAS.building_pixmap
+    stubs = {"quarry": tall_stub, "farm": tall_stub, "breakwater": pad_stub}
+    ATLAS.building_pixmap = lambda kind: stubs.get(kind, tall_stub)  # type: ignore[method-assign]
+
+    def _render_one(kind: str) -> tuple:
+        state = IslandState.new_game()
+        grass_cells = [
+            (i, j)
+            for i in range(20)
+            for j in range(20)
+            if state.cell(i, j).terrain == "grass"
+        ]
+        assert grass_cells, "new_game should open with 平地 cells"
+        gi, gj = min(
+            grass_cells,
+            key=lambda ij: abs(ij[0] - 10) + abs(ij[1] - 10),
+        )
+        state.funds = 10000
+        if kind == "quarry":
+            assert state.raise_mountain(gi, gj) == "ok"
+            assert state.place_building(gi, gj, kind) == "ok"
+        elif kind == "breakwater":
+            # Need a coastal grass cell.
+            from hakoniwa.grid import neighbors
+
+            coastal = None
+            for i, j in grass_cells:
+                if any(
+                    state.cell(ni, nj).terrain in ("sea", "shallow", "oilfield")
+                    for ni, nj in neighbors(i, j, state.size)
+                ):
+                    coastal = (i, j)
+                    break
+            assert coastal is not None, "need coastal grass for breakwater"
+            gi, gj = coastal
+            assert state.place_building(gi, gj, kind) == "ok"
+        else:
+            assert state.place_building(gi, gj, kind) == "ok"
+        widget = HakoniwaMapWidget(state)
+        assert widget.cell == float(DEFAULT_CELL)
+        widget.resize(1280, 720)
+        # Keep the target cell centered so short flat sprites stay on-canvas.
+        from PySide6.QtCore import QPointF
+
+        tcx, tcy = cell_center(gi, gj, widget.cell)
+        ox0, oy0 = widget._origin_offset_raw()
+        widget._pan = QPointF(
+            widget.width() / 2.0 - (tcx + ox0),
+            widget.height() / 2.0 - (tcy + oy0),
+        )
+        widget.show()
+        app.processEvents()
+        rendered = widget.grab().toImage()
+        ox, oy = widget._origin_offset()
+        return gi, gj, widget.cell, rendered, ox, oy
+
+    def _is_magenta(c: QColor) -> bool:
+        return c.red() > 200 and c.blue() > 200 and c.green() < 80
+
+    def _check_align(
+        label: str, kind: str, content_w: float, content_h: float, *, expect_above_n: bool
+    ) -> None:
+        i, j, cell, rendered, ox, oy = _render_one(kind)
+        bw, bh = cell_screen_size(cell)
+        scale = bw / content_w
+        sprite_h = content_h * scale
+        cx, cy = cell_center(i, j, cell)
+        south_y = cy + bh / 2.0
+        n_tip_y = cy - bh / 2.0
+
+        def _sample(dx: float = 0.0, dy: float = 0.0) -> QColor:
+            px, py = int(round(cx + ox + dx)), int(round(cy + oy + dy))
+            if px < 0 or py < 0 or px >= rendered.width() or py >= rendered.height():
+                return QColor(0, 0, 0)
+            return QColor(rendered.pixel(px, py))
+
+        mid_sprite_dy = south_y - cy - sprite_h * 0.5
+        # Sample inset from W/E tips: neighboring terrain diamonds can cover the
+        # exact tip pixels when the sprite is short (flat breakwater).
+        edge_inset = min(16.0, bw * 0.12)
+        assert _is_magenta(
+            _sample(dx=-(bw / 2.0) + edge_inset, dy=mid_sprite_dy)
+        ), f"{label}: missing near West (content width should be full cell W)"
+        assert _is_magenta(
+            _sample(dx=(bw / 2.0) - edge_inset, dy=mid_sprite_dy)
+        ), f"{label}: missing near East (content width should be full cell W)"
+        assert _is_magenta(_sample(dy=south_y - cy - 3.0)), (
+            f"{label}: missing just above South tip (content bottom should sit on S)"
+        )
+        assert not _is_magenta(_sample(dy=south_y - cy + 6.0)), (
+            f"{label}: sprite leaked below South tip"
+        )
+        if expect_above_n:
+            assert _is_magenta(_sample(dy=(n_tip_y - cy) - 12.0)), (
+                f"{label}: clipped above North tip (building sprites are unclipped)"
+            )
+
+    try:
+        _check_align("tall quarry", "quarry", 32.0, 128.0, expect_above_n=True)
+        _check_align("non-tall farm", "farm", 32.0, 128.0, expect_above_n=True)
+        # Padded flat breakwater: content 40×24 inside 64×64 — must still sit on S.
+        _check_align(
+            "padded breakwater",
+            "breakwater",
+            float(content.width()),
+            float(content.height()),
+            expect_above_n=False,
+        )
+    finally:
+        ATLAS.building_pixmap = original  # type: ignore[method-assign]
+    print(
+        "building sprite: alpha-content EW + S-tip align OK "
+        f"(DEFAULT_CELL={DEFAULT_CELL}, padded breakwater OK)"
+    )
+
+
 def test_oblique_preview_png_if_possible():
     """Write a small foreshortening proof PNG when Qt offscreen is available."""
     import json
@@ -2951,6 +3112,7 @@ def main():
     test_oblique_foreshortening_invariant()
     test_terrain_top_assets()
     test_user_art_loader_hook()
+    test_building_sprite_ew_south_align_offscreen()
     test_catalog_costs()
     test_new_island_and_loop()
     test_guestbook_local()

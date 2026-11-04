@@ -19,12 +19,15 @@ import urllib.request
 from urllib.parse import quote, urlparse
 
 from PySide6.QtCore import (
-    Qt, QTimer, QSize, Signal, QEvent, QLockFile, QUrl, QPoint,
-    QObject, QRunnable, QThreadPool,
+    Qt, QTimer, QSize, Signal, QEvent, QLockFile, QUrl, QPoint, QPointF,
+    QRect, QRectF,
+    QObject, QRunnable, QThreadPool, QElapsedTimer, QEasingCurve,
+    QPropertyAnimation, Property,
 )
 from PySide6.QtGui import (
-    QPixmap, QPainter, QColor, QCursor, QIcon, QAction, QMovie, QDesktopServices,
-    QPainterPath, QLinearGradient, QBrush, QPen, QFont,
+    QPixmap, QImage, QPainter, QColor, QCursor, QIcon, QAction, QMovie,
+    QDesktopServices,
+    QPainterPath, QLinearGradient, QBrush, QPen, QFont, QFontMetrics,
 )
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout, QHBoxLayout, QGridLayout,
@@ -55,7 +58,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261102.06"
+APP_VERSION = "261104.02"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -97,7 +100,7 @@ DEFAULT_CONFIG = {
     # unless path looks like http(s).
     "file_shortcuts": [],
     "document_area": {
-        "title": "Document record",
+        "title": "Document Record 文檔紀錄",
         # "folder" kept for backward compatibility with older builds.
         "folder": "",
         # Primary list of storage folders (supports more than one).
@@ -934,7 +937,9 @@ class SettingsDialog(QDialog):
             )
         self._on_fsc_type_changed()
 
-        self.doc_title_edit.setText(self.cfg.get("document_area", "title") or "Document record")
+        self.doc_title_edit.setText(
+            self.cfg.get("document_area", "title") or DOCUMENT_RECORD_TITLE_DEFAULT
+        )
         self.doc_folder_list.clear()
         self.doc_folder_edit.clear()
         folders = normalize_document_folders(self.cfg.get("document_area") or {})
@@ -1289,7 +1294,7 @@ class SettingsDialog(QDialog):
 
         self.cfg.set(
             ["document_area", "title"],
-            self.doc_title_edit.text().strip() or "Document record",
+            self.doc_title_edit.text().strip() or DOCUMENT_RECORD_TITLE_DEFAULT,
             save=False
         )
         folders = []
@@ -2450,6 +2455,269 @@ class PopupPanel(QWidget):
 # ---------------------------------------------------------------------------
 # Document Record submenu (with pagination)
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Crumble Down — tilt, fall, fade, then reassemble from above (theme palette)
+# ---------------------------------------------------------------------------
+# 「崩落（Crumble Down）」: each glyph tilts, then falls with gravity + spin +
+# fade; after a beat they drop back in from above to reassemble (~3.4s).
+DOCUMENT_RECORD_TITLE_DEFAULT = "Document Record 文檔紀錄"
+CRUMBLE_TEXT = QColor(255, 255, 255)
+# Soft glow matches Folder Shortcuts／Float Drift (sky halo).
+TITLE_GLOW = QColor(135, 206, 250, 100)
+TITLE_GLOW_SOFT = QColor(176, 224, 255, 55)
+CRUMBLE_GLOW = TITLE_GLOW
+CRUMBLE_CYCLE_S = 3.4
+CRUMBLE_PAD_X = 6.0
+CRUMBLE_PAD_Y = 6.0
+CRUMBLE_FALL_ROOM = 36.0   # px below baseline while crumbling
+CRUMBLE_DROP_ROOM = 28.0   # px above baseline while reassembling
+
+
+def draw_title_soft_glow(painter: QPainter, ch: str, advance: float, alpha: float = 1.0) -> None:
+    """Folder-Shortcuts-style sky soft glow under a glyph (origin at baseline)."""
+    a = max(0.0, min(1.0, float(alpha)))
+    if a < 0.02:
+        return
+    for radius, base in (
+        (2.6, TITLE_GLOW_SOFT),
+        (1.4, TITLE_GLOW),
+    ):
+        col = QColor(base)
+        col.setAlpha(max(0, min(255, int(base.alpha() * a))))
+        painter.setPen(col)
+        for ox, oy in (
+            (-radius, 0.0),
+            (radius, 0.0),
+            (0.0, -radius),
+            (0.0, radius),
+            (-radius * 0.7, -radius * 0.7),
+            (radius * 0.7, radius * 0.7),
+        ):
+            painter.drawText(QPointF(-advance * 0.5 + ox, oy), ch)
+
+
+class SoftGlowTitleLabel(QWidget):
+    """Static bold title with Folder-Shortcuts soft sky glow (no motion)."""
+
+    def __init__(self, text: str, parent=None):
+        super().__init__(parent)
+        self._text = text or ""
+        self._chars = list(self._text)
+        font = QFont(self.font())
+        font.setFamily("Microsoft JhengHei")
+        font.setPointSize(9)
+        font.setBold(True)
+        self._font = font
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._recompute_size()
+
+    def setText(self, text: str) -> None:  # noqa: N802
+        self._text = text or ""
+        self._chars = list(self._text)
+        self._recompute_size()
+        self.update()
+
+    def text(self) -> str:
+        return self._text
+
+    def _recompute_size(self) -> None:
+        fm = QFontMetrics(self._font)
+        width = sum(fm.horizontalAdvance(ch) for ch in self._chars)
+        self.setMinimumHeight(int(fm.height() + 10))
+        self.setMinimumWidth(int(width + 12))
+        self.updateGeometry()
+
+    def sizeHint(self):  # noqa: N802
+        return QSize(self.minimumWidth(), self.minimumHeight())
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        painter.setFont(self._font)
+        fm = QFontMetrics(self._font)
+        x = 6.0
+        base_y = 5.0 + fm.ascent()
+        for ch in self._chars:
+            advance = float(fm.horizontalAdvance(ch))
+            if ch == " ":
+                x += advance
+                continue
+            painter.save()
+            painter.translate(x + advance * 0.5, base_y)
+            draw_title_soft_glow(painter, ch, advance, 1.0)
+            painter.setPen(QColor(255, 255, 255))
+            painter.drawText(QPointF(-advance * 0.5, 0.0), ch)
+            painter.restore()
+            x += advance
+        painter.end()
+
+
+class CrumbleDownLabel(QWidget):
+    """Title label: per-character Crumble Down → reassemble loop."""
+
+    def __init__(self, text: str, parent=None):
+        super().__init__(parent)
+        font = QFont(self.font())
+        font.setFamily("Microsoft JhengHei")
+        font.setPointSize(9)
+        font.setBold(True)
+        self._font = font
+
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+        self._elapsed = QElapsedTimer()
+        self._timer = QTimer(self)
+        self._timer.setInterval(16)
+        self._timer.timeout.connect(self.update)
+
+        self._chars: list[str] = []
+        self._params: list[dict] = []
+        self.setText(text or DOCUMENT_RECORD_TITLE_DEFAULT)
+
+    def setText(self, text: str) -> None:  # noqa: N802
+        self._text = text or DOCUMENT_RECORD_TITLE_DEFAULT
+        self._chars = list(self._text)
+        self._params = []
+        for i, _ch in enumerate(self._chars):
+            # Alternate lean direction; stagger fall / reassemble starts.
+            sign = 1.0 if (i % 2 == 0) else -1.0
+            self._params.append(
+                {
+                    "tilt0": sign * (8.0 + (i % 4) * 3.5),
+                    "spin": sign * (55.0 + (i % 5) * 12.0),
+                    "drift": sign * (4.0 + (i % 3) * 2.5),
+                    "fall_t0": 0.14 + i * 0.065,
+                    "fall_dur": 0.85 + (i % 3) * 0.04,
+                    "reass_t0": 1.88 + i * 0.055,
+                    "reass_dur": 0.70 + (i % 3) * 0.03,
+                    "g": 62.0 + (i % 4) * 6.0,  # fall distance scale
+                }
+            )
+        self._recompute_size()
+        self.update()
+
+    def text(self) -> str:
+        return self._text
+
+    def _recompute_size(self) -> None:
+        fm = QFontMetrics(self._font)
+        width = sum(fm.horizontalAdvance(ch) for ch in self._chars)
+        height = (
+            fm.height()
+            + CRUMBLE_PAD_Y * 2
+            + CRUMBLE_FALL_ROOM * 0.35
+            + CRUMBLE_DROP_ROOM * 0.25
+            + 4
+        )
+        self.setMinimumHeight(int(height))
+        self.setMinimumWidth(int(width + CRUMBLE_PAD_X * 2 + 8))
+        self.updateGeometry()
+
+    def sizeHint(self):  # noqa: N802
+        return QSize(self.minimumWidth(), self.minimumHeight())
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        if not self._elapsed.isValid():
+            self._elapsed.start()
+        if not self._timer.isActive():
+            self._timer.start()
+        super().showEvent(event)
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        self._timer.stop()
+        super().hideEvent(event)
+
+    def _state_for(self, p: dict, t: float):
+        """Return (dx, dy, rot_deg, alpha) for one glyph at cycle time t."""
+        fall_t0 = p["fall_t0"]
+        fall_dur = p["fall_dur"]
+        reass_t0 = p["reass_t0"]
+        reass_dur = p["reass_dur"]
+        pre_tilt_start = max(0.0, fall_t0 - 0.22)
+
+        if t < pre_tilt_start:
+            return 0.0, 0.0, 0.0, 1.0
+
+        if t < fall_t0:
+            # Wind-up tilt before the drop.
+            u = (t - pre_tilt_start) / max(1e-6, fall_t0 - pre_tilt_start)
+            return 0.0, 0.0, p["tilt0"] * u, 1.0
+
+        if t < fall_t0 + fall_dur:
+            # Gravity fall + spin + fade.
+            u = (t - fall_t0) / fall_dur  # 0..1
+            u2 = u * u
+            dy = p["g"] * u2
+            dx = p["drift"] * u
+            rot = p["tilt0"] + p["spin"] * u
+            alpha = max(0.0, 1.0 - u2 * 1.05)
+            return dx, dy, rot, alpha
+
+        if t < reass_t0:
+            # Off-stage between crumble and reassemble.
+            return 0.0, p["g"], p["tilt0"] + p["spin"], 0.0
+
+        if t < reass_t0 + reass_dur:
+            # Drop in from above → ease into rest.
+            u = (t - reass_t0) / reass_dur  # 0..1
+            ease = 1.0 - (1.0 - u) ** 3  # ease-out cubic
+            remain = 1.0 - ease
+            dy = -CRUMBLE_DROP_ROOM * 1.55 * remain
+            dx = p["drift"] * 0.35 * remain
+            rot = p["spin"] * 0.35 * remain
+            alpha = min(1.0, u * 1.6)
+            return dx, dy, rot, alpha
+
+        return 0.0, 0.0, 0.0, 1.0
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        painter.setFont(self._font)
+        fm = QFontMetrics(self._font)
+        t_sec = (self._elapsed.elapsed() / 1000.0) if self._elapsed.isValid() else 0.0
+        t_local = t_sec % CRUMBLE_CYCLE_S
+
+        x = CRUMBLE_PAD_X
+        base_y = CRUMBLE_PAD_Y + CRUMBLE_DROP_ROOM * 0.35 + fm.ascent()
+
+        for ch, p in zip(self._chars, self._params):
+            advance = float(fm.horizontalAdvance(ch))
+            if ch == " ":
+                x += advance
+                continue
+
+            dx, dy, rot, alpha = self._state_for(p, t_local)
+            if alpha < 0.02:
+                x += advance
+                continue
+
+            cx = x + advance * 0.5 + dx
+            cy = base_y + dy
+
+            painter.save()
+            painter.translate(cx, cy)
+            painter.rotate(rot)
+
+            draw_title_soft_glow(painter, ch, advance, alpha)
+
+            col = QColor(CRUMBLE_TEXT)
+            col.setAlpha(int(255 * alpha))
+            painter.setPen(col)
+            painter.drawText(QPointF(-advance * 0.5, 0.0), ch)
+            painter.restore()
+
+            x += advance
+
+        painter.end()
+
+
 class DocumentSubMenu(PopupPanel):
     """Submenu for Document record; auto-paginates when there are many files."""
 
@@ -2480,8 +2748,7 @@ class DocumentSubMenu(PopupPanel):
 
         header = QHBoxLayout()
         header.setSpacing(4)
-        self.title_label = QLabel("Document record")
-        self.title_label.setStyleSheet("color: white; font-weight: bold;")
+        self.title_label = CrumbleDownLabel(DOCUMENT_RECORD_TITLE_DEFAULT, self)
         self.btn_open_folder = QPushButton()
         self.btn_open_folder.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon)
@@ -2594,7 +2861,9 @@ class DocumentSubMenu(PopupPanel):
     def refresh_and_show(self, anchor_geometry):
         self.files = []
         self.files_meta = dict(self.cfg.get("document_area", "files") or {})
-        self.title_label.setText(self.cfg.get("document_area", "title") or "Document record")
+        self.title_label.setText(
+            self.cfg.get("document_area", "title") or DOCUMENT_RECORD_TITLE_DEFAULT
+        )
         self.search_edit.blockSignals(True)
         self.search_edit.clear()
         self.search_edit.blockSignals(False)
@@ -2760,10 +3029,141 @@ class DocumentSubMenu(PopupPanel):
 
 
 # ---------------------------------------------------------------------------
-# File shortcuts submenu (opened via >> like Document record)
+# ---------------------------------------------------------------------------
+# Jitter Settle — strong shake that damps to rest (theme steel-blue palette)
+# ---------------------------------------------------------------------------
+# 「顫抖穩定（Jitter Settle）」: each glyph shakes hard (XY + rotate), the
+# motion damps to rest, pauses, then the cycle restarts (~2.4s).
+FILE_URL_SHORTCUTS_TITLE = "File/URL Shortcuts 指定傳送"
+JITTER_SETTLE_TEXT = QColor(255, 255, 255)
+JITTER_SETTLE_GLOW = TITLE_GLOW
+MINI_PROGRAMS_TITLE = "Mini Programs 副程式"
+JITTER_SETTLE_CYCLE_S = 2.4
+JITTER_SETTLE_SHAKE_S = 1.15  # damp window; remainder is pause at rest
+JITTER_SETTLE_PAD_X = 8.0
+JITTER_SETTLE_PAD_Y = 7.0
+
+
+class JitterSettleLabel(QWidget):
+    """Title label: per-character Jitter Settle shake → rest → repeat."""
+
+    def __init__(self, text: str, parent=None):
+        super().__init__(parent)
+        self._text = text or ""
+        self._chars = list(self._text)
+        self._params = []
+        for i, _ch in enumerate(self._chars):
+            self._params.append(
+                {
+                    "phase": (i * 1.734) % (2.0 * math.pi),
+                    "phase2": (i * 2.513) % (2.0 * math.pi),
+                    "freq": 38.0 + (i % 5) * 4.5,   # rad/s — fast jitter
+                    "freq2": 31.0 + (i % 4) * 5.0,
+                    "freq_rot": 44.0 + (i % 3) * 6.0,
+                    "amp_x": 3.8 + (i % 5) * 0.55,
+                    "amp_y": 3.2 + (i % 4) * 0.6,
+                    "amp_rot": 11.0 + (i % 3) * 3.5,  # degrees
+                }
+            )
+
+        font = QFont(self.font())
+        font.setFamily("Microsoft JhengHei")
+        font.setPointSize(9)
+        font.setBold(True)
+        self._font = font
+
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._recompute_size()
+
+        self._elapsed = QElapsedTimer()
+        self._timer = QTimer(self)
+        self._timer.setInterval(16)  # ~60 fps for sharp shake
+        self._timer.timeout.connect(self.update)
+
+    def _recompute_size(self) -> None:
+        fm = QFontMetrics(self._font)
+        width = sum(fm.horizontalAdvance(ch) for ch in self._chars)
+        self.setMinimumHeight(int(fm.height() + JITTER_SETTLE_PAD_Y * 2 + 8))
+        self.setMinimumWidth(int(width + JITTER_SETTLE_PAD_X * 2 + 10))
+        self.updateGeometry()
+
+    def sizeHint(self):  # noqa: N802
+        return QSize(self.minimumWidth(), self.minimumHeight())
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        if not self._elapsed.isValid():
+            self._elapsed.start()
+        if not self._timer.isActive():
+            self._timer.start()
+        super().showEvent(event)
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        self._timer.stop()
+        super().hideEvent(event)
+
+    @staticmethod
+    def _envelope(t_local: float) -> float:
+        """Strong start → exponential damp to ~0 by SHAKE_S; 0 during pause."""
+        if t_local >= JITTER_SETTLE_SHAKE_S or t_local < 0.0:
+            return 0.0
+        u = t_local / JITTER_SETTLE_SHAKE_S  # 0..1
+        # Fast decay with a little residual taper so it truly settles.
+        return math.exp(-4.8 * u) * (1.0 - u * 0.2)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        painter.setFont(self._font)
+        fm = QFontMetrics(self._font)
+        t_sec = (self._elapsed.elapsed() / 1000.0) if self._elapsed.isValid() else 0.0
+        t_local = t_sec % JITTER_SETTLE_CYCLE_S
+        env = self._envelope(t_local)
+
+        x = JITTER_SETTLE_PAD_X
+        base_y = JITTER_SETTLE_PAD_Y + fm.ascent() + 2.0
+
+        for ch, p in zip(self._chars, self._params):
+            advance = float(fm.horizontalAdvance(ch))
+            if ch == " ":
+                x += advance
+                continue
+
+            if env < 0.002:
+                dx = dy = rot = 0.0
+            else:
+                dx = p["amp_x"] * env * math.sin(p["freq"] * t_local + p["phase"])
+                dy = p["amp_y"] * env * math.cos(p["freq2"] * t_local + p["phase2"])
+                rot = p["amp_rot"] * env * math.sin(
+                    p["freq_rot"] * t_local + p["phase"]
+                )
+
+            cx = x + advance * 0.5 + dx
+            cy = base_y + dy
+
+            painter.save()
+            painter.translate(cx, cy)
+            painter.rotate(rot)
+
+            # Always soft-glow like Folder Shortcuts; smear a bit harder while shaking.
+            glow_a = 1.0 if env < 0.15 else min(1.0, 0.85 + env * 0.3)
+            draw_title_soft_glow(painter, ch, advance, glow_a)
+
+            painter.setPen(JITTER_SETTLE_TEXT)
+            painter.drawText(QPointF(-advance * 0.5, 0.0), ch)
+            painter.restore()
+
+            x += advance
+
+        painter.end()
+
+
+# File shortcuts submenu (opened via Social Icon Fill on the main menu)
 # ---------------------------------------------------------------------------
 class FileShortcutsSubMenu(PopupPanel):
-    """Submenu listing file/URL shortcuts; opened from the main pet menu >> control."""
+    """Submenu listing file/URL shortcuts; opened from the main pet menu icon."""
 
     open_shortcut = Signal(str, str)  # path, type
 
@@ -2786,8 +3186,7 @@ class FileShortcutsSubMenu(PopupPanel):
         self.main_layout.setContentsMargins(8, 8, 8, 8)
         self.main_layout.setSpacing(4)
 
-        self.title_label = QLabel("File shortcuts")
-        self.title_label.setStyleSheet("color: white; font-weight: bold;")
+        self.title_label = JitterSettleLabel(FILE_URL_SHORTCUTS_TITLE, self)
         self.main_layout.addWidget(self.title_label)
 
         self.search_edit = QLineEdit()
@@ -4893,8 +5292,211 @@ class OperationsSubMenu(PopupPanel):
 
 
 # ---------------------------------------------------------------------------
-# Mini programs submenu (Text records + Calculations)
 # ---------------------------------------------------------------------------
+# Particle Network — Mini programs panel ambient (theme steel-blue palette)
+# ---------------------------------------------------------------------------
+# 「粒子連線（Particle Network）」: Qt take on Canvas 2D + rAF + DPR demos.
+# Particles drift & bounce; nearby pairs link (opacity ∝ distance); cursor
+# attracts nearby dots and draws links. Layering (top→bottom):
+#   text → program button solid fills → particle canvas → translucent panel bg
+PARTICLE_COUNT = 48
+PARTICLE_LINK_DIST = 72.0
+PARTICLE_CURSOR_DIST = 96.0
+PARTICLE_CURSOR_PULL = 0.045
+PARTICLE_DOT = QColor(232, 242, 248, 200)         # light sky
+PARTICLE_DOT_CORE = QColor(255, 255, 255, 230)
+PARTICLE_LINK = QColor(135, 206, 250, 160)        # menu border sky
+PARTICLE_CURSOR_LINK = QColor(176, 224, 255, 200)
+
+
+class ParticleNetworkCanvas(QWidget):
+    """HiDPI particle-network layer (QPainter ≈ Canvas2D, QTimer ≈ rAF)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._particles: list[dict] = []
+        self._cursor: QPointF | None = None
+        self._seeded = False
+        self._buf: QImage | None = None
+        self._buf_w = 0
+        self._buf_h = 0
+        self._timer = QTimer(self)
+        self._timer.setInterval(16)  # ~60 fps requestAnimationFrame stand-in
+        self._timer.timeout.connect(self._tick)
+
+    def _ensure_particles(self, w: float, h: float) -> None:
+        if self._seeded and self._particles:
+            return
+        self._particles = []
+        for i in range(PARTICLE_COUNT):
+            self._particles.append(
+                {
+                    "x": random.uniform(4.0, max(5.0, w - 4.0)),
+                    "y": random.uniform(4.0, max(5.0, h - 4.0)),
+                    "vx": random.uniform(-0.55, 0.55),
+                    "vy": random.uniform(-0.55, 0.55),
+                    "r": random.uniform(1.3, 2.4),
+                }
+            )
+        self._seeded = True
+
+    def _sync_buffer(self, logical_w: int, logical_h: int) -> tuple[QImage, float]:
+        dpr = float(self.devicePixelRatioF())
+        bw = max(1, int(math.ceil(logical_w * dpr)))
+        bh = max(1, int(math.ceil(logical_h * dpr)))
+        if (
+            self._buf is None
+            or self._buf_w != bw
+            or self._buf_h != bh
+            or self._buf.isNull()
+        ):
+            self._buf = QImage(bw, bh, QImage.Format.Format_ARGB32_Premultiplied)
+            self._buf.setDevicePixelRatio(dpr)
+            self._buf_w = bw
+            self._buf_h = bh
+        return self._buf, dpr
+
+    def start(self) -> None:
+        if not self._timer.isActive():
+            self._timer.start()
+
+    def stop(self) -> None:
+        self._timer.stop()
+
+    def _poll_cursor(self) -> None:
+        # Poll global cursor (canvas ignores mouse so buttons stay clickable).
+        local = self.mapFromGlobal(QCursor.pos())
+        if self.rect().contains(local):
+            self._cursor = QPointF(float(local.x()), float(local.y()))
+        else:
+            self._cursor = None
+
+    def _tick(self) -> None:
+        w = float(max(1, self.width()))
+        h = float(max(1, self.height()))
+        self._ensure_particles(w, h)
+        self._poll_cursor()
+        cur = self._cursor
+
+        for p in self._particles:
+            if cur is not None:
+                dx = cur.x() - p["x"]
+                dy = cur.y() - p["y"]
+                dist = math.hypot(dx, dy)
+                if 0.5 < dist < PARTICLE_CURSOR_DIST:
+                    # Soft attract toward cursor.
+                    pull = PARTICLE_CURSOR_PULL * (1.0 - dist / PARTICLE_CURSOR_DIST)
+                    p["vx"] += dx / dist * pull
+                    p["vy"] += dy / dist * pull
+
+            # Light damping so attract doesn't runaway.
+            p["vx"] *= 0.992
+            p["vy"] *= 0.992
+            # Keep a minimum drift so the field never freezes.
+            speed = math.hypot(p["vx"], p["vy"])
+            if speed < 0.12:
+                ang = random.uniform(0.0, 2.0 * math.pi)
+                p["vx"] += 0.08 * math.cos(ang)
+                p["vy"] += 0.08 * math.sin(ang)
+            elif speed > 1.35:
+                p["vx"] *= 1.35 / speed
+                p["vy"] *= 1.35 / speed
+
+            p["x"] += p["vx"]
+            p["y"] += p["vy"]
+
+            # Bounce off edges.
+            if p["x"] < 2.0:
+                p["x"] = 2.0
+                p["vx"] = abs(p["vx"])
+            elif p["x"] > w - 2.0:
+                p["x"] = w - 2.0
+                p["vx"] = -abs(p["vx"])
+            if p["y"] < 2.0:
+                p["y"] = 2.0
+                p["vy"] = abs(p["vy"])
+            elif p["y"] > h - 2.0:
+                p["y"] = h - 2.0
+                p["vy"] = -abs(p["vy"])
+
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        del event
+        lw = max(1, self.width())
+        lh = max(1, self.height())
+        self._ensure_particles(float(lw), float(lh))
+        buf, dpr = self._sync_buffer(lw, lh)
+        buf.fill(Qt.GlobalColor.transparent)
+
+        painter = QPainter(buf)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        # Draw in logical pixels; QImage DPR handles device pixels.
+        painter.scale(dpr, dpr)
+
+        pts = self._particles
+        n = len(pts)
+        # Pair links — opacity by distance.
+        for i in range(n):
+            a = pts[i]
+            for j in range(i + 1, n):
+                b = pts[j]
+                dx = a["x"] - b["x"]
+                dy = a["y"] - b["y"]
+                dist = math.hypot(dx, dy)
+                if dist > PARTICLE_LINK_DIST or dist < 0.01:
+                    continue
+                alpha = int(PARTICLE_LINK.alpha() * (1.0 - dist / PARTICLE_LINK_DIST))
+                if alpha < 8:
+                    continue
+                col = QColor(PARTICLE_LINK)
+                col.setAlpha(alpha)
+                pen = QPen(col)
+                pen.setWidthF(1.0)
+                painter.setPen(pen)
+                painter.drawLine(QPointF(a["x"], a["y"]), QPointF(b["x"], b["y"]))
+
+        # Cursor links + attract halo.
+        cur = self._cursor
+        if cur is not None:
+            for p in pts:
+                dx = p["x"] - cur.x()
+                dy = p["y"] - cur.y()
+                dist = math.hypot(dx, dy)
+                if dist > PARTICLE_CURSOR_DIST or dist < 0.01:
+                    continue
+                alpha = int(
+                    PARTICLE_CURSOR_LINK.alpha()
+                    * (1.0 - dist / PARTICLE_CURSOR_DIST)
+                )
+                if alpha < 10:
+                    continue
+                col = QColor(PARTICLE_CURSOR_LINK)
+                col.setAlpha(alpha)
+                pen = QPen(col)
+                pen.setWidthF(1.15)
+                painter.setPen(pen)
+                painter.drawLine(cur, QPointF(p["x"], p["y"]))
+
+        # Dots
+        painter.setPen(Qt.PenStyle.NoPen)
+        for p in pts:
+            r = p["r"]
+            painter.setBrush(PARTICLE_DOT)
+            painter.drawEllipse(QPointF(p["x"], p["y"]), r, r)
+            painter.setBrush(PARTICLE_DOT_CORE)
+            painter.drawEllipse(QPointF(p["x"], p["y"]), r * 0.45, r * 0.45)
+
+        painter.end()
+
+        screen = QPainter(self)
+        screen.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        screen.drawImage(0, 0, buf)
+        screen.end()
+
+
 class MiniProgramsSubMenu(PopupPanel):
     """Second-level menu under Mini programs: Text records + Calculations."""
 
@@ -4914,16 +5516,24 @@ class MiniProgramsSubMenu(PopupPanel):
         top_layout.setContentsMargins(0, 0, 0, 0)
         top_layout.setSpacing(0)
 
+        # Layering top→bottom: content (text/buttons) > particles > panel bg
         self.container = QFrame(self)
         self.container.setObjectName("subMenuContainer")
         top_layout.addWidget(self.container)
 
-        layout = QVBoxLayout(self.container)
+        self.particles = ParticleNetworkCanvas(self.container)
+        self.particles.lower()
+
+        self.content = QWidget(self.container)
+        self.content.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.content.setStyleSheet("background: transparent;")
+        self.content.raise_()
+
+        layout = QVBoxLayout(self.content)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(4)
 
-        title = QLabel("Mini programs")
-        title.setStyleSheet("color: white; font-weight: bold;")
+        title = SoftGlowTitleLabel(MINI_PROGRAMS_TITLE, self.content)
         layout.addWidget(title)
 
         sep = QLabel()
@@ -4935,7 +5545,9 @@ class MiniProgramsSubMenu(PopupPanel):
         text_row = QHBoxLayout()
         text_row.setSpacing(4)
         text_lbl = QLabel("Text records")
-        text_lbl.setStyleSheet("color: white; font-weight: bold;")
+        text_lbl.setStyleSheet(
+            "color: white; font-weight: bold; background: transparent;"
+        )
         btn_text = QPushButton(">>")
         btn_text.setFixedWidth(30)
         btn_text.setStyleSheet("text-align: center;" + menu_button_style("#4a4a4a"))
@@ -4949,7 +5561,9 @@ class MiniProgramsSubMenu(PopupPanel):
         ops_row = QHBoxLayout()
         ops_row.setSpacing(4)
         ops_lbl = QLabel("Calculations")
-        ops_lbl.setStyleSheet("color: white; font-weight: bold;")
+        ops_lbl.setStyleSheet(
+            "color: white; font-weight: bold; background: transparent;"
+        )
         btn_ops = QPushButton(">>")
         btn_ops.setFixedWidth(30)
         btn_ops.setStyleSheet("text-align: center;" + menu_button_style("#4a4a4a"))
@@ -4964,6 +5578,7 @@ class MiniProgramsSubMenu(PopupPanel):
         sep2.setStyleSheet("background-color: rgba(255,255,255,120);")
         layout.addWidget(sep2)
 
+        # Solid fills sit above the particle canvas (opaque button faces).
         btn_pomodoro = QPushButton("Pomodoro")
         btn_pomodoro.setStyleSheet(menu_button_style("#6e4a2a"))
         btn_pomodoro.clicked.connect(self.open_pomodoro)
@@ -4990,8 +5605,35 @@ class MiniProgramsSubMenu(PopupPanel):
             MiniProgramsSubMenu { background-color: transparent; }
         """)
 
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._sync_layers()
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self._sync_layers()
+        self.particles.start()
+
+    def _sync_layers(self) -> None:
+        if not hasattr(self, "container"):
+            return
+        r = self.container.rect()
+        self.particles.setGeometry(r)
+        self.content.setGeometry(r)
+        self.particles.lower()
+        self.content.raise_()
+
     def refresh_and_show(self, anchor_geometry):
+        self.content.adjustSize()
+        # Size the panel from the content layout, not the empty container.
+        hint = self.content.sizeHint()
+        margins = 0
+        self.container.setFixedSize(
+            max(hint.width(), 220),
+            max(hint.height(), 160),
+        )
         self.adjustSize()
+        self._sync_layers()
         screen_geo = screen_available_geometry(self)
         x = anchor_geometry.x() + anchor_geometry.width()
         y = anchor_geometry.y()
@@ -5003,6 +5645,7 @@ class MiniProgramsSubMenu(PopupPanel):
         self.show()
         self.raise_()
         self.activateWindow()
+        self.particles.start()
 
     def _hide_nested(self, keep=None):
         if keep != "text" and self.text_records_submenu is not None:
@@ -5070,6 +5713,8 @@ class MiniProgramsSubMenu(PopupPanel):
         self._suppress_hide = False
 
     def hideEvent(self, event):
+        if hasattr(self, "particles"):
+            self.particles.stop()
         if self.text_records_submenu is not None:
             self.text_records_submenu.hide()
         if self.operations_submenu is not None:
@@ -5120,6 +5765,518 @@ class MiniProgramsSubMenu(PopupPanel):
 
 
 # ---------------------------------------------------------------------------
+# Float Drift — dreamy per-character title motion (theme steel-blue palette)
+# ---------------------------------------------------------------------------
+# 「漂浮（Float Drift）」: each glyph drifts up/down/left/right at its own
+# speed (~3–4.5s cycle), with a slight rotation and soft sky glow.
+FOLDER_SHORTCUTS_TITLE = "Folder Shortcuts フォルダー ショートカット"
+FLOAT_DRIFT_TEXT = QColor(255, 255, 255)
+FLOAT_DRIFT_GLOW = QColor(135, 206, 250, 100)     # menu border sky
+FLOAT_DRIFT_GLOW_SOFT = QColor(176, 224, 255, 55)
+FLOAT_DRIFT_PAD_X = 6.0
+FLOAT_DRIFT_PAD_Y = 5.0
+
+
+class FloatDriftLabel(QWidget):
+    """Title label: each character floats independently (Float Drift)."""
+
+    def __init__(self, text: str, parent=None):
+        super().__init__(parent)
+        self._text = text or ""
+        self._chars = list(self._text)
+        self._params = []
+        for i, _ch in enumerate(self._chars):
+            # Periods spread across 3.0–4.5s; phases staggered for a dreamy feel.
+            period = 3.0 + ((i * 0.41) % 1.5)
+            phase = (i * 1.6180339887) % (2.0 * math.pi)
+            phase2 = (i * 2.399) % (2.0 * math.pi)
+            amp_x = 1.2 + (i % 5) * 0.35
+            amp_y = 1.8 + (i % 4) * 0.45
+            amp_rot = 3.5 + (i % 3) * 2.0  # degrees
+            self._params.append(
+                {
+                    "period": period,
+                    "phase": phase,
+                    "phase2": phase2,
+                    "amp_x": amp_x,
+                    "amp_y": amp_y,
+                    "amp_rot": amp_rot,
+                    # Slightly different horizontal vs vertical tempo.
+                    "period_y": 3.0 + ((i * 0.53) % 1.5),
+                }
+            )
+
+        font = QFont(self.font())
+        font.setFamily("Microsoft JhengHei")
+        font.setPointSize(9)
+        font.setBold(True)
+        self._font = font
+
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._recompute_size()
+
+        self._elapsed = QElapsedTimer()
+        self._timer = QTimer(self)
+        self._timer.setInterval(33)  # ~30 fps — soft, not frantic
+        self._timer.timeout.connect(self.update)
+
+    def _recompute_size(self) -> None:
+        fm = QFontMetrics(self._font)
+        width = sum(fm.horizontalAdvance(ch) for ch in self._chars)
+        # Room for drift + glow halo.
+        self.setMinimumHeight(int(fm.height() + FLOAT_DRIFT_PAD_Y * 2 + 6))
+        self.setMinimumWidth(int(width + FLOAT_DRIFT_PAD_X * 2 + 8))
+        self.updateGeometry()
+
+    def sizeHint(self):  # noqa: N802
+        return QSize(self.minimumWidth(), self.minimumHeight())
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        if not self._elapsed.isValid():
+            self._elapsed.start()
+        if not self._timer.isActive():
+            self._timer.start()
+        super().showEvent(event)
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        self._timer.stop()
+        super().hideEvent(event)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        painter.setFont(self._font)
+        fm = QFontMetrics(self._font)
+        t_sec = (self._elapsed.elapsed() / 1000.0) if self._elapsed.isValid() else 0.0
+
+        x = FLOAT_DRIFT_PAD_X
+        base_y = FLOAT_DRIFT_PAD_Y + fm.ascent() + 2.0
+
+        for ch, p in zip(self._chars, self._params):
+            advance = float(fm.horizontalAdvance(ch))
+            if ch == " ":
+                x += advance
+                continue
+
+            ang_x = (2.0 * math.pi * t_sec / p["period"]) + p["phase"]
+            ang_y = (2.0 * math.pi * t_sec / p["period_y"]) + p["phase2"]
+            dx = p["amp_x"] * math.sin(ang_x)
+            dy = p["amp_y"] * math.sin(ang_y)
+            # Soft secondary sway so paths feel less circular.
+            dx += 0.4 * p["amp_x"] * math.sin(ang_y * 0.7 + 0.5)
+            dy += 0.35 * p["amp_y"] * math.cos(ang_x * 0.85)
+            rot = p["amp_rot"] * math.sin(ang_x * 0.9 + p["phase2"])
+
+            cx = x + advance * 0.5 + dx
+            cy = base_y + dy
+
+            painter.save()
+            painter.translate(cx, cy)
+            painter.rotate(rot)
+
+            # Soft glow (outer sky → inner), then solid glyph.
+            draw_title_soft_glow(painter, ch, advance, 1.0)
+
+            painter.setPen(FLOAT_DRIFT_TEXT)
+            painter.drawText(QPointF(-advance * 0.5, 0.0), ch)
+            painter.restore()
+
+            x += advance
+
+        painter.end()
+
+
+# ---------------------------------------------------------------------------
+# List Row Fill — folder-shortcut row (theme steel-blue palette)
+# ---------------------------------------------------------------------------
+# Qt take on CSS “List Row Fill”:
+# - Row: index number · name · right arrow; thin divider under each row
+# - Hover (~0.5s): solid fill scaleX 0→1 from left origin; name shifts right;
+#   arrow slides in from the left; text color inverts
+# - Leave: fill scaleX 1→0 with origin on the right (exits to the right)
+LIST_ROW_IDLE_BG = QColor(61, 90, 128, 230)       # #3d5a80 (folder btn)
+LIST_ROW_FILL = QColor(232, 242, 248, 245)        # light sky (menu border family)
+LIST_ROW_TEXT_IDLE = QColor(255, 255, 255)
+LIST_ROW_TEXT_ON = QColor(42, 58, 74)             # dark steel on light fill
+LIST_ROW_DIVIDER = QColor(135, 206, 250, 110)     # menu border sky, soft
+LIST_ROW_ANIM_MS = 500
+LIST_ROW_NAME_SHIFT = 10.0
+LIST_ROW_ARROW_SLIDE = 18.0
+LIST_ROW_HEIGHT = 28
+
+
+class ListRowFillItem(QWidget):
+    """One Folder-shortcuts row with List Row Fill hover."""
+
+    clicked = Signal()
+
+    def __init__(self, index: int, name: str, parent=None):
+        super().__init__(parent)
+        self._index = int(index)
+        self._name = name or "Unnamed"
+        self._hover_t = 0.0
+        self._origin_left = True  # enter: left; leave: right
+        self.setFixedHeight(LIST_ROW_HEIGHT)
+        self.setMinimumWidth(180)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setMouseTracking(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+        self._anim = QPropertyAnimation(self, b"hoverProgress", self)
+        self._anim.setDuration(LIST_ROW_ANIM_MS)
+        self._anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+
+    def _get_hover_progress(self) -> float:
+        return self._hover_t
+
+    def _set_hover_progress(self, value: float) -> None:
+        self._hover_t = max(0.0, min(1.0, float(value)))
+        self.update()
+
+    hoverProgress = Property(float, _get_hover_progress, _set_hover_progress)
+
+    def _animate_to(self, target: float, *, origin_left: bool) -> None:
+        self._origin_left = bool(origin_left)
+        self._anim.stop()
+        self._anim.setStartValue(self._hover_t)
+        self._anim.setEndValue(target)
+        self._anim.start()
+
+    def enterEvent(self, event) -> None:  # noqa: N802
+        self._animate_to(1.0, origin_left=True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        self._animate_to(0.0, origin_left=False)
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton:
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton and self.rect().contains(
+            event.position().toPoint()
+        ):
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        del event
+        t = self._hover_t
+        w = float(self.width())
+        h = float(self.height())
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+
+        # Idle face
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(LIST_ROW_IDLE_BG)
+        painter.drawRect(QRectF(0, 0, w, h))
+
+        # Solid fill — enter: scaleX from left; leave: scaleX toward right
+        fill_rect = QRectF()
+        if t > 0.001:
+            fill_w = w * t
+            if self._origin_left:
+                fill_rect = QRectF(0.0, 0.0, fill_w, h)
+            else:
+                fill_rect = QRectF(w - fill_w, 0.0, fill_w, h)
+            painter.setBrush(LIST_ROW_FILL)
+            painter.drawRect(fill_rect)
+
+        font = QFont(self.font())
+        font.setPointSize(9)
+        painter.setFont(font)
+        fm = QFontMetrics(font)
+        pad_l = 8.0
+        pad_r = 10.0
+        num_w = float(fm.horizontalAdvance("00"))
+        arrow = "→"
+        arrow_w = float(fm.horizontalAdvance(arrow))
+        baseline = (h + fm.ascent() - fm.descent()) * 0.5
+
+        num_text = f"{self._index:02d}"
+        name_x = pad_l + num_w + 10.0 + LIST_ROW_NAME_SHIFT * t
+        name_right = w - pad_r - arrow_w - 8.0
+        name_max = max(20.0, name_right - name_x)
+        elided = fm.elidedText(self._name, Qt.TextElideMode.ElideRight, int(name_max))
+        arrow_rest_x = w - pad_r - arrow_w
+        arrow_x = arrow_rest_x - LIST_ROW_ARROW_SLIDE * (1.0 - t)
+        arrow_alpha = int(40 + 215 * t)
+
+        def _draw_row_text(color: QColor) -> None:
+            painter.setPen(color)
+            painter.drawText(QPointF(pad_l, baseline), num_text)
+            painter.drawText(QPointF(name_x, baseline), elided)
+            ac = QColor(color)
+            ac.setAlpha(min(255, arrow_alpha))
+            painter.setPen(ac)
+            painter.drawText(QPointF(arrow_x, baseline), arrow)
+
+        # Idle (light) text on uncovered area; inverted (dark) text clipped to fill
+        if fill_rect.width() > 0.5:
+            # Uncovered = full row minus fill
+            uncovered = QPainterPath()
+            uncovered.addRect(QRectF(0.0, 0.0, w, h))
+            filled = QPainterPath()
+            filled.addRect(fill_rect)
+            uncovered = uncovered.subtracted(filled)
+            painter.setClipPath(uncovered)
+            _draw_row_text(LIST_ROW_TEXT_IDLE)
+            painter.setClipPath(filled)
+            _draw_row_text(LIST_ROW_TEXT_ON)
+            painter.setClipping(False)
+        else:
+            _draw_row_text(LIST_ROW_TEXT_IDLE)
+
+        # Thin divider along the bottom edge
+        painter.setPen(QPen(LIST_ROW_DIVIDER, 1.0))
+        y = h - 0.5
+        painter.drawLine(QPointF(0.0, y), QPointF(w, y))
+        painter.end()
+
+
+# ---------------------------------------------------------------------------
+# Menu Social Icon Fill — first-page circular nav (theme steel-blue palette)
+# ---------------------------------------------------------------------------
+# Qt take on CSS “Social Icon Fill” (same motion as fish_tank/social_toolbar):
+# - Circular outline + centered line icon
+# - Hover (~0.45s): solid fill rises from bottom; idle icon slides up out;
+#   inverted icon slides up from below; button lifts; leave reverses.
+MENU_SIF_OUTLINE = QColor(135, 206, 250, 200)       # menu border sky
+MENU_SIF_OUTLINE_HOVER = QColor(176, 224, 255, 230)
+MENU_SIF_ICON_IDLE = QColor(232, 242, 248)          # light on glass
+MENU_SIF_ICON_ON = QColor(42, 58, 74)               # dark steel on light fill
+MENU_SIF_FILL = QColor(232, 242, 248, 245)          # light sky fill
+MENU_SIF_BG_IDLE = QColor(61, 90, 128, 90)          # soft #3d5a80 glass
+MENU_SIF_BTN_SIZE = 44
+MENU_SIF_ANIM_MS = 450
+MENU_SIF_LIFT_PX = 5.0
+
+
+def _menu_sif_pen(color: QColor, width: float = 1.8) -> QPen:
+    pen = QPen(color)
+    pen.setWidthF(width)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    return pen
+
+
+def draw_menu_icon_shortcut(p: QPainter, c: QPointF, r: float, color: QColor) -> None:
+    """Diagonal NE shortcut arrow (line icon; matches shortcut-arrow ref)."""
+    p.setPen(_menu_sif_pen(color, 2.0))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    # Shaft: lower-left → upper-right
+    x0, y0 = c.x() - r * 0.42, c.y() + r * 0.42
+    x1, y1 = c.x() + r * 0.38, c.y() - r * 0.38
+    p.drawLine(QPointF(x0, y0), QPointF(x1, y1))
+    # Arrowhead
+    head = r * 0.42
+    p.drawLine(QPointF(x1, y1), QPointF(x1 - head, y1))
+    p.drawLine(QPointF(x1, y1), QPointF(x1, y1 + head))
+
+
+def draw_menu_icon_document(p: QPainter, c: QPointF, r: float, color: QColor) -> None:
+    """Paper / document page with folded corner + lines."""
+    p.setPen(_menu_sif_pen(color, 1.7))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    left = c.x() - r * 0.4
+    top = c.y() - r * 0.5
+    w = r * 0.8
+    h = r * 1.0
+    fold = r * 0.28
+    path = QPainterPath()
+    path.moveTo(left, top)
+    path.lineTo(left + w - fold, top)
+    path.lineTo(left + w, top + fold)
+    path.lineTo(left + w, top + h)
+    path.lineTo(left, top + h)
+    path.closeSubpath()
+    p.drawPath(path)
+    # Fold lines
+    p.drawLine(
+        QPointF(left + w - fold, top),
+        QPointF(left + w - fold, top + fold),
+    )
+    p.drawLine(
+        QPointF(left + w - fold, top + fold),
+        QPointF(left + w, top + fold),
+    )
+    # Text lines
+    for i in range(3):
+        y = c.y() - r * 0.08 + i * r * 0.22
+        p.drawLine(
+            QPointF(c.x() - r * 0.28, y),
+            QPointF(c.x() + r * 0.22, y),
+        )
+
+
+def draw_menu_icon_calculator(p: QPainter, c: QPointF, r: float, color: QColor) -> None:
+    """Calculator — mini programs."""
+    p.setPen(_menu_sif_pen(color, 1.7))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    body = QRectF(c.x() - r * 0.45, c.y() - r * 0.55, r * 0.9, r * 1.1)
+    p.drawRoundedRect(body, 3.0, 3.0)
+    # Display
+    disp = QRectF(c.x() - r * 0.32, c.y() - r * 0.42, r * 0.64, r * 0.28)
+    p.drawRoundedRect(disp, 2.0, 2.0)
+    # Button grid 3×3 dots/rects
+    for row in range(3):
+        for col in range(3):
+            bx = c.x() - r * 0.28 + col * r * 0.28
+            by = c.y() - r * 0.02 + row * r * 0.26
+            p.drawRoundedRect(QRectF(bx - r * 0.08, by - r * 0.08, r * 0.16, r * 0.16), 1.5, 1.5)
+
+
+def draw_menu_icon_gear(p: QPainter, c: QPointF, r: float, color: QColor) -> None:
+    """Settings gear."""
+    p.setPen(_menu_sif_pen(color, 1.7))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    # Outer ring
+    p.drawEllipse(QRectF(c.x() - r * 0.32, c.y() - r * 0.32, r * 0.64, r * 0.64))
+    # Hub
+    p.drawEllipse(QRectF(c.x() - r * 0.12, c.y() - r * 0.12, r * 0.24, r * 0.24))
+    # Teeth (8 radial ticks)
+    for i in range(8):
+        ang = i * (math.pi / 4.0)
+        inner = r * 0.38
+        outer = r * 0.58
+        p.drawLine(
+            QPointF(c.x() + inner * math.cos(ang), c.y() + inner * math.sin(ang)),
+            QPointF(c.x() + outer * math.cos(ang), c.y() + outer * math.sin(ang)),
+        )
+
+
+MENU_SIF_DRAWERS = {
+    "shortcut": draw_menu_icon_shortcut,
+    "document": draw_menu_icon_document,
+    "calculator": draw_menu_icon_calculator,
+    "gear": draw_menu_icon_gear,
+}
+
+
+class MenuSocialIconFillButton(QWidget):
+    """One circular Social Icon Fill control for the pet main menu."""
+
+    clicked = Signal()
+
+    def __init__(self, icon_key: str, tip: str, parent=None):
+        super().__init__(parent)
+        self.icon_key = icon_key
+        self._drawer = MENU_SIF_DRAWERS[icon_key]
+        self._hover_t = 0.0
+        self.setFixedSize(
+            MENU_SIF_BTN_SIZE,
+            MENU_SIF_BTN_SIZE + int(MENU_SIF_LIFT_PX) + 2,
+        )
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip(tip)
+        self.setMouseTracking(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+
+        self._anim = QPropertyAnimation(self, b"hoverProgress", self)
+        self._anim.setDuration(MENU_SIF_ANIM_MS)
+        self._anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+
+    def _get_hover_progress(self) -> float:
+        return self._hover_t
+
+    def _set_hover_progress(self, value: float) -> None:
+        self._hover_t = max(0.0, min(1.0, float(value)))
+        self.update()
+
+    hoverProgress = Property(float, _get_hover_progress, _set_hover_progress)
+
+    def _animate_to(self, target: float) -> None:
+        self._anim.stop()
+        self._anim.setStartValue(self._hover_t)
+        self._anim.setEndValue(target)
+        self._anim.start()
+
+    def enterEvent(self, event) -> None:  # noqa: N802
+        self._animate_to(1.0)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        self._animate_to(0.0)
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton:
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton and self.rect().contains(
+            event.position().toPoint()
+        ):
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        del event
+        t = self._hover_t
+        lift = t * MENU_SIF_LIFT_PX
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        size = float(MENU_SIF_BTN_SIZE)
+        rect = QRectF(
+            0.5,
+            float(self.height() - MENU_SIF_BTN_SIZE) + 0.5,
+            size - 1.0,
+            size - 1.0,
+        )
+        rect.translate(0.0, -lift)
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(MENU_SIF_BG_IDLE)
+        painter.drawEllipse(rect)
+
+        clip = QPainterPath()
+        clip.addEllipse(rect)
+        painter.setClipPath(clip)
+
+        if t > 0.001:
+            h = rect.height()
+            fill_top = rect.top() + h * (1.0 - t)
+            fill_rect = QRectF(rect.left() - 1, fill_top, rect.width() + 2, h * t + 3)
+            painter.setBrush(MENU_SIF_FILL)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawRect(fill_rect)
+
+        center = rect.center()
+        icon_r = size * 0.30
+        idle_y = center.y() - t * rect.height()
+        hover_y = center.y() + (1.0 - t) * rect.height()
+        self._drawer(painter, QPointF(center.x(), idle_y), icon_r, MENU_SIF_ICON_IDLE)
+        self._drawer(painter, QPointF(center.x(), hover_y), icon_r, MENU_SIF_ICON_ON)
+
+        painter.setClipping(False)
+
+        pen = QPen(MENU_SIF_OUTLINE_HOVER if t > 0.2 else MENU_SIF_OUTLINE)
+        pen.setWidthF(1.6)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(rect)
+        painter.end()
+
+
+# ---------------------------------------------------------------------------
 # Main menu (semi-transparent popup)
 # ---------------------------------------------------------------------------
 class PetMenu(PopupPanel):
@@ -5151,8 +6308,7 @@ class PetMenu(PopupPanel):
         self.main_layout.setContentsMargins(8, 8, 8, 8)
         self.main_layout.setSpacing(4)
 
-        self.shortcuts_title = QLabel("Folder shortcuts")
-        self.shortcuts_title.setStyleSheet("color: white; font-weight: bold;")
+        self.shortcuts_title = FloatDriftLabel(FOLDER_SHORTCUTS_TITLE, self)
         self.main_layout.addWidget(self.shortcuts_title)
 
         self.folder_search_edit = QLineEdit()
@@ -5166,7 +6322,7 @@ class PetMenu(PopupPanel):
         self.main_layout.addWidget(self.folder_search_edit)
 
         self.shortcuts_container = QVBoxLayout()
-        self.shortcuts_container.setSpacing(3)
+        self.shortcuts_container.setSpacing(0)
         self.main_layout.addLayout(self.shortcuts_container)
 
         sep0 = QLabel()
@@ -5174,72 +6330,63 @@ class PetMenu(PopupPanel):
         sep0.setStyleSheet("background-color: rgba(255,255,255,120);")
         self.main_layout.addWidget(sep0)
 
-        # File / URL shortcuts: collapsed header + >> (same pattern as Document record)
-        file_sc_header = QHBoxLayout()
-        file_sc_header.setSpacing(4)
-        self.file_shortcuts_title = QLabel("File / URL shortcuts")
-        self.file_shortcuts_title.setStyleSheet("color: white; font-weight: bold;")
-        self.btn_file_sc_open = QPushButton(">>")
-        self.btn_file_sc_open.setFixedWidth(30)
-        self.btn_file_sc_open.setStyleSheet(
-            "text-align: center;" + menu_button_style("#4a4a4a")
+        # First-page nav: Social Icon Fill circles (shortcut / document / mini / settings)
+        nav_row = QHBoxLayout()
+        nav_row.setSpacing(10)
+        nav_row.setContentsMargins(4, 6, 4, 2)
+        nav_row.addStretch()
+
+        self.btn_file_sc_open = MenuSocialIconFillButton(
+            "shortcut", FILE_URL_SHORTCUTS_TITLE, self
         )
         self.btn_file_sc_open.clicked.connect(self.open_file_shortcuts_submenu)
-        file_sc_header.addWidget(self.file_shortcuts_title)
-        file_sc_header.addStretch()
-        file_sc_header.addWidget(self.btn_file_sc_open)
-        self.main_layout.addLayout(file_sc_header)
+        nav_row.addWidget(self.btn_file_sc_open)
 
-        sep1 = QLabel()
-        sep1.setFixedHeight(1)
-        sep1.setStyleSheet("background-color: rgba(255,255,255,120);")
-        self.main_layout.addWidget(sep1)
-
-        doc_header = QHBoxLayout()
-        doc_header.setSpacing(4)
-        self.doc_title = QLabel("Document record")
-        self.doc_title.setStyleSheet("color: white; font-weight: bold;")
-        self.btn_doc_open = QPushButton(">>")
-        self.btn_doc_open.setFixedWidth(30)
-        self.btn_doc_open.setStyleSheet(
-            "text-align: center;" + menu_button_style("#4a4a4a")
+        self.btn_doc_open = MenuSocialIconFillButton(
+            "document", DOCUMENT_RECORD_TITLE_DEFAULT, self
         )
         self.btn_doc_open.clicked.connect(self.open_document_submenu)
-        doc_header.addWidget(self.doc_title)
-        doc_header.addStretch()
-        doc_header.addWidget(self.btn_doc_open)
-        self.main_layout.addLayout(doc_header)
+        nav_row.addWidget(self.btn_doc_open)
 
-        sep2 = QLabel()
-        sep2.setFixedHeight(1)
-        sep2.setStyleSheet("background-color: rgba(255,255,255,120);")
-        self.main_layout.addWidget(sep2)
-
-        # Mini programs: collapsed header + >> (Text records + Calculations live inside)
-        mini_header = QHBoxLayout()
-        mini_header.setSpacing(4)
-        self.mini_programs_title = QLabel("Mini programs")
-        self.mini_programs_title.setStyleSheet("color: white; font-weight: bold;")
-        self.btn_mini_open = QPushButton(">>")
-        self.btn_mini_open.setFixedWidth(30)
-        self.btn_mini_open.setStyleSheet(
-            "text-align: center;" + menu_button_style("#4a4a4a")
+        self.btn_mini_open = MenuSocialIconFillButton(
+            "calculator", MINI_PROGRAMS_TITLE, self
         )
         self.btn_mini_open.clicked.connect(self.open_mini_programs_submenu)
-        mini_header.addWidget(self.mini_programs_title)
-        mini_header.addStretch()
-        mini_header.addWidget(self.btn_mini_open)
-        self.main_layout.addLayout(mini_header)
+        nav_row.addWidget(self.btn_mini_open)
 
-        sep3 = QLabel()
-        sep3.setFixedHeight(1)
-        sep3.setStyleSheet("background-color: rgba(255,255,255,120);")
-        self.main_layout.addWidget(sep3)
-
-        self.btn_settings = QPushButton("Settings")
-        self.btn_settings.setStyleSheet(self.button_style("#4a4a4a"))
+        self.btn_settings = MenuSocialIconFillButton("gear", "Settings", self)
         self.btn_settings.clicked.connect(self.open_settings.emit)
-        self.main_layout.addWidget(self.btn_settings)
+        nav_row.addWidget(self.btn_settings)
+
+        nav_row.addStretch()
+        self.main_layout.addLayout(nav_row)
+
+        # Captions under the icon row (document caption updates from Settings title)
+        cap_row = QHBoxLayout()
+        cap_row.setSpacing(6)
+        cap_row.setContentsMargins(2, 0, 2, 2)
+        cap_style = (
+            "color: rgba(255,255,255,210); font-size: 7.5pt; "
+            "background: transparent; font-weight: normal;"
+        )
+        cap_w = MENU_SIF_BTN_SIZE + 8
+
+        def _cap(text: str) -> QLabel:
+            lab = QLabel(text)
+            lab.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+            lab.setWordWrap(True)
+            lab.setFixedWidth(cap_w)
+            lab.setStyleSheet(cap_style)
+            return lab
+
+        cap_row.addStretch()
+        cap_row.addWidget(_cap("File/URL"))
+        self.doc_title = _cap("Document Record")
+        cap_row.addWidget(self.doc_title)
+        cap_row.addWidget(_cap("Mini Programs"))
+        cap_row.addWidget(_cap("Settings"))
+        cap_row.addStretch()
+        self.main_layout.addLayout(cap_row)
 
         self.setStyleSheet(MENU_STYLE + """
             PetMenu { background-color: transparent; }
@@ -5282,20 +6429,19 @@ class PetMenu(PopupPanel):
             btn.setStyleSheet("color: #dddddd; background-color: transparent;")
             self.shortcuts_container.addWidget(btn)
         else:
-            for sc in shortcuts:
+            for i, sc in enumerate(shortcuts, start=1):
                 name = sc.get("name", "Unnamed")
                 path = sc.get("path", "")
                 desc = sc.get("description", "")
-                text = name
+                label = name
                 if desc:
-                    text += f" ({desc})"
-                btn = QPushButton(text)
-                btn.setToolTip(path)
-                btn.setStyleSheet(self.button_style("#3d5a80"))
-                btn.clicked.connect(
-                    lambda checked=False, p=path: self.open_shortcut.emit(p, "folder")
+                    label += f" ({desc})"
+                row = ListRowFillItem(i, label, self)
+                row.setToolTip(path)
+                row.clicked.connect(
+                    lambda p=path: self.open_shortcut.emit(p, "folder")
                 )
-                self.shortcuts_container.addWidget(btn)
+                self.shortcuts_container.addWidget(row)
         self.adjustSize()
 
     def refresh(self):
@@ -5307,8 +6453,9 @@ class PetMenu(PopupPanel):
         self.folder_search_edit.setVisible(bool(self._folder_shortcuts))
         self._rebuild_folder_shortcuts()
 
-        title = self.cfg.get("document_area", "title") or "Document record"
+        title = self.cfg.get("document_area", "title") or DOCUMENT_RECORD_TITLE_DEFAULT
         self.doc_title.setText(title)
+        self.btn_doc_open.setToolTip(title)
         self.adjustSize()
 
     def _hide_other_submenus(self, keep=None):
@@ -5415,6 +6562,137 @@ class PetMenu(PopupPanel):
 # ---------------------------------------------------------------------------
 # Main pet window
 # ---------------------------------------------------------------------------
+# Heartbeat Zoom — one thud + two fading ripples (~1.3s). Theme gilt accents.
+HEARTBEAT_DURATION_MS = 1300
+HEARTBEAT_SCALE_PEAK = 1.20
+# Match ornate / focus golds already used in CALC_DIALOG_STYLE (no new palette).
+HEARTBEAT_RIPPLE_A = QColor(201, 168, 76, 220)   # #c9a84c
+HEARTBEAT_RIPPLE_B = QColor(232, 212, 139, 200)  # #e8d48b
+
+
+class HeartbeatOverlay(QWidget):
+    """Frameless overlay: scale pet pixmap once, paint two center ripples that fade."""
+
+    def __init__(self, host: "PetWindow", pet_pixmap: QPixmap):
+        super().__init__(None)
+        self._host = host
+        self._pix = QPixmap(pet_pixmap)
+        self._progress = 0.0
+        self._saved_opacity = host.windowOpacity()
+        self._elapsed = QElapsedTimer()
+        self._timer = QTimer(self)
+        self._timer.setInterval(16)
+        self._timer.timeout.connect(self._tick)
+
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.Tool
+            | Qt.WindowType.WindowStaysOnTopHint
+        )
+
+        pet_size = max(host.width(), host.height(), 48)
+        # Room for ripples beyond the scaled pet.
+        side = int(pet_size * 2.6)
+        self._pet_size = pet_size
+        self.setFixedSize(side, side)
+        center = host.frameGeometry().center()
+        self.move(center.x() - side // 2, center.y() - side // 2)
+
+    def start(self):
+        self._host.setWindowOpacity(0.0)
+        self._elapsed.start()
+        self._progress = 0.0
+        self.show()
+        self.raise_()
+        self._timer.start()
+        self.update()
+
+    def _tick(self):
+        t = min(1.0, self._elapsed.elapsed() / float(HEARTBEAT_DURATION_MS))
+        self._progress = t
+        self.update()
+        if t >= 1.0:
+            self._finish()
+
+    def _finish(self):
+        self._timer.stop()
+        try:
+            self._host.setWindowOpacity(self._saved_opacity)
+        except RuntimeError:
+            pass
+        self.close()
+        self.deleteLater()
+
+    def _scale_at(self, t: float) -> float:
+        """One thud: ease up to peak ~28% through the beat, then ease back to 1."""
+        peak_t = 0.28
+        if t <= 0.0:
+            return 1.0
+        if t >= 1.0:
+            return 1.0
+        if t <= peak_t:
+            u = t / peak_t
+            eased = QEasingCurve(QEasingCurve.Type.OutCubic).valueForProgress(u)
+            return 1.0 + (HEARTBEAT_SCALE_PEAK - 1.0) * eased
+        u = (t - peak_t) / (1.0 - peak_t)
+        eased = QEasingCurve(QEasingCurve.Type.InOutCubic).valueForProgress(u)
+        return HEARTBEAT_SCALE_PEAK + (1.0 - HEARTBEAT_SCALE_PEAK) * eased
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        cx = self.width() / 2.0
+        cy = self.height() / 2.0
+        t = self._progress
+        max_r = min(self.width(), self.height()) * 0.48
+
+        # Two circular ripples from center (staggered), fade out.
+        ripples = (
+            (0.00, HEARTBEAT_RIPPLE_A, 1.0),
+            (0.18, HEARTBEAT_RIPPLE_B, 0.92),
+        )
+        for start, color, reach in ripples:
+            if t <= start:
+                continue
+            local = (t - start) / max(1e-6, 1.0 - start)
+            local = min(1.0, local)
+            radius = max_r * reach * QEasingCurve(
+                QEasingCurve.Type.OutCubic
+            ).valueForProgress(local)
+            alpha = int(color.alpha() * (1.0 - local) * (1.0 - local))
+            if alpha <= 0 or radius <= 0.5:
+                continue
+            pen_c = QColor(color)
+            pen_c.setAlpha(alpha)
+            fill_c = QColor(color)
+            fill_c.setAlpha(max(0, alpha // 5))
+            pen = QPen(pen_c, max(2.0, 3.0 * (1.0 - local)))
+            painter.setPen(pen)
+            painter.setBrush(QBrush(fill_c))
+            painter.drawEllipse(
+                QPoint(int(cx), int(cy)), int(radius), int(radius)
+            )
+
+        # Pet thud (scale up then back).
+        scale = self._scale_at(t)
+        if not self._pix.isNull():
+            pw = max(1, int(self._pix.width() * scale))
+            ph = max(1, int(self._pix.height() * scale))
+            scaled = self._pix.scaled(
+                pw,
+                ph,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            x = int(cx - scaled.width() / 2.0)
+            y = int(cy - scaled.height() / 2.0)
+            painter.drawPixmap(x, y, scaled)
+        painter.end()
+
+
 class PetWindow(QWidget):
     def __init__(self, config_manager):
         super().__init__(None)
@@ -5424,6 +6702,8 @@ class PetWindow(QWidget):
         self.drag_pos = None
         self.moved_distance = 0
         self._ignore_release = False
+        self._menu_open_at_press = False
+        self._heartbeat = None
         self.image_list = []
         self.current_image_index = 0
         self._movie = None
@@ -5627,9 +6907,13 @@ class PetWindow(QWidget):
         if event.button() == Qt.MouseButton.LeftButton:
             self.drag_pos = event.globalPosition().toPoint()
             self.moved_distance = 0
+            # Close on press when open so focus-deactivate cannot race a reopen.
+            self._menu_open_at_press = self._folder_menu_is_open()
+            if self._menu_open_at_press:
+                self.hide_folder_menu()
         elif event.button() == Qt.MouseButton.RightButton:
             self.click_timer.stop()
-            self.show_menu()
+            self.toggle_folder_menu()
 
     def mouseMoveEvent(self, event):
         if event.buttons() == Qt.MouseButton.LeftButton and self.drag_pos:
@@ -5645,6 +6929,7 @@ class PetWindow(QWidget):
             return
         if self._ignore_release:
             self._ignore_release = False
+            self._menu_open_at_press = False
             self.drag_pos = None
             self.moved_distance = 0
             return
@@ -5653,16 +6938,71 @@ class PetWindow(QWidget):
         self.drag_pos = None
         self.moved_distance = 0
         if moved >= 8:
+            self._menu_open_at_press = False
             save_pet_geometry(self.cfg, self, persist=True)
         else:
-            self.click_timer.start(QApplication.doubleClickInterval())
+            # 心跳放大／Heartbeat Zoom on pet image click.
+            self.play_heartbeat()
+            if self._menu_open_at_press:
+                # Second click: whole Folder Shortcuts UI already dismissed.
+                self._menu_open_at_press = False
+                self.click_timer.stop()
+            else:
+                # First click: open after double-click window.
+                self.click_timer.start(QApplication.doubleClickInterval())
+
+    def play_heartbeat(self):
+        """One ~1.3s thud + two theme-gold ripples from the pet center."""
+        if self._heartbeat is not None:
+            try:
+                if self._heartbeat.isVisible():
+                    return
+            except RuntimeError:
+                self._heartbeat = None
+        pix = self.grab()
+        if pix.isNull():
+            pix = self.label.grab()
+        overlay = HeartbeatOverlay(self, pix)
+        self._heartbeat = overlay
+        overlay.destroyed.connect(lambda *_: setattr(self, "_heartbeat", None))
+        overlay.start()
 
     def mouseDoubleClickEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton:
             return
         self.click_timer.stop()
         self._ignore_release = True
+        self._menu_open_at_press = False
         self.open_settings()
+
+    def _folder_menu_is_open(self) -> bool:
+        """True if PetMenu or any of its submenus is visible."""
+        if self.menu is None:
+            return False
+        if self.menu.isVisible():
+            return True
+        for sub in (
+            self.menu.doc_submenu,
+            self.menu.file_shortcuts_submenu,
+            self.menu.mini_programs_submenu,
+        ):
+            if sub is not None and sub.isVisible():
+                return True
+        return False
+
+    def hide_folder_menu(self):
+        """Dismiss the whole Folder Shortcuts UI (main panel + submenus)."""
+        if self.menu is None:
+            return
+        # PetMenu.hideEvent already hides doc / file / mini submenus.
+        self.menu.hide()
+
+    def toggle_folder_menu(self):
+        """Open Folder Shortcuts if closed; close the entire UI if open."""
+        if self._folder_menu_is_open():
+            self.hide_folder_menu()
+        else:
+            self.show_menu()
 
     def show_menu(self):
         if self.menu is None:
