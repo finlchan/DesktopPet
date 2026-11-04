@@ -1,9 +1,10 @@
 """Odometer-style digit roll widgets for the hakoniwa status HUD.
 
-Digits sit in compact cells (no border/frame) and scroll upward with a short
-OutBack bounce when the value changes. Comma grouping matches the
-「12,480」 vibe. Persistence helpers remember the last-seen turn snapshot so
-login/open only rolls when the turn advances.
+Each digit sits in its own small dark cell (「累計 12,527 人」 vibe); labels
+and commas stay outside cells. The status strip itself is frameless over the
+map. Digits scroll upward with a short OutBack bounce. Persistence helpers
+remember the last-seen turn snapshot so login/open only rolls when the turn
+advances.
 """
 
 from __future__ import annotations
@@ -15,18 +16,21 @@ from typing import Any, Dict, Mapping, Optional, Union
 from PySide6.QtCore import (
     QEasingCurve,
     QPropertyAnimation,
+    QRectF,
     Qt,
     Property,
 )
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPainterPath
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QWidget
 
 PathLike = Union[str, Path]
 
-# Reuse hakoniwaHudStatus palette (dialog.HAKONIWA_HUD_STYLE).
-STATUS_FG = QColor("#e4f5e4")
-STATUS_BG = QColor(18, 42, 26, 210)
+# Labels / commas: bold white over the map. Digit cells: small dark tiles.
+STATUS_FG = QColor("#ffffff")
+DIGIT_FG = QColor("#ffffff")
+DIGIT_CELL_BG = QColor(12, 18, 16, 230)  # dark cell fill (not a bar frame)
 DIGIT_MS = 520
+DIGIT_RADIUS = 2.0
 
 
 def format_grouped(n: int) -> str:
@@ -35,7 +39,7 @@ def format_grouped(n: int) -> str:
 
 
 class DigitReel(QWidget):
-    """One digit cell: vertical reel 0–9 that scrolls upward with overshoot."""
+    """One digit in a small dark cell; reel scrolls upward with overshoot."""
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -43,13 +47,15 @@ class DigitReel(QWidget):
         self._offset = 0.0  # fractional reel position (digit units)
         self._anim: Optional[QPropertyAnimation] = None
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, False)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         font = QFont(self.font())
         font.setBold(True)
         self.setFont(font)
         fm = QFontMetrics(self.font())
-        self._cell_w = max(fm.horizontalAdvance("0") + 4, 12)
-        self._cell_h = max(fm.height() + 2, 16)
+        # Compact cell like counter tiles — tight around the glyph.
+        self._cell_w = max(fm.horizontalAdvance("0") + 6, 14)
+        self._cell_h = max(fm.height() + 4, 18)
         self.setFixedSize(self._cell_w, self._cell_h)
 
     def get_offset(self) -> float:
@@ -103,14 +109,18 @@ class DigitReel(QWidget):
     def paintEvent(self, event) -> None:  # noqa: N802
         del event
         p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        h = float(self.height())
+        w = float(self.width())
+        # Dark cell tile (individual digit box — not a bar frame).
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(0.5, 0.5, w - 1.0, h - 1.0), DIGIT_RADIUS, DIGIT_RADIUS)
+        p.fillPath(path, DIGIT_CELL_BG)
+        p.setClipPath(path)
         p.setFont(self.font())
-        p.setPen(STATUS_FG)
-        h = self.height()
-        w = self.width()
-        # Continuous reel: draw digits around current fractional offset.
+        p.setPen(DIGIT_FG)
         base = self._offset
-        # Normalize into a window covering ±1 digit for overshoot.
         for k in range(int(base) - 1, int(base) + 3):
             d = k % 10
             y = (k - base) * h
@@ -119,8 +129,8 @@ class DigitReel(QWidget):
             p.drawText(
                 0,
                 int(round(y)),
-                w,
-                h,
+                int(w),
+                int(h),
                 int(Qt.AlignmentFlag.AlignCenter),
                 str(d),
             )
@@ -128,15 +138,17 @@ class DigitReel(QWidget):
 
 
 class OdometerNumber(QWidget):
-    """Comma-grouped digit reels for a non-negative integer."""
+    """Comma-grouped digit reels; commas sit *outside* digit cells."""
 
     def __init__(self, parent: Optional[QWidget] = None, *, min_digits: int = 1):
         super().__init__(parent)
         self._min_digits = max(1, int(min_digits))
         self._value = 0
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self._layout = QHBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
-        self._layout.setSpacing(1)
+        # Tight gap between digit cells; commas get their own spacing.
+        self._layout.setSpacing(2)
         self._reels: list[DigitReel] = []
         self._seps: list[QLabel] = []
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
@@ -174,13 +186,15 @@ class OdometerNumber(QWidget):
         # Build from grouped text so commas land between digit cells.
         for ch in text:
             if ch == ",":
+                # Comma lives outside digit cells (no dark tile).
                 sep = QLabel(",", self)
                 sep.setObjectName("hakoniwaOdoSep")
                 font = QFont(sep.font())
                 font.setBold(True)
                 sep.setFont(font)
                 sep.setStyleSheet(
-                    f"color: {STATUS_FG.name()}; background: transparent; border: none;"
+                    "color: #ffffff; background: transparent; border: none;"
+                    "padding: 0 1px; font-weight: bold;"
                 )
                 self._layout.addWidget(sep)
                 self._seps.append(sep)
@@ -265,7 +279,7 @@ def snapshot_from_state(state: Any) -> Dict[str, int]:
 
 
 class HakoniwaStatusBar(QWidget):
-    """Top status strip: 狀態 | 資金[odo] | … | 分數[odo] (no frame; bold).
+    """Frameless top strip: 狀態 | 資金[cells] | … (labels outside; bold white).
 
     ``text()`` returns a flat string for smoke tests / layout width.
     ``setText`` switches to plain tourism/legacy mode.
@@ -280,10 +294,17 @@ class HakoniwaStatusBar(QWidget):
         ("score", "分數"),
     )
 
+    _LABEL_STYLE = (
+        "color: #ffffff; background: transparent; border: none; font-weight: bold;"
+    )
+
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setObjectName("hakoniwaHudStatus")
+        # Fully transparent strip — only digit cells paint a dark fill.
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setAutoFillBackground(False)
         font = QFont(self.font())
         font.setBold(True)
         self.setFont(font)
@@ -302,8 +323,8 @@ class HakoniwaStatusBar(QWidget):
         }
 
         self._row = QHBoxLayout(self)
-        self._row.setContentsMargins(8, 2, 8, 2)
-        self._row.setSpacing(4)
+        self._row.setContentsMargins(4, 2, 4, 2)
+        self._row.setSpacing(6)
 
         self._plain_label = QLabel(self)
         self._plain_label.setObjectName("hakoniwaHudStatusPlain")
@@ -314,21 +335,19 @@ class HakoniwaStatusBar(QWidget):
         self._plain_label.hide()
 
         self._structured = QWidget(self)
+        self._structured.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self._structured.setAutoFillBackground(False)
         self._struct_lay = QHBoxLayout(self._structured)
         self._struct_lay.setContentsMargins(0, 0, 0, 0)
-        self._struct_lay.setSpacing(4)
+        self._struct_lay.setSpacing(6)
 
         self._status_label = self._make_caption("狀態")
         self._struct_lay.addWidget(self._status_label)
         self._odometers: Dict[str, OdometerNumber] = {}
         self._bank_label = QLabel("", self._structured)
-        self._bank_label.setStyleSheet(
-            f"color: {STATUS_FG.name()}; background: transparent; border: none; font-weight: bold;"
-        )
+        self._bank_label.setStyleSheet(self._LABEL_STYLE)
         self._suffix_label = QLabel("", self._structured)
-        self._suffix_label.setStyleSheet(
-            f"color: {STATUS_FG.name()}; background: transparent; border: none; font-weight: bold;"
-        )
+        self._suffix_label.setStyleSheet(self._LABEL_STYLE)
 
         for key, title in self.FIELD_ORDER:
             # Always "| label odo" after 狀態 (and between fields).
@@ -356,16 +375,12 @@ class HakoniwaStatusBar(QWidget):
 
     def _make_caption(self, text: str) -> QLabel:
         lab = QLabel(text, self._structured)
-        lab.setStyleSheet(
-            f"color: {STATUS_FG.name()}; background: transparent; border: none; font-weight: bold;"
-        )
+        lab.setStyleSheet(self._LABEL_STYLE)
         return lab
 
     def _make_sep(self) -> QLabel:
         lab = QLabel("|", self._structured)
-        lab.setStyleSheet(
-            f"color: {STATUS_FG.name()}; background: transparent; border: none; font-weight: bold;"
-        )
+        lab.setStyleSheet(self._LABEL_STYLE)
         return lab
 
     def setAlignment(self, alignment) -> None:  # noqa: N802

@@ -2578,12 +2578,15 @@ def test_dialog_import_offscreen():
     i_turn, i_cells = st.index("回合"), st.index("格數")
     i_score = st.index("分數")
     assert i_status < i_funds < i_food < i_pop < i_turn < i_cells < i_score, st
-    # Status HUD is a single horizontal line (no wrap / multi-line); no frame.
+    # Status HUD is a single horizontal line (no wrap); frameless over map.
     assert dlg.stats.wordWrap() is False
     assert "\n" not in st
-    assert "border: none" in dlg.hud.styleSheet() or "border:none" in dlg.hud.styleSheet().replace(
-        " ", ""
-    )
+    sheet = dlg.hud.styleSheet()
+    assert "border: none" in sheet or "border:none" in sheet.replace(" ", "")
+    # Green status box removed — strip background must be transparent.
+    assert "QWidget#hakoniwaHudStatus" in sheet
+    status_block = sheet.split("QWidget#hakoniwaHudStatus")[1].split("}")[0]
+    assert "transparent" in status_block, status_block
     dlg.show()
     dlg.resize(960, 780)
     dlg._refresh_ui()

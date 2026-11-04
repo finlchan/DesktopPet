@@ -105,19 +105,21 @@ _OVERLAY_BG = "rgba(12, 28, 18, 77)"
 _OVERLAY_BORDER = "rgba(150, 200, 150, 130)"
 
 # In-map HUD styles (status / tile / log / guestbook / tools).
-# Status bar: same palette, no frame/border (user-locked), bold text.
+# Status strip: fully frameless over the map (no green box); digit cells
+# carry their own dark fill in odometer.DigitReel.
 HAKONIWA_HUD_STYLE = f"""
 QWidget#hakoniwaHudStatus {{
-    background-color: rgba(18, 42, 26, 210);
-    color: #e4f5e4;
+    background: transparent;
+    background-color: transparent;
+    color: #ffffff;
     border: none;
-    padding: 2px 8px;
+    padding: 2px 4px;
     font-weight: bold;
-    /* Single-line odometer status strip — no wrap / no frame. */
+    /* Frameless odometer strip floating on the map. */
 }}
 QLabel#hakoniwaHudStatusPlain {{
     background: transparent;
-    color: #e4f5e4;
+    color: #ffffff;
     border: none;
     font-weight: bold;
 }}
