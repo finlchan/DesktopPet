@@ -58,7 +58,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261104.01"
+APP_VERSION = "261104.02"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -6702,6 +6702,7 @@ class PetWindow(QWidget):
         self.drag_pos = None
         self.moved_distance = 0
         self._ignore_release = False
+        self._menu_open_at_press = False
         self._heartbeat = None
         self.image_list = []
         self.current_image_index = 0
@@ -6906,9 +6907,13 @@ class PetWindow(QWidget):
         if event.button() == Qt.MouseButton.LeftButton:
             self.drag_pos = event.globalPosition().toPoint()
             self.moved_distance = 0
+            # Close on press when open so focus-deactivate cannot race a reopen.
+            self._menu_open_at_press = self._folder_menu_is_open()
+            if self._menu_open_at_press:
+                self.hide_folder_menu()
         elif event.button() == Qt.MouseButton.RightButton:
             self.click_timer.stop()
-            self.show_menu()
+            self.toggle_folder_menu()
 
     def mouseMoveEvent(self, event):
         if event.buttons() == Qt.MouseButton.LeftButton and self.drag_pos:
@@ -6924,6 +6929,7 @@ class PetWindow(QWidget):
             return
         if self._ignore_release:
             self._ignore_release = False
+            self._menu_open_at_press = False
             self.drag_pos = None
             self.moved_distance = 0
             return
@@ -6932,11 +6938,18 @@ class PetWindow(QWidget):
         self.drag_pos = None
         self.moved_distance = 0
         if moved >= 8:
+            self._menu_open_at_press = False
             save_pet_geometry(self.cfg, self, persist=True)
         else:
-            # 心跳放大／Heartbeat Zoom on pet image click (menu still opens).
+            # 心跳放大／Heartbeat Zoom on pet image click.
             self.play_heartbeat()
-            self.click_timer.start(QApplication.doubleClickInterval())
+            if self._menu_open_at_press:
+                # Second click: whole Folder Shortcuts UI already dismissed.
+                self._menu_open_at_press = False
+                self.click_timer.stop()
+            else:
+                # First click: open after double-click window.
+                self.click_timer.start(QApplication.doubleClickInterval())
 
     def play_heartbeat(self):
         """One ~1.3s thud + two theme-gold ripples from the pet center."""
@@ -6959,7 +6972,37 @@ class PetWindow(QWidget):
             return
         self.click_timer.stop()
         self._ignore_release = True
+        self._menu_open_at_press = False
         self.open_settings()
+
+    def _folder_menu_is_open(self) -> bool:
+        """True if PetMenu or any of its submenus is visible."""
+        if self.menu is None:
+            return False
+        if self.menu.isVisible():
+            return True
+        for sub in (
+            self.menu.doc_submenu,
+            self.menu.file_shortcuts_submenu,
+            self.menu.mini_programs_submenu,
+        ):
+            if sub is not None and sub.isVisible():
+                return True
+        return False
+
+    def hide_folder_menu(self):
+        """Dismiss the whole Folder Shortcuts UI (main panel + submenus)."""
+        if self.menu is None:
+            return
+        # PetMenu.hideEvent already hides doc / file / mini submenus.
+        self.menu.hide()
+
+    def toggle_folder_menu(self):
+        """Open Folder Shortcuts if closed; close the entire UI if open."""
+        if self._folder_menu_is_open():
+            self.hide_folder_menu()
+        else:
+            self.show_menu()
 
     def show_menu(self):
         if self.menu is None:

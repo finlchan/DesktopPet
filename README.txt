@@ -1,7 +1,7 @@
 Desktop Pet
 ==================
 
-Version: 261104.01
+Version: 261104.02
 Published: 2026-11-04
 
 A floating shortcut menu and document record gadget on the Windows desktop.
@@ -13,7 +13,8 @@ was dropped when the app UI was fully translated to English.
 Features
 --------
 1. Displays a small icon on the desktop (custom image or auto-rotating image set).
-2. Click the icon to open a semi-transparent menu.
+2. Click the icon to toggle the Folder Shortcuts menu (open if closed,
+   close the whole UI if open).
 3. The top of the menu shows "Folder Shortcuts フォルダー ショートカット"
    for opening local folders (with search/filter; Float Drift title motion).
 4. Below that, four Social Icon Fill circles: File/URL Shortcuts 指定傳送
@@ -36,10 +37,10 @@ Features
 
 Quick Usage
 --------
-- Left-click the pet: open menu
+- Left-click the pet: toggle Folder Shortcuts (open ↔ close whole UI)
 - Drag the pet: move position
 - Double-click the pet: open settings
-- Right-click the pet: open menu
+- Right-click the pet: toggle Folder Shortcuts
 - Drag-and-drop a file/folder/URL onto the pet: add a shortcut
 - Right-click a file item: edit Time / Comment / Publisher / Version
 
@@ -80,6 +81,12 @@ Free_Station_FAI.xls / .xlsm survey spreadsheet:
 - Output: station Easting/Northing, reduced level, and the distance-check
   residual ΔHD per accepted pair, plus an Average (mean E / N / RL) of those
   pair results. Copy button copies the result block.
+
+What's new in 261104.02 (2026-11-04)
+--------
+1. Pet image click toggles Folder Shortcuts: first click opens the menu;
+   second click closes the entire Folder Shortcuts UI (main panel +
+   submenus), not only a nested panel.
 
 What's new in 261104.01 (2026-11-04)
 --------
