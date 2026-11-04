@@ -5541,42 +5541,16 @@ class MiniProgramsSubMenu(PopupPanel):
         sep.setStyleSheet("background-color: rgba(255,255,255,120);")
         layout.addWidget(sep)
 
-        # Text records >>
-        text_row = QHBoxLayout()
-        text_row.setSpacing(4)
-        text_lbl = QLabel("Text records")
-        text_lbl.setStyleSheet(
-            "color: white; font-weight: bold; background: transparent;"
-        )
-        btn_text = QPushButton(">>")
-        btn_text.setFixedWidth(30)
-        btn_text.setStyleSheet("text-align: center;" + menu_button_style("#4a4a4a"))
-        btn_text.clicked.connect(self.open_text_records)
-        text_row.addWidget(text_lbl)
-        text_row.addStretch()
-        text_row.addWidget(btn_text)
-        layout.addLayout(text_row)
+        # Text records / Calculations — same List Row Fill as Folder Shortcuts.
+        # (Solid idle face sits above the particle canvas; colored program
+        # buttons below stay unchanged.)
+        self.btn_text_records = ListRowFillItem(1, "Text records", self.content)
+        self.btn_text_records.clicked.connect(self.open_text_records)
+        layout.addWidget(self.btn_text_records)
 
-        # Calculations >>
-        ops_row = QHBoxLayout()
-        ops_row.setSpacing(4)
-        ops_lbl = QLabel("Calculations")
-        ops_lbl.setStyleSheet(
-            "color: white; font-weight: bold; background: transparent;"
-        )
-        btn_ops = QPushButton(">>")
-        btn_ops.setFixedWidth(30)
-        btn_ops.setStyleSheet("text-align: center;" + menu_button_style("#4a4a4a"))
-        btn_ops.clicked.connect(self.open_operations)
-        ops_row.addWidget(ops_lbl)
-        ops_row.addStretch()
-        ops_row.addWidget(btn_ops)
-        layout.addLayout(ops_row)
-
-        sep2 = QLabel()
-        sep2.setFixedHeight(1)
-        sep2.setStyleSheet("background-color: rgba(255,255,255,120);")
-        layout.addWidget(sep2)
+        self.btn_calculations = ListRowFillItem(2, "Calculations", self.content)
+        self.btn_calculations.clicked.connect(self.open_operations)
+        layout.addWidget(self.btn_calculations)
 
         # Solid fills sit above the particle canvas (opaque button faces).
         btn_pomodoro = QPushButton("Pomodoro")
