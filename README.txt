@@ -1,8 +1,8 @@
 Desktop Pet
 ==================
 
-Version: 261103.07
-Published: 2026-11-03
+Version: 261104.01
+Published: 2026-11-04
 
 A floating shortcut menu and document record gadget on the Windows desktop.
 
@@ -16,13 +16,14 @@ Features
 2. Click the icon to open a semi-transparent menu.
 3. The top of the menu shows "Folder Shortcuts フォルダー ショートカット"
    for opening local folders (with search/filter; Float Drift title motion).
-4. Below that, four Social Icon Fill circles: File/URL Shortcuts (arrow),
-   Document record (paper), Mini programs (calculator), Settings (gear).
-   File/URL submenu title uses 顫抖穩定／Jitter Settle motion.
-5. Document record submenu: browse/search files; header title uses
+4. Below that, four Social Icon Fill circles: File/URL Shortcuts 指定傳送
+   (arrow), Document Record 文檔紀錄 (paper), Mini Programs 副程式
+   (calculator), Settings (gear). File/URL submenu title uses
+   顫抖穩定／Jitter Settle; soft sky glow on titles.
+5. Document Record 文檔紀錄 submenu: browse/search files; header title uses
    崩落／Crumble Down motion; "Open folder" opens storage folder(s).
-6. Mini programs: Text records and Calculations (Level calc / Slope calc /
-   Free station), plus Pomodoro, Translate,
+6. Mini Programs 副程式: Text records and Calculations (Level calc / Slope
+   calc / Free station), plus Pomodoro, Translate,
    箱庭島（未完成）／Hakoniwa (WIP) (island sim entry kept; marked unfinished),
    and 透明魚缸（未完成）／Fish Tank (WIP) (Phase 1 local translucent aquarium
    below 箱庭島; high top-down / RTS isometric swim — glass stays transparent;
@@ -79,6 +80,13 @@ Free_Station_FAI.xls / .xlsm survey spreadsheet:
 - Output: station Easting/Northing, reduced level, and the distance-check
   residual ΔHD per accepted pair, plus an Average (mean E / N / RL) of those
   pair results. Copy button copies the result block.
+
+What's new in 261104.01 (2026-11-04)
+--------
+1. Panel titles renamed with soft sky glow (like Folder Shortcuts):
+   「File/URL Shortcuts 指定傳送」, 「Document Record 文檔紀錄」,
+   「Mini Programs 副程式」. Existing title animations kept (Jitter Settle /
+   Crumble Down). Theme steel-blue palette only.
 
 What's new in 261103.07 (2026-11-03)
 --------

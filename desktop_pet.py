@@ -58,7 +58,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261103.07"
+APP_VERSION = "261104.01"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -100,7 +100,7 @@ DEFAULT_CONFIG = {
     # unless path looks like http(s).
     "file_shortcuts": [],
     "document_area": {
-        "title": "Document record",
+        "title": "Document Record 文檔紀錄",
         # "folder" kept for backward compatibility with older builds.
         "folder": "",
         # Primary list of storage folders (supports more than one).
@@ -937,7 +937,9 @@ class SettingsDialog(QDialog):
             )
         self._on_fsc_type_changed()
 
-        self.doc_title_edit.setText(self.cfg.get("document_area", "title") or "Document record")
+        self.doc_title_edit.setText(
+            self.cfg.get("document_area", "title") or DOCUMENT_RECORD_TITLE_DEFAULT
+        )
         self.doc_folder_list.clear()
         self.doc_folder_edit.clear()
         folders = normalize_document_folders(self.cfg.get("document_area") or {})
@@ -1292,7 +1294,7 @@ class SettingsDialog(QDialog):
 
         self.cfg.set(
             ["document_area", "title"],
-            self.doc_title_edit.text().strip() or "Document record",
+            self.doc_title_edit.text().strip() or DOCUMENT_RECORD_TITLE_DEFAULT,
             save=False
         )
         folders = []
@@ -2458,14 +2460,99 @@ class PopupPanel(QWidget):
 # ---------------------------------------------------------------------------
 # 「崩落（Crumble Down）」: each glyph tilts, then falls with gravity + spin +
 # fade; after a beat they drop back in from above to reassemble (~3.4s).
-DOCUMENT_RECORD_TITLE_DEFAULT = "Document record"
+DOCUMENT_RECORD_TITLE_DEFAULT = "Document Record 文檔紀錄"
 CRUMBLE_TEXT = QColor(255, 255, 255)
-CRUMBLE_GLOW = QColor(135, 206, 250, 55)
+# Soft glow matches Folder Shortcuts／Float Drift (sky halo).
+TITLE_GLOW = QColor(135, 206, 250, 100)
+TITLE_GLOW_SOFT = QColor(176, 224, 255, 55)
+CRUMBLE_GLOW = TITLE_GLOW
 CRUMBLE_CYCLE_S = 3.4
 CRUMBLE_PAD_X = 6.0
 CRUMBLE_PAD_Y = 6.0
 CRUMBLE_FALL_ROOM = 36.0   # px below baseline while crumbling
 CRUMBLE_DROP_ROOM = 28.0   # px above baseline while reassembling
+
+
+def draw_title_soft_glow(painter: QPainter, ch: str, advance: float, alpha: float = 1.0) -> None:
+    """Folder-Shortcuts-style sky soft glow under a glyph (origin at baseline)."""
+    a = max(0.0, min(1.0, float(alpha)))
+    if a < 0.02:
+        return
+    for radius, base in (
+        (2.6, TITLE_GLOW_SOFT),
+        (1.4, TITLE_GLOW),
+    ):
+        col = QColor(base)
+        col.setAlpha(max(0, min(255, int(base.alpha() * a))))
+        painter.setPen(col)
+        for ox, oy in (
+            (-radius, 0.0),
+            (radius, 0.0),
+            (0.0, -radius),
+            (0.0, radius),
+            (-radius * 0.7, -radius * 0.7),
+            (radius * 0.7, radius * 0.7),
+        ):
+            painter.drawText(QPointF(-advance * 0.5 + ox, oy), ch)
+
+
+class SoftGlowTitleLabel(QWidget):
+    """Static bold title with Folder-Shortcuts soft sky glow (no motion)."""
+
+    def __init__(self, text: str, parent=None):
+        super().__init__(parent)
+        self._text = text or ""
+        self._chars = list(self._text)
+        font = QFont(self.font())
+        font.setFamily("Microsoft JhengHei")
+        font.setPointSize(9)
+        font.setBold(True)
+        self._font = font
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._recompute_size()
+
+    def setText(self, text: str) -> None:  # noqa: N802
+        self._text = text or ""
+        self._chars = list(self._text)
+        self._recompute_size()
+        self.update()
+
+    def text(self) -> str:
+        return self._text
+
+    def _recompute_size(self) -> None:
+        fm = QFontMetrics(self._font)
+        width = sum(fm.horizontalAdvance(ch) for ch in self._chars)
+        self.setMinimumHeight(int(fm.height() + 10))
+        self.setMinimumWidth(int(width + 12))
+        self.updateGeometry()
+
+    def sizeHint(self):  # noqa: N802
+        return QSize(self.minimumWidth(), self.minimumHeight())
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        painter.setFont(self._font)
+        fm = QFontMetrics(self._font)
+        x = 6.0
+        base_y = 5.0 + fm.ascent()
+        for ch in self._chars:
+            advance = float(fm.horizontalAdvance(ch))
+            if ch == " ":
+                x += advance
+                continue
+            painter.save()
+            painter.translate(x + advance * 0.5, base_y)
+            draw_title_soft_glow(painter, ch, advance, 1.0)
+            painter.setPen(QColor(255, 255, 255))
+            painter.drawText(QPointF(-advance * 0.5, 0.0), ch)
+            painter.restore()
+            x += advance
+        painter.end()
 
 
 class CrumbleDownLabel(QWidget):
@@ -2618,11 +2705,7 @@ class CrumbleDownLabel(QWidget):
             painter.translate(cx, cy)
             painter.rotate(rot)
 
-            if 0.08 < alpha < 0.95:
-                glow = QColor(CRUMBLE_GLOW)
-                glow.setAlpha(int(CRUMBLE_GLOW.alpha() * alpha))
-                painter.setPen(glow)
-                painter.drawText(QPointF(-advance * 0.5 + 0.8, 0.0), ch)
+            draw_title_soft_glow(painter, ch, advance, alpha)
 
             col = QColor(CRUMBLE_TEXT)
             col.setAlpha(int(255 * alpha))
@@ -2778,7 +2861,9 @@ class DocumentSubMenu(PopupPanel):
     def refresh_and_show(self, anchor_geometry):
         self.files = []
         self.files_meta = dict(self.cfg.get("document_area", "files") or {})
-        self.title_label.setText(self.cfg.get("document_area", "title") or "Document record")
+        self.title_label.setText(
+            self.cfg.get("document_area", "title") or DOCUMENT_RECORD_TITLE_DEFAULT
+        )
         self.search_edit.blockSignals(True)
         self.search_edit.clear()
         self.search_edit.blockSignals(False)
@@ -2949,9 +3034,10 @@ class DocumentSubMenu(PopupPanel):
 # ---------------------------------------------------------------------------
 # 「顫抖穩定（Jitter Settle）」: each glyph shakes hard (XY + rotate), the
 # motion damps to rest, pauses, then the cycle restarts (~2.4s).
-FILE_URL_SHORTCUTS_TITLE = "File/URL Shortcuts"
+FILE_URL_SHORTCUTS_TITLE = "File/URL Shortcuts 指定傳送"
 JITTER_SETTLE_TEXT = QColor(255, 255, 255)
-JITTER_SETTLE_GLOW = QColor(135, 206, 250, 70)  # soft sky halo
+JITTER_SETTLE_GLOW = TITLE_GLOW
+MINI_PROGRAMS_TITLE = "Mini Programs 副程式"
 JITTER_SETTLE_CYCLE_S = 2.4
 JITTER_SETTLE_SHAKE_S = 1.15  # damp window; remainder is pause at rest
 JITTER_SETTLE_PAD_X = 8.0
@@ -3061,11 +3147,9 @@ class JitterSettleLabel(QWidget):
             painter.translate(cx, cy)
             painter.rotate(rot)
 
-            if env > 0.15:
-                # Soft sky smear while shaking hard
-                painter.setPen(JITTER_SETTLE_GLOW)
-                painter.drawText(QPointF(-advance * 0.5 + 1.0, 0.0), ch)
-                painter.drawText(QPointF(-advance * 0.5 - 1.0, 0.0), ch)
+            # Always soft-glow like Folder Shortcuts; smear a bit harder while shaking.
+            glow_a = 1.0 if env < 0.15 else min(1.0, 0.85 + env * 0.3)
+            draw_title_soft_glow(painter, ch, advance, glow_a)
 
             painter.setPen(JITTER_SETTLE_TEXT)
             painter.drawText(QPointF(-advance * 0.5, 0.0), ch)
@@ -5449,10 +5533,7 @@ class MiniProgramsSubMenu(PopupPanel):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(4)
 
-        title = QLabel("Mini programs")
-        title.setStyleSheet(
-            "color: white; font-weight: bold; background: transparent;"
-        )
+        title = SoftGlowTitleLabel(MINI_PROGRAMS_TITLE, self.content)
         layout.addWidget(title)
 
         sep = QLabel()
@@ -5796,21 +5877,8 @@ class FloatDriftLabel(QWidget):
             painter.translate(cx, cy)
             painter.rotate(rot)
 
-            # Soft glow (outer sky → inner white), then solid glyph.
-            for radius, color in (
-                (2.6, FLOAT_DRIFT_GLOW_SOFT),
-                (1.4, FLOAT_DRIFT_GLOW),
-            ):
-                painter.setPen(color)
-                for ox, oy in (
-                    (-radius, 0.0),
-                    (radius, 0.0),
-                    (0.0, -radius),
-                    (0.0, radius),
-                    (-radius * 0.7, -radius * 0.7),
-                    (radius * 0.7, radius * 0.7),
-                ):
-                    painter.drawText(QPointF(-advance * 0.5 + ox, oy), ch)
+            # Soft glow (outer sky → inner), then solid glyph.
+            draw_title_soft_glow(painter, ch, advance, 1.0)
 
             painter.setPen(FLOAT_DRIFT_TEXT)
             painter.drawText(QPointF(-advance * 0.5, 0.0), ch)
@@ -6275,13 +6343,13 @@ class PetMenu(PopupPanel):
         nav_row.addWidget(self.btn_file_sc_open)
 
         self.btn_doc_open = MenuSocialIconFillButton(
-            "document", "Document record", self
+            "document", DOCUMENT_RECORD_TITLE_DEFAULT, self
         )
         self.btn_doc_open.clicked.connect(self.open_document_submenu)
         nav_row.addWidget(self.btn_doc_open)
 
         self.btn_mini_open = MenuSocialIconFillButton(
-            "calculator", "Mini programs", self
+            "calculator", MINI_PROGRAMS_TITLE, self
         )
         self.btn_mini_open.clicked.connect(self.open_mini_programs_submenu)
         nav_row.addWidget(self.btn_mini_open)
@@ -6313,9 +6381,9 @@ class PetMenu(PopupPanel):
 
         cap_row.addStretch()
         cap_row.addWidget(_cap("File/URL"))
-        self.doc_title = _cap("Document record")
+        self.doc_title = _cap("Document Record")
         cap_row.addWidget(self.doc_title)
-        cap_row.addWidget(_cap("Mini programs"))
+        cap_row.addWidget(_cap("Mini Programs"))
         cap_row.addWidget(_cap("Settings"))
         cap_row.addStretch()
         self.main_layout.addLayout(cap_row)
@@ -6385,7 +6453,7 @@ class PetMenu(PopupPanel):
         self.folder_search_edit.setVisible(bool(self._folder_shortcuts))
         self._rebuild_folder_shortcuts()
 
-        title = self.cfg.get("document_area", "title") or "Document record"
+        title = self.cfg.get("document_area", "title") or DOCUMENT_RECORD_TITLE_DEFAULT
         self.doc_title.setText(title)
         self.btn_doc_open.setToolTip(title)
         self.adjustSize()
