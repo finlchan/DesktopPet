@@ -59,7 +59,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261105.01"
+APP_VERSION = "261105.02"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -7127,7 +7127,12 @@ HEARTBEAT_RIPPLE_B = QColor(232, 212, 139, 200)  # #e8d48b
 
 
 class HeartbeatOverlay(QWidget):
-    """Frameless overlay: scale pet pixmap once, paint two center ripples that fade."""
+    """Frameless overlay: scale pet pixmap once, paint two center ripples that fade.
+
+    Scale is applied around the pet's current screen center (transform origin =
+    widget/pixmap center). Grab() device-pixel size is mapped back to the host's
+    logical size so HiDPI never inflates the first frame toward the top-left.
+    """
 
     def __init__(self, host: "PetWindow", pet_pixmap: QPixmap):
         super().__init__(None)
@@ -7148,15 +7153,39 @@ class HeartbeatOverlay(QWidget):
             | Qt.WindowType.WindowStaysOnTopHint
         )
 
-        pet_size = max(host.width(), host.height(), 48)
+        # Logical pet box (matches PetWindow fixed square), not grab() pixels.
+        self._pet_w = max(1, host.width())
+        self._pet_h = max(1, host.height())
+        pet_size = max(self._pet_w, self._pet_h, 48)
+        # Normalize grab so logical size == host (keeps HiDPI sharpness).
+        dpr = max(float(self._pix.devicePixelRatio()), 1.0)
+        phys_w = max(1, int(round(self._pet_w * dpr)))
+        phys_h = max(1, int(round(self._pet_h * dpr)))
+        normalized = self._pix.scaled(
+            phys_w,
+            phys_h,
+            Qt.AspectRatioMode.IgnoreAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        normalized.setDevicePixelRatio(dpr)
+        self._pix = normalized
         # Room for ripples beyond the scaled pet.
         side = int(pet_size * 2.6)
         self._pet_size = pet_size
         self.setFixedSize(side, side)
-        center = host.frameGeometry().center()
-        self.move(center.x() - side // 2, center.y() - side // 2)
+        self._recenter_on_host()
+
+    def _recenter_on_host(self) -> None:
+        """Pin overlay so its center == host widget center in global coords."""
+        host = self._host
+        try:
+            center = host.mapToGlobal(host.rect().center())
+        except RuntimeError:
+            return
+        self.move(center.x() - self.width() // 2, center.y() - self.height() // 2)
 
     def start(self):
+        self._recenter_on_host()
         self._host.setWindowOpacity(0.0)
         self._elapsed.start()
         self._progress = 0.0
@@ -7232,20 +7261,18 @@ class HeartbeatOverlay(QWidget):
                 QPoint(int(cx), int(cy)), int(radius), int(radius)
             )
 
-        # Pet thud (scale up then back).
+        # Pet thud: scale around center (no top-left origin offset).
         scale = self._scale_at(t)
         if not self._pix.isNull():
-            pw = max(1, int(self._pix.width() * scale))
-            ph = max(1, int(self._pix.height() * scale))
-            scaled = self._pix.scaled(
-                pw,
-                ph,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-            x = int(cx - scaled.width() / 2.0)
-            y = int(cy - scaled.height() / 2.0)
-            painter.drawPixmap(x, y, scaled)
+            dpr = max(float(self._pix.devicePixelRatio()), 1.0)
+            lw = self._pix.width() / dpr
+            lh = self._pix.height() / dpr
+            painter.save()
+            painter.translate(cx, cy)
+            painter.scale(scale, scale)
+            # drawPixmap respects pixmap DPR → logical lw×lh, origin top-left of pet.
+            painter.drawPixmap(QPointF(-lw / 2.0, -lh / 2.0), self._pix)
+            painter.restore()
         painter.end()
 
 
