@@ -1,8 +1,8 @@
 Desktop Pet
 ==================
 
-Version: 261104.02
-Published: 2026-11-04
+Version: 261105.03
+Published: 2026-11-05
 
 A floating shortcut menu and document record gadget on the Windows desktop.
 
@@ -81,6 +81,23 @@ Free_Station_FAI.xls / .xlsm survey spreadsheet:
 - Output: station Easting/Northing, reduced level, and the distance-check
   residual ΔHD per accepted pair, plus an Average (mean E / N / RL) of those
   pair results. Copy button copies the result block.
+
+What's new in 261105.03 (2026-11-05)
+--------
+1. Integrate latest 箱庭島／Hakoniwa already on main (SAVE_VERSION 16):
+   status odometer digits, bottom icon bar + notify/log/alert marquee,
+   紙糊假設施／觀光偽裝, 海底基地 (deep-sea missile base) + camo rules.
+   Mini programs entry remains 箱庭島（未完成）／Hakoniwa (WIP).
+2. Smoke: decoy cover assert runs before nearby real 防衛 is placed.
+
+What's new in 261105.02 (2026-11-05)
+--------
+1. Heartbeat Zoom pulses around the pet center (no top-left jump on HiDPI).
+
+What's new in 261105.01 (2026-11-05)
+--------
+1. Mini programs / File-URL / Document ambient polish: List Row Fill +
+   Shine Sweep, Falling Petals, Bokeh Lights.
 
 What's new in 261104.02 (2026-11-04)
 --------
