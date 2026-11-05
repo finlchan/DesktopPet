@@ -17,7 +17,9 @@ buildings (spawn/stomp/missile stubs), 港灣／造船所／貿易輸出（臨�
 大學／研究所色塊＋輕量研究 buff（變體：下一科技折扣／減災；費用估算見常數）,
 養殖場色塊（變體：淺灘產糧）／遊樂園色塊（變體：依人口觀光收入）／
 發電廠色塊（SE 電力 stub：被動產資＋工場供電加產）,
-紙糊假設施（ハリボテ）色塊＋觀光偽裝（飛彈基地→森；紙糊→防衛）.
+
+海底基地色塊（定本：深海飛彈基地；觀光偽裝成海）＋紙糊假設施（ハリボテ）＋觀光偽裝（飛彈基地→森；紙糊→防衛）.
+
 Color-block placeholders only — user art later.
 """
 
@@ -92,6 +94,8 @@ COST_AMUSEMENT_PARK = 1300  # 遊樂園（觀光色塊；平地；依人口收�
 # 發電廠：目錄「發電廠 — 電力／稅收上限相關」（SE）。本機估算：
 # 介於酒店(600)與大學(700) → 650；供電給工場加產。
 COST_POWER_PLANT = 650  # 發電廠（電力色塊；平地；被動產資＋工場加產）
+# 海底基地：定本同飛彈基地功能，建在深海（非淺灘／油田）；觀光者眼中為海.
+COST_UNDERSEA_BASE = 8000  # 海底基地（定本 8000 億）
 
 # Forest tree stock (catalog 木 100～20000；+100／回合；新植林 100).
 TREE_MIN = 100
@@ -143,7 +147,10 @@ PLACEABLE_BUILDINGS = frozenset(
         "aquafarm",
         "amusement_park",
         "power_plant",
+
+        "undersea_base",
         "decoy",
+
     }
 )
 COASTAL_BUILDINGS = frozenset({"harbor", "shipyard", "breakwater"})
@@ -151,6 +158,8 @@ COASTAL_BUILDINGS = frozenset({"harbor", "shipyard", "breakwater"})
 MOUNTAIN_ONLY_BUILDINGS = frozenset({"quarry"})
 # Catalog（變體）: 養殖場只能建在淺灘.
 SHALLOW_ONLY_BUILDINGS = frozenset({"aquafarm"})
+# Catalog: 海底基地只能建在深海（非淺灘／油田）.
+SEA_ONLY_BUILDINGS = frozenset({"undersea_base"})
 # Catalog: 紀念碑抗怪獸踩踏、抑火災如森（鄰居減火）.
 MONSTER_PROOF_BUILDINGS = frozenset({"monument"})
 # Water-like terrains (海嘯鄰接／臨海判定；油田算海域).
@@ -170,7 +179,10 @@ SCORE_PER_BREAKWATER = 50
 SCORE_PER_OILFIELD = 120
 SCORE_PER_DEFENSE = 40
 SCORE_PER_MISSILE_BASE = 30
+
+SCORE_PER_UNDERSEA_BASE = 500  # 深海軍事：遠高於陸上飛彈基地（費用 8000）
 SCORE_PER_DECOY = 5  # 紙糊：嚇阻用，分數極低（遠低於真防衛）
+
 SCORE_PER_BANK = 90
 SCORE_PER_SUPERMARKET = 40
 SCORE_PER_SHRINE = 800
@@ -305,6 +317,13 @@ BUILDINGS = {
     # 軍事色塊佔位（定本費用；美術後補）
     "defense": {"label": "防衛設施", "color": (48, 88, 160), "cost": COST_DEFENSE},
     "missile_base": {"label": "飛彈基地", "color": (160, 72, 48), "cost": COST_MISSILE_BASE},
+
+    # 深海軍事色塊：略深藍於海面，觀光模式隱藏成海.
+    "undersea_base": {
+        "label": "海底基地",
+        "color": (18, 48, 92),
+        "cost": COST_UNDERSEA_BASE,
+    },
     # 紙糊假設施：色調接近防衛（嚇阻）；島主可辨；觀光畫面偽裝成防衛
     "decoy": {
         "label": "紙糊假設施",
@@ -507,7 +526,10 @@ def compute_island_score(
     aquafarms: int = 0,
     amusement_parks: int = 0,
     power_plants: int = 0,
+
+    undersea_bases: int = 0,
     decoys: int = 0,
+
     satellite_active: bool = False,
     bank_deposit: int = 0,
 ) -> int:
@@ -527,7 +549,10 @@ def compute_island_score(
         + max(0, int(oilfields)) * SCORE_PER_OILFIELD
         + max(0, int(defenses)) * SCORE_PER_DEFENSE
         + max(0, int(missile_bases)) * SCORE_PER_MISSILE_BASE
+
+        + max(0, int(undersea_bases)) * SCORE_PER_UNDERSEA_BASE
         + max(0, int(decoys)) * SCORE_PER_DECOY
+
         + max(0, int(banks)) * SCORE_PER_BANK
         + max(0, int(supermarkets)) * SCORE_PER_SUPERMARKET
         + max(0, int(shrines)) * SCORE_PER_SHRINE
@@ -796,8 +821,15 @@ class IslandState:
             if self.cell(i, j).building == "defense"
         ]
 
+    def undersea_base_count(self) -> int:
+        return self.building_count("undersea_base")
+
     def has_missile_base(self) -> bool:
-        return self.building_count("missile_base") > 0
+        """True if ≥1 飛彈基地 or 海底基地 (catalog: same launch privilege)."""
+        return (
+            self.building_count("missile_base") > 0
+            or self.undersea_base_count() > 0
+        )
 
     def has_harbor(self) -> bool:
         return self.building_count("harbor") > 0
@@ -908,6 +940,7 @@ class IslandState:
             oilfields=self.terrain_count("oilfield"),
             defenses=self.building_count("defense"),
             missile_bases=self.building_count("missile_base"),
+            undersea_bases=self.undersea_base_count(),
             villages=self.terrain_count("village"),
             towns=self.terrain_count("town"),
             cities=self.terrain_count("city"),
@@ -930,15 +963,21 @@ class IslandState:
         )
 
     def tourist_appearance(self, i: int, j: int) -> Tuple[str, Optional[str]]:
-        """觀光者所見：飛彈基地偽裝成森；紙糊假設施偽裝成防衛設施.
+
+        """觀光者所見：飛彈基地→森；海底基地→海；紙糊假設施→防衛（定本 §4.2）.
 
         Catalog §4.2. Owner / developer view keeps the true cell.
+
         """
         c = self.cell(i, j)
         if c.building == "missile_base":
             return "forest", None
+
+        if c.building == "undersea_base":
+            return "sea", None
         if c.building == "decoy":
             return c.terrain, "defense"
+
         return c.terrain, c.building
 
     def happiness_bonus(self) -> int:
@@ -971,8 +1010,10 @@ class IslandState:
         return None
 
     def can_landfill(self, i: int, j: int) -> bool:
-        """填海：海→淺灘 or 淺灘→荒地；須鄰陸。"""
+        """填海：海→淺灘 or 淺灘→荒地；須鄰陸（有建築的海／淺灘不可）."""
         c = self.cell(i, j)
+        if c.building is not None:
+            return False
         if c.terrain not in ("sea", "shallow"):
             return False
         return self._adjacent_to_land(i, j)
@@ -1024,6 +1065,8 @@ class IslandState:
             return c.terrain == "mountain"
         if kind in SHALLOW_ONLY_BUILDINGS:
             return c.terrain == "shallow"
+        if kind in SEA_ONLY_BUILDINGS:
+            return c.terrain == "sea"
         if c.terrain not in BUILDABLE:
             return False
         if kind in COASTAL_BUILDINGS and not self._adjacent_to_sea(i, j):
@@ -1047,6 +1090,9 @@ class IslandState:
         elif kind in SHALLOW_ONLY_BUILDINGS:
             if c.terrain != "shallow":
                 return "養殖場只能建在淺灘（請先填海造出淺灘）"
+        elif kind in SEA_ONLY_BUILDINGS:
+            if c.terrain != "sea":
+                return "海底基地只能建在深海（不可建在淺灘／油田）"
         elif c.terrain not in BUILDABLE:
             return "只能在平地上建設（請先整地）"
         if kind in COASTAL_BUILDINGS and not self._adjacent_to_sea(i, j):
@@ -1417,11 +1463,20 @@ class IslandState:
         if self.funds < cost:
             return f"資金不足（飛彈需要 {cost}）"
         self.funds -= cost
-        base_note = "（有飛彈基地）" if self.has_missile_base() else ""
+
+        if self.undersea_base_count() > 0 and self.building_count("missile_base") > 0:
+            base_note = "（有飛彈／海底基地）"
+        elif self.undersea_base_count() > 0:
+            base_note = "（有海底基地）"
+        elif self.has_missile_base():
+            base_note = "（有飛彈基地）"
+        else:
+            base_note = ""
         c = self.cell(i, j)
         decoy_hit = c.building == "decoy"
         if decoy_hit:
             c.building = None
+
         m = self.monster_at(i, j)
         if m is None:
             if decoy_hit:
@@ -2015,6 +2070,7 @@ class IslandState:
         aqua_n = self.aquafarm_count()
         amuse_n = self.amusement_park_count()
         power_n = self.power_plant_count()
+        undersea_n = self.undersea_base_count()
         score_bits = []
         if monuments:
             score_bits.append(f"紀念碑×{monuments}")
@@ -2042,6 +2098,8 @@ class IslandState:
             score_bits.append(f"遊樂園×{amuse_n}")
         if power_n:
             score_bits.append(f"發電廠×{power_n}")
+        if undersea_n:
+            score_bits.append(f"海底基地×{undersea_n}")
         notes.append(
             f"島分數 {score}"
             + (f"（{'／'.join(score_bits)}）" if score_bits else "")

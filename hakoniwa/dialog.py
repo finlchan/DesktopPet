@@ -76,6 +76,7 @@ from .model import (
     COST_SHIPYARD,
     COST_SHRINE,
     COST_SUPERMARKET,
+    COST_UNDERSEA_BASE,
     FOOD_BUY_LOT,
     FOOD_EXPORT_LOT,
     FUNDS_PER_FOOD_BUY,
@@ -86,6 +87,7 @@ from .model import (
     MAX_GUEST_TEXT,
     MOUNTAIN_ONLY_BUILDINGS,
     PLACEABLE_BUILDINGS,
+    SEA_ONLY_BUILDINGS,
     SHALLOW_ONLY_BUILDINGS,
     TREE_MIN,
     food_buy_cost,
@@ -567,6 +569,7 @@ TOOL_SPECS: Tuple[Tuple[str, str, Optional[int], str], ...] = (
     ("aquafarm", "建設養殖場", COST_AQUAFARM, "V"),
     ("amusement_park", "建設遊樂園", COST_AMUSEMENT_PARK, "Shift+V"),
     ("power_plant", "建設發電廠", COST_POWER_PLANT, "Shift+P"),
+    ("undersea_base", "建設海底基地", COST_UNDERSEA_BASE, "Shift+S"),
 )
 
 
@@ -666,6 +669,9 @@ def tool_enabled(
         elif kind in SHALLOW_ONLY_BUILDINGS:
             if c.terrain != "shallow":
                 return False, "養殖場須建在淺灘"
+        elif kind in SEA_ONLY_BUILDINGS:
+            if c.terrain != "sea":
+                return False, "海底基地須建在深海"
         elif c.terrain not in BUILDABLE:
             return False, "須在平地建設"
         if kind in COASTAL_BUILDINGS and not state._adjacent_to_sea(i, j):
@@ -1190,7 +1196,7 @@ class HakoniwaIslandDialog(QDialog):
                 f" · 費用 {shown_cost}" if shown_cost is not None else " · 免費"
             )
             if key == "missile" and self.state.has_missile_base():
-                tip += "（飛彈基地優惠）"
+                tip += "（飛彈／海底基地優惠）"
             if reason:
                 tip += f"\n不可用：{reason}"
             elif key == "wait" and self.state.has_monster():
@@ -1200,10 +1206,17 @@ class HakoniwaIslandDialog(QDialog):
                 tip += "\n再點建設＝自爆清周圍怪獸（同額費用）"
             elif key == "missile_base":
                 tip += "\n有基地時飛彈更便宜；觀光者眼中偽裝成森"
+
+            elif key == "undersea_base":
+                tip += (
+                    "\n深海色塊（不可淺灘／油田）：同飛彈基地優惠；"
+                    "觀光者眼中為海"
+                )
             elif key == "decoy":
                 tip += "\n外觀像防衛、無實防、易毀；觀光者眼中顯示為防衛"
             elif key == "missile":
                 tip += "\n可打怪獸；亦可拆毀紙糊假設施"
+
             elif key == "afforest":
                 tip += "\n空平地→森（新林 100 本）"
             elif key == "harvest" and ok and self.selected is not None:
