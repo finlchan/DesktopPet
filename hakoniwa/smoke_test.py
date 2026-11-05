@@ -2555,19 +2555,23 @@ def test_decoy_and_tourism_camouflage():
     fi, fj = grass[2]
     gi, gj = grass[3]
 
-    # Place missile base + decoy + real defense.
+    # Place missile base + decoy first, then real defense.
     state.funds = max(
         state.funds, COST_MISSILE_BASE + COST_DEFENSE + COST_DECOY + 50
     )
     assert state.place_building(bi, bj, "missile_base") == "ok"
     assert state.place_building(di, dj, "decoy") == "ok"
     assert state.cell(di, dj).building == "decoy"
-    assert state.place_building(fi, fj, "defense") == "ok"
 
-    # Decoy is NOT real defense cover.
+    # Decoy alone is NOT real defense cover (assert before nearby 防衛).
     assert not state.protected_by_defense(di, dj)
     assert (di, dj) not in state.defense_positions()
+
+    assert state.place_building(fi, fj, "defense") == "ok"
     assert state.protected_by_defense(fi, fj)
+    # Decy still never appears in defense_positions (even if a nearby
+    # real 防衛 happens to cover the same cell).
+    assert (di, dj) not in state.defense_positions()
 
     # Tourism camouflage: missile→forest, decoy→defense, true defense unchanged.
     t_terrain, t_bldg = state.tourist_appearance(bi, bj)
