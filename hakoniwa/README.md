@@ -49,12 +49,15 @@ All numeric / function chrome sits **inside the map viewport** (`HakoniwaMapHud`
 | Overlay | Position | Notes |
 |---|---|---|
 | Status | Top center | **Single line**; order 狀態→資金→糧食→人口→回合→格數→分數; no connection mode |
-| Tile info | Top-left | Below status |
+| Tile info | Top-left | Below status; toggle via 資訊 icon (open by default) |
 | Action log | Bottom-right | ~70% transparent frame |
-| Guestbook | Bottom center | ~70% transparent frame |
-| Tools / settings | Bottom-left button → drawer | Build toolbar + server connection |
+| Guestbook | Bottom center | ~70% transparent; **closed by default**; open via 留言 icon |
+| Icon bar | Bottom-left | 通知／建築／資訊／留言／設定 — hover micro-animations |
+| Build drawer | Above icon bar | 建築 icon → build toolbar |
+| Settings drawer | Above icon bar | 設定 icon → server connection |
+| Notify drawer | Above icon bar | 通知 icon → stub |
 
-No permanent right-side build column. Server URL / 本機·連線 live under tools → settings.
+No permanent right-side build column. Server URL / 本機·連線 live under 設定.
 
 ## User-provided art (optional)
 

@@ -4,8 +4,9 @@ Local-play UX: named toolbar with costs + disable rules, status bar,
 pan/zoom map (via HakoniwaMapWidget), optional keyboard shortcuts.
 
 Numeric / function chrome lives as **overlays inside the map viewport**
-(status, tile info, action log, tools drawer, guestbook) — not as outside
-columns or strips. Action log + guestbook frames are ~70% transparent.
+(status, tile info, action log, icon bar → drawers, guestbook) — not as
+outside columns or strips. Guestbook is closed by default (留言 icon).
+Action log + guestbook frames are ~70% transparent.
 """
 
 from __future__ import annotations
@@ -31,6 +32,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from .hud_icons import HakoniwaIconBar
 
 from .demos import island_summary, local_demo_islands
 from .model import (
@@ -144,24 +147,12 @@ QFrame#hakoniwaHudGuestbookFrame {{
     border: 1px solid {_OVERLAY_BORDER};
     border-radius: 4px;
 }}
-QFrame#hakoniwaToolsDrawer {{
+QFrame#hakoniwaToolsDrawer,
+QFrame#hakoniwaSettingsDrawer,
+QFrame#hakoniwaNotifyDrawer {{
     background-color: rgba(24, 36, 28, 230);
     border: 1px solid rgba(180, 120, 50, 200);
     border-radius: 4px;
-}}
-QPushButton#hakoniwaToolsBtn {{
-    background-color: rgba(176, 96, 36, 230);
-    color: #fff8f0;
-    border: 1px solid rgba(220, 140, 60, 230);
-    border-radius: 4px;
-    padding: 6px 14px;
-    font-weight: bold;
-}}
-QPushButton#hakoniwaToolsBtn:hover {{
-    background-color: rgba(200, 120, 48, 240);
-}}
-QPushButton#hakoniwaToolsBtn:checked {{
-    background-color: rgba(140, 72, 24, 240);
 }}
 QLabel#hakoniwaHudCaption {{
     color: #c8e0c8;
@@ -184,10 +175,11 @@ class HakoniwaMapHud(QWidget):
 
     Layout (user-locked annotation):
       - status bar → top center
-      - tile info → top-left (below status)
-      - tools button → bottom-left (opens tools/settings drawer)
-      - guestbook → bottom center (~70% transparent)
+      - tile info → top-left (below status; toggle via 資訊 icon)
+      - icon bar → bottom-left (通知／建築／資訊／留言／設定)
+      - guestbook → bottom center (~70% transparent; **closed by default**)
       - action log → bottom-right (~70% transparent)
+      - tools / settings / notify drawers → above icon bar when open
     """
 
     def __init__(self, map_widget: HakoniwaMapWidget, parent=None):
@@ -215,11 +207,10 @@ class HakoniwaMapHud(QWidget):
         self.log_view.setReadOnly(True)
         self.log_view.setPlaceholderText("行動日誌")
 
-        self.tools_btn = QPushButton("工具／設定", self)
-        self.tools_btn.setObjectName("hakoniwaToolsBtn")
-        self.tools_btn.setCheckable(True)
-        self.tools_btn.setToolTip("開啟建設工具與伺服器設定")
-        self.tools_btn.toggled.connect(self._on_tools_toggled)
+        # Bottom-left icon bar replaces the old orange 「工具／設定」 button.
+        self.icon_bar = HakoniwaIconBar(self)
+        # Compat alias: build icon is the former tools toggle.
+        self.tools_btn = self.icon_bar.button("build")
 
         self.tools_drawer = QFrame(self)
         self.tools_drawer.setObjectName("hakoniwaToolsDrawer")
@@ -240,16 +231,40 @@ class HakoniwaMapHud(QWidget):
         self.tools_layout.setSpacing(4)
         drawer_scroll.setWidget(self.tools_body)
         drawer_outer.addWidget(drawer_scroll, stretch=1)
-        # Settings (server connection) pinned under the scrollable tool list.
+
+        # Settings live in their own drawer (opened by 設定 icon).
+        self.settings_drawer = QFrame(self)
+        self.settings_drawer.setObjectName("hakoniwaSettingsDrawer")
+        self.settings_drawer.setVisible(False)
+        settings_outer = QVBoxLayout(self.settings_drawer)
+        settings_outer.setContentsMargins(6, 6, 6, 6)
+        settings_outer.setSpacing(4)
         self.settings_body = QWidget()
         self.settings_layout = QVBoxLayout(self.settings_body)
-        self.settings_layout.setContentsMargins(2, 4, 2, 2)
+        self.settings_layout.setContentsMargins(2, 2, 2, 2)
         self.settings_layout.setSpacing(4)
-        drawer_outer.addWidget(self.settings_body)
+        settings_outer.addWidget(self.settings_body)
 
-        # Guestbook cluster (view + form) in one translucent frame.
+        # Notifications stub (opened by 通知 icon).
+        self.notify_drawer = QFrame(self)
+        self.notify_drawer.setObjectName("hakoniwaNotifyDrawer")
+        self.notify_drawer.setVisible(False)
+        notify_outer = QVBoxLayout(self.notify_drawer)
+        notify_outer.setContentsMargins(8, 8, 8, 8)
+        notify_outer.setSpacing(4)
+        notify_cap = QLabel("通知")
+        notify_cap.setObjectName("hakoniwaHudCaption")
+        notify_outer.addWidget(notify_cap)
+        self.notify_body = QLabel("尚無通知（預留）")
+        self.notify_body.setObjectName("hakoniwaHudCaption")
+        self.notify_body.setWordWrap(True)
+        notify_outer.addWidget(self.notify_body)
+        notify_outer.addStretch(1)
+
+        # Guestbook cluster (view + form) — closed by default; open via 留言.
         self.guestbook_frame = QFrame(self)
         self.guestbook_frame.setObjectName("hakoniwaHudGuestbookFrame")
+        self.guestbook_frame.setVisible(False)
         gb_col = QVBoxLayout(self.guestbook_frame)
         gb_col.setContentsMargins(6, 4, 6, 4)
         gb_col.setSpacing(3)
@@ -266,24 +281,68 @@ class HakoniwaMapHud(QWidget):
         self.guestbook_form.setSpacing(4)
         gb_col.addLayout(self.guestbook_form)
 
+        # Wire icons after drawers exist (setChecked emits and may layout).
+        self.icon_bar.iconToggled.connect(self._on_icon_toggled)
+        # Tile info stays open by default; guestbook／drawers start closed.
+        info_btn = self.icon_bar.button("info")
+        if info_btn is not None:
+            info_btn.setChecked(True)
+
         self.setMinimumSize(480, 480)
         self.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
 
-    def _on_tools_toggled(self, checked: bool) -> None:
-        self.tools_drawer.setVisible(checked)
+    def _on_icon_toggled(self, kind: str, checked: bool) -> None:
+        """Wire icon checks to panels; bottom drawers are mutually exclusive."""
+        exclusive = ("notify", "build", "guestbook", "settings")
+        if kind in exclusive and checked:
+            for other in exclusive:
+                if other != kind:
+                    btn = self.icon_bar.button(other)
+                    if btn is not None and btn.isChecked():
+                        btn.setChecked(False)
+
+        if kind == "notify":
+            self.notify_drawer.setVisible(checked)
+        elif kind == "build":
+            self.tools_drawer.setVisible(checked)
+        elif kind == "info":
+            self.sel_label.setVisible(checked)
+        elif kind == "guestbook":
+            self.guestbook_frame.setVisible(checked)
+        elif kind == "settings":
+            self.settings_drawer.setVisible(checked)
+
         self._layout_overlays()
-        if checked:
-            self.tools_drawer.raise_()
-            self.tools_btn.raise_()
+        self._raise_overlays()
 
     def toggle_tools(self) -> None:
-        self.tools_btn.toggle()
+        btn = self.icon_bar.button("build")
+        if btn is not None:
+            btn.toggle()
 
     def close_tools(self) -> None:
-        if self.tools_btn.isChecked():
-            self.tools_btn.setChecked(False)
+        btn = self.icon_bar.button("build")
+        if btn is not None and btn.isChecked():
+            btn.setChecked(False)
+
+    def close_bottom_panels(self) -> None:
+        """Close notify / build / guestbook / settings (info stays)."""
+        for kind in ("notify", "build", "guestbook", "settings"):
+            btn = self.icon_bar.button(kind)
+            if btn is not None and btn.isChecked():
+                btn.setChecked(False)
+
+    def set_tourism_chrome(self) -> None:
+        """Tourism: hide build tools; keep guestbook／info／notify／settings icons."""
+        self.icon_bar.set_icon_visible("build", False)
+        self.tools_drawer.hide()
+        # Ensure guestbook starts closed (open via 留言).
+        gb = self.icon_bar.button("guestbook")
+        if gb is not None and gb.isChecked():
+            gb.setChecked(False)
+        self.guestbook_frame.hide()
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
         super().resizeEvent(event)
@@ -291,7 +350,7 @@ class HakoniwaMapHud(QWidget):
 
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802
         # Parent show can leave overlay geometry stale if resize did not fire
-        # after isHidden()-safe layout (tools btn would stick at 0,0).
+        # after isHidden()-safe layout (icon bar would stick at 0,0).
         super().showEvent(event)
         self._layout_overlays()
 
@@ -308,7 +367,9 @@ class HakoniwaMapHud(QWidget):
             self.log_view,
             self.guestbook_frame,
             self.tools_drawer,
-            self.tools_btn,
+            self.settings_drawer,
+            self.notify_drawer,
+            self.icon_bar,
         ):
             # isHidden() = explicit hide; isVisible() is false before ancestors show.
             if not w.isHidden():
@@ -330,40 +391,40 @@ class HakoniwaMapHud(QWidget):
         status_w = min(max(text_w, 200), w - 2 * margin)
         self.stats.setGeometry((w - status_w) // 2, margin, status_w, status_h)
 
-        # Tile info — top-left below status
-        self.sel_label.adjustSize()
-        tile_w = min(220, max(140, w // 4))
-        tile_h = max(self.sel_label.sizeHint().height() + 8, 56)
-        self.sel_label.setGeometry(
-            margin, margin + status_h + 6, tile_w, tile_h
-        )
+        # Tile info — top-left below status (hidden when 資訊 icon unchecked).
+        if not self.sel_label.isHidden():
+            self.sel_label.adjustSize()
+            tile_w = min(220, max(140, w // 4))
+            tile_h = max(self.sel_label.sizeHint().height() + 8, 56)
+            self.sel_label.setGeometry(
+                margin, margin + status_h + 6, tile_w, tile_h
+            )
 
-        # Tools button — bottom-left (hidden in tourism / read-only).
+        # Icon bar — bottom-left (replaces orange 工具／設定).
         # Use isHidden(), not isVisible(): during __init__ / pre-show layout,
-        # isVisible() is False for every child, so the btn stayed at (0,0)
-        # until the first click re-ran layout.
+        # isVisible() is False for every child.
         btn_x = margin
-        if not self.tools_btn.isHidden():
-            self.tools_btn.adjustSize()
-            btn_w = max(self.tools_btn.sizeHint().width() + 8, 100)
-            btn_h = max(self.tools_btn.sizeHint().height(), 28)
-            btn_y = h - margin - btn_h
-            self.tools_btn.setGeometry(btn_x, btn_y, btn_w, btn_h)
+        if not self.icon_bar.isHidden():
+            bar_w = self.icon_bar.width()
+            bar_h = self.icon_bar.height()
+            btn_y = h - margin - bar_h
+            self.icon_bar.setGeometry(btn_x, btn_y, bar_w, bar_h)
+            btn_w, btn_h = bar_w, bar_h
         else:
             btn_w = 0
             btn_h = 0
             btn_y = h - margin
 
-        # Tools drawer — above the button, left side
+        # Drawers — above the icon bar, left side
         drawer_w = min(280, max(200, w // 3))
         drawer_h = min(h - 2 * margin - btn_h - 8, max(220, int(h * 0.62)))
-        if not self.tools_drawer.isHidden():
-            self.tools_drawer.setGeometry(
-                margin,
-                max(margin, btn_y - 6 - drawer_h),
-                drawer_w,
-                drawer_h,
-            )
+        drawer_y = max(margin, btn_y - 6 - drawer_h)
+        for drawer in (self.tools_drawer, self.settings_drawer, self.notify_drawer):
+            if not drawer.isHidden():
+                # Notify stub can be shorter.
+                dh = drawer_h if drawer is self.tools_drawer else min(drawer_h, 160)
+                self_y = max(margin, btn_y - 6 - dh)
+                drawer.setGeometry(margin, self_y, drawer_w, dh)
 
         # Action log — bottom-right (~70% transparent frame)
         log_w = min(260, max(160, w // 3))
@@ -372,17 +433,18 @@ class HakoniwaMapHud(QWidget):
             w - margin - log_w, h - margin - log_h, log_w, log_h
         )
 
-        # Guestbook — bottom center, between tools and log
-        gb_left = btn_x + (btn_w + 8 if btn_w else 0)
-        gb_right = w - margin - log_w - 8
-        gb_w = max(180, gb_right - gb_left)
-        gb_h = min(130, max(96, h // 5))
-        if gb_w < 160:
-            gb_w = min(240, w - 2 * margin - btn_w - 8)
+        # Guestbook — bottom center, between icon bar and log (when open)
+        if not self.guestbook_frame.isHidden():
             gb_left = btn_x + (btn_w + 8 if btn_w else 0)
-        self.guestbook_frame.setGeometry(
-            gb_left, h - margin - gb_h, gb_w, gb_h
-        )
+            gb_right = w - margin - log_w - 8
+            gb_w = max(180, gb_right - gb_left)
+            gb_h = min(130, max(96, h // 5))
+            if gb_w < 160:
+                gb_w = min(240, w - 2 * margin - btn_w - 8)
+                gb_left = btn_x + (btn_w + 8 if btn_w else 0)
+            self.guestbook_frame.setGeometry(
+                gb_left, h - margin - gb_h, gb_w, gb_h
+            )
 
         self._raise_overlays()
 
@@ -645,7 +707,7 @@ class HakoniwaIslandDialog(QDialog):
         root.addWidget(dp.make_draggable_title(self, "箱庭島（未完成）／Hakoniwa (WIP)"))
 
         # Map fills the body; all numeric/function UI is in-viewport HUD.
-        # (No top instruction banner — controls live in 工具／設定.)
+        # (No top instruction banner — controls live in the bottom icon bar.)
         self.map = HakoniwaMapWidget(self.state)
         self.map.cell_clicked.connect(self._on_cell_clicked)
         self.hud = HakoniwaMapHud(self.map)
@@ -655,7 +717,7 @@ class HakoniwaIslandDialog(QDialog):
         self.guestbook_view = self.hud.guestbook_view
         root.addWidget(self.hud, stretch=1)
 
-        # --- Tools / settings drawer (orange button) ---
+        # --- Build tools drawer (建築 icon) ---
         tools_lay = self.hud.tools_layout
         tools_cap = QLabel("工具")
         tools_cap.setObjectName("hakoniwaHudCaption")
@@ -706,7 +768,7 @@ class HakoniwaIslandDialog(QDialog):
         tools_lay.addWidget(reset_view_btn)
         tools_lay.addStretch(1)
 
-        # Server connection lives in settings (was top chrome + status [本機]).
+        # Server connection lives in the 設定 drawer (was under 工具／設定).
         settings_lay = self.hud.settings_layout
         settings_cap = QLabel("設定 · 伺服器連線")
         settings_cap.setObjectName("hakoniwaHudCaption")
@@ -1593,9 +1655,8 @@ class TourismIslandDialog(QDialog):
         self.stats = self.hud.stats
         self.sel_label = self.hud.sel_label
         self.guestbook_view = self.hud.guestbook_view
-        # Tourism: no build toolbar; hide tools chrome; log shows read-only note.
-        self.hud.tools_btn.hide()
-        self.hud.tools_drawer.hide()
+        # Tourism: hide 建築 icon／drawer; guestbook opens via 留言 icon.
+        self.hud.set_tourism_chrome()
         mode = "連線" if remote is not None else "本機示範"
         self.stats.setText(
             f"[{mode}觀光] {island.name}（{self._island_id}） | "
