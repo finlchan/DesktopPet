@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .alert_marquee import AlertMarquee
 from .hud_icons import HakoniwaIconBar
 
 from .demos import island_summary, local_demo_islands
@@ -132,8 +133,7 @@ QFrame#hakoniwaHudGuestbookFrame {{
     border-radius: 4px;
 }}
 QFrame#hakoniwaToolsDrawer,
-QFrame#hakoniwaSettingsDrawer,
-QFrame#hakoniwaNotifyDrawer {{
+QFrame#hakoniwaSettingsDrawer {{
     background-color: rgba(24, 36, 28, 230);
     border: 1px solid rgba(180, 120, 50, 200);
     border-radius: 4px;
@@ -159,11 +159,14 @@ class HakoniwaMapHud(QWidget):
 
     Layout (user-locked annotation):
       - status bar → top center
-      - tile info → top-left (below status; toggle via 資訊 icon)
+      - alert marquee → under status (警報走馬燈; via 通知; hidden without alerts)
+      - tile info → top-left (below status／marquee; 資訊 or 通知 chrome)
       - icon bar → bottom-left (通知／建築／資訊／留言／設定)
       - guestbook → bottom center (~70% transparent; **closed by default**)
-      - action log → bottom-right (~70% transparent)
-      - tools / settings / notify drawers → above icon bar when open
+      - action log → bottom-right (~70% transparent; 通知 chrome)
+      - tools / settings drawers → above icon bar when open
+
+    「通知」toggles status chrome in sync: 格資訊 + 行動日誌 + 警報走馬燈.
     """
 
     def __init__(self, map_widget: HakoniwaMapWidget, parent=None):
@@ -181,6 +184,10 @@ class HakoniwaMapHud(QWidget):
             Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
         )
         self.stats.setTextFormat(Qt.TextFormat.PlainText)
+
+        # Alert marquee under status — hidden until alerts exist + 通知 chrome on.
+        self.alert_marquee = AlertMarquee(self)
+        self.alert_marquee.hide()
 
         self.sel_label = QLabel("未選取格子", self)
         self.sel_label.setObjectName("hakoniwaHudTile")
@@ -229,22 +236,6 @@ class HakoniwaMapHud(QWidget):
         self.settings_layout.setSpacing(4)
         settings_outer.addWidget(self.settings_body)
 
-        # Notifications stub (opened by 通知 icon).
-        self.notify_drawer = QFrame(self)
-        self.notify_drawer.setObjectName("hakoniwaNotifyDrawer")
-        self.notify_drawer.setVisible(False)
-        notify_outer = QVBoxLayout(self.notify_drawer)
-        notify_outer.setContentsMargins(8, 8, 8, 8)
-        notify_outer.setSpacing(4)
-        notify_cap = QLabel("通知")
-        notify_cap.setObjectName("hakoniwaHudCaption")
-        notify_outer.addWidget(notify_cap)
-        self.notify_body = QLabel("尚無通知（預留）")
-        self.notify_body.setObjectName("hakoniwaHudCaption")
-        self.notify_body.setWordWrap(True)
-        notify_outer.addWidget(self.notify_body)
-        notify_outer.addStretch(1)
-
         # Guestbook cluster (view + form) — closed by default; open via 留言.
         self.guestbook_frame = QFrame(self)
         self.guestbook_frame.setObjectName("hakoniwaHudGuestbookFrame")
@@ -265,9 +256,16 @@ class HakoniwaMapHud(QWidget):
         self.guestbook_form.setSpacing(4)
         gb_col.addLayout(self.guestbook_form)
 
+        # Status chrome (格資訊 + 日誌 + 走馬燈) starts on — panels as today.
+        self._status_chrome_on = True
+
         # Wire icons after drawers exist (setChecked emits and may layout).
         self.icon_bar.iconToggled.connect(self._on_icon_toggled)
-        # Tile info stays open by default; guestbook／drawers start closed.
+        # 通知 = chrome master (checked). 資訊 = tile panel (checked). Drawers closed.
+        notify_btn = self.icon_bar.button("notify")
+        if notify_btn is not None:
+            notify_btn.setToolTip("通知：格資訊／日誌／警報走馬燈")
+            notify_btn.setChecked(True)
         info_btn = self.icon_bar.button("info")
         if info_btn is not None:
             info_btn.setChecked(True)
@@ -277,9 +275,47 @@ class HakoniwaMapHud(QWidget):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
 
+    def _apply_status_chrome(self) -> None:
+        """Show/hide 格資訊 + 日誌 + 走馬燈 together from ``_status_chrome_on``."""
+        on = self._status_chrome_on
+        self.log_view.setVisible(on)
+        # Tile info follows chrome; 資訊 icon stays in sync when chrome flips.
+        info_btn = self.icon_bar.button("info")
+        if on:
+            if info_btn is not None and not info_btn.isChecked():
+                info_btn.setChecked(True)
+            else:
+                self.sel_label.setVisible(True)
+        else:
+            self.sel_label.setVisible(False)
+            if info_btn is not None and info_btn.isChecked():
+                # Block re-entry into notify via info toggled handler.
+                info_btn.blockSignals(True)
+                info_btn.setChecked(False)
+                info_btn.blockSignals(False)
+        # Marquee only when chrome on AND alerts are queued.
+        self._sync_marquee_visibility()
+
+    def _sync_marquee_visibility(self) -> None:
+        show = self._status_chrome_on and self.alert_marquee.has_alerts()
+        self.alert_marquee.setVisible(show)
+
+    def set_alerts(self, texts) -> None:
+        """Replace alert marquee lines; visibility follows 通知 chrome."""
+        self.alert_marquee.set_alerts(texts)
+        self._sync_marquee_visibility()
+        self._layout_overlays()
+
+    def set_sample_alerts(self) -> None:
+        self.alert_marquee.set_sample_alerts()
+        self._sync_marquee_visibility()
+        self._layout_overlays()
+
     def _on_icon_toggled(self, kind: str, checked: bool) -> None:
-        """Wire icon checks to panels; bottom drawers are mutually exclusive."""
-        exclusive = ("notify", "build", "guestbook", "settings")
+        """Wire icon checks to panels; build／guestbook／settings exclusive."""
+        # 通知 is a chrome toggle, not a drawer — keep it out of exclusive set
+        # so tools／guestbook／settings can stay open while chrome is on.
+        exclusive = ("build", "guestbook", "settings")
         if kind in exclusive and checked:
             for other in exclusive:
                 if other != kind:
@@ -288,11 +324,23 @@ class HakoniwaMapHud(QWidget):
                         btn.setChecked(False)
 
         if kind == "notify":
-            self.notify_drawer.setVisible(checked)
+            self._status_chrome_on = checked
+            self._apply_status_chrome()
         elif kind == "build":
             self.tools_drawer.setVisible(checked)
         elif kind == "info":
-            self.sel_label.setVisible(checked)
+            # Fine-grained tile panel; ignored while chrome is off.
+            if self._status_chrome_on:
+                self.sel_label.setVisible(checked)
+            elif checked:
+                # Turning info on while chrome off also re-enables chrome.
+                self._status_chrome_on = True
+                notify_btn = self.icon_bar.button("notify")
+                if notify_btn is not None and not notify_btn.isChecked():
+                    notify_btn.blockSignals(True)
+                    notify_btn.setChecked(True)
+                    notify_btn.blockSignals(False)
+                self._apply_status_chrome()
         elif kind == "guestbook":
             self.guestbook_frame.setVisible(checked)
         elif kind == "settings":
@@ -312,8 +360,8 @@ class HakoniwaMapHud(QWidget):
             btn.setChecked(False)
 
     def close_bottom_panels(self) -> None:
-        """Close notify / build / guestbook / settings (info stays)."""
-        for kind in ("notify", "build", "guestbook", "settings"):
+        """Close build / guestbook / settings drawers (chrome／info stay)."""
+        for kind in ("build", "guestbook", "settings"):
             btn = self.icon_bar.button(kind)
             if btn is not None and btn.isChecked():
                 btn.setChecked(False)
@@ -347,12 +395,12 @@ class HakoniwaMapHud(QWidget):
     def _raise_overlays(self) -> None:
         for w in (
             self.stats,
+            self.alert_marquee,
             self.sel_label,
             self.log_view,
             self.guestbook_frame,
             self.tools_drawer,
             self.settings_drawer,
-            self.notify_drawer,
             self.icon_bar,
         ):
             # isHidden() = explicit hide; isVisible() is false before ancestors show.
@@ -372,16 +420,24 @@ class HakoniwaMapHud(QWidget):
         text_w = fm.horizontalAdvance(text) + 24
         status_h = max(fm.height() + 10, 26)
         status_w = min(max(text_w, 200), w - 2 * margin)
-        self.stats.setGeometry((w - status_w) // 2, margin, status_w, status_h)
+        status_x = (w - status_w) // 2
+        self.stats.setGeometry(status_x, margin, status_w, status_h)
 
-        # Tile info — top-left below status (hidden when 資訊 icon unchecked).
+        # Alert marquee — directly under the status strip (same width band).
+        below = margin + status_h
+        if not self.alert_marquee.isHidden():
+            mq_h = self.alert_marquee.height()
+            mq_w = min(max(status_w, 280), w - 2 * margin)
+            mq_x = (w - mq_w) // 2
+            self.alert_marquee.setGeometry(mq_x, below + 4, mq_w, mq_h)
+            below = below + 4 + mq_h
+
+        # Tile info — top-left below status／marquee
         if not self.sel_label.isHidden():
             self.sel_label.adjustSize()
             tile_w = min(220, max(140, w // 4))
             tile_h = max(self.sel_label.sizeHint().height() + 8, 56)
-            self.sel_label.setGeometry(
-                margin, margin + status_h + 6, tile_w, tile_h
-            )
+            self.sel_label.setGeometry(margin, below + 6, tile_w, tile_h)
 
         # Icon bar — bottom-left (replaces orange 工具／設定).
         # Use isHidden(), not isVisible(): during __init__ / pre-show layout,
@@ -401,10 +457,8 @@ class HakoniwaMapHud(QWidget):
         # Drawers — above the icon bar, left side
         drawer_w = min(280, max(200, w // 3))
         drawer_h = min(h - 2 * margin - btn_h - 8, max(220, int(h * 0.62)))
-        drawer_y = max(margin, btn_y - 6 - drawer_h)
-        for drawer in (self.tools_drawer, self.settings_drawer, self.notify_drawer):
+        for drawer in (self.tools_drawer, self.settings_drawer):
             if not drawer.isHidden():
-                # Notify stub can be shorter.
                 dh = drawer_h if drawer is self.tools_drawer else min(drawer_h, 160)
                 self_y = max(margin, btn_y - 6 - dh)
                 drawer.setGeometry(margin, self_y, drawer_w, dh)
@@ -412,14 +466,15 @@ class HakoniwaMapHud(QWidget):
         # Action log — bottom-right (~70% transparent frame)
         log_w = min(260, max(160, w // 3))
         log_h = min(160, max(90, h // 4))
-        self.log_view.setGeometry(
-            w - margin - log_w, h - margin - log_h, log_w, log_h
-        )
+        if not self.log_view.isHidden():
+            self.log_view.setGeometry(
+                w - margin - log_w, h - margin - log_h, log_w, log_h
+            )
 
         # Guestbook — bottom center, between icon bar and log (when open)
         if not self.guestbook_frame.isHidden():
             gb_left = btn_x + (btn_w + 8 if btn_w else 0)
-            gb_right = w - margin - log_w - 8
+            gb_right = w - margin - (log_w if not self.log_view.isHidden() else 0) - 8
             gb_w = max(180, gb_right - gb_left)
             gb_h = min(130, max(96, h // 5))
             if gb_w < 160:

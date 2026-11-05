@@ -2544,7 +2544,13 @@ def test_dialog_import_offscreen():
     assert not dlg.hud.icon_bar.button("guestbook").isChecked()
     # Settings live in their own drawer (設定 icon), not under tools.
     assert dlg.hud.settings_drawer.isHidden()
-    assert dlg.hud.notify_drawer.isHidden()
+    # 通知 chrome on by default: 格資訊 + 日誌 visible; marquee hidden (no alerts).
+    assert dlg.hud.icon_bar.button("notify").isChecked()
+    assert dlg.hud._status_chrome_on is True
+    assert not dlg.hud.sel_label.isHidden()
+    assert not dlg.hud.log_view.isHidden()
+    assert dlg.hud.alert_marquee.isHidden()
+    assert not dlg.hud.alert_marquee.has_alerts()
     # No top instruction banner (「點選格子…」/ shortcut strip) on open.
     from PySide6.QtWidgets import QLabel
 
@@ -2617,6 +2623,22 @@ def test_dialog_import_offscreen():
     assert not dlg.hud.guestbook_frame.isHidden()
     dlg.hud.icon_bar.button("guestbook").setChecked(False)
     assert dlg.hud.guestbook_frame.isHidden()
+
+    # 通知 toggles 格資訊 + 日誌 + 走馬燈 in sync (marquee needs alerts).
+    dlg.hud.set_sample_alerts()
+    assert dlg.hud.alert_marquee.has_alerts()
+    assert not dlg.hud.alert_marquee.isHidden()
+    dlg.hud.icon_bar.button("notify").setChecked(False)
+    assert dlg.hud.sel_label.isHidden()
+    assert dlg.hud.log_view.isHidden()
+    assert dlg.hud.alert_marquee.isHidden()
+    dlg.hud.icon_bar.button("notify").setChecked(True)
+    assert not dlg.hud.sel_label.isHidden()
+    assert not dlg.hud.log_view.isHidden()
+    assert not dlg.hud.alert_marquee.isHidden()
+    # Clear alerts → marquee hides even with chrome on.
+    dlg.hud.set_alerts([])
+    assert dlg.hud.alert_marquee.isHidden()
 
     # Select a buildable grass cell → farm/factory enable.
     land = [(i, j) for i in range(20) for j in range(20) if dlg.state.is_land(i, j)]
