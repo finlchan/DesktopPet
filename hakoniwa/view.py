@@ -57,9 +57,10 @@ class HakoniwaMapWidget(QWidget):
 
     cell_clicked = Signal(int, int)
 
-    def __init__(self, state: IslandState, parent=None):
+    def __init__(self, state: IslandState, parent=None, *, tourist_mode: bool = False):
         super().__init__(parent)
         self.state = state
+        self.tourist_mode = bool(tourist_mode)
         self.cell = float(DEFAULT_CELL)
         self.selected: Optional[Coord] = None
         self._pan = QPointF(0.0, 0.0)
@@ -70,7 +71,10 @@ class HakoniwaMapWidget(QWidget):
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self.setCursor(Qt.CursorShape.CrossCursor)
-        self.setToolTip("滾輪縮放 · 中鍵／右鍵拖曳平移 · 左鍵選格")
+        tip = "滾輪縮放 · 中鍵／右鍵拖曳平移 · 左鍵選格"
+        if self.tourist_mode:
+            tip += "（觀光偽裝：飛彈基地→森、紙糊→防衛）"
+        self.setToolTip(tip)
         self._recompute_origin()
 
     def set_state(self, state: IslandState) -> None:
@@ -215,20 +219,25 @@ class HakoniwaMapWidget(QWidget):
 
         for i, j in paint_order(size, self.cell):
             cell = self.state.cell(i, j)
+            if self.tourist_mode:
+                paint_terrain, paint_building = self.state.tourist_appearance(i, j)
+            else:
+                paint_terrain, paint_building = cell.terrain, cell.building
             cx, cy = cell_center(i, j, self.cell)
             cx += ox
             cy += oy
             verts = diamond_vertices(cx, cy, self.cell)
             poly = QPolygonF([QPointF(x, y) for x, y in verts])
 
-            self._paint_terrain_top(painter, cell.terrain, cx, cy, poly)
+            self._paint_terrain_top(painter, paint_terrain, cx, cy, poly)
 
             # Building: user PNG when dropped, else solid color diamond.
             # Align by **alpha content AABB** (not PNG canvas): content left↔right
             # = diamond W↔E (full cell W), content bottom = S tip; top may rise
             # above N. No diamond clip (terrain tops stay clipped above).
-            if cell.building and cell.building in BUILDINGS:
-                bpix = self._atlas.building_pixmap(cell.building)
+            # Tourism camouflage may swap / hide the painted building key.
+            if paint_building and paint_building in BUILDINGS:
+                bpix = self._atlas.building_pixmap(paint_building)
                 if bpix is not None and not bpix.isNull():
                     bw, bh = cell_screen_size(self.cell)
                     south_y = cy + bh / 2.0
@@ -243,7 +252,7 @@ class HakoniwaMapWidget(QWidget):
                     painter.setPen(Qt.PenStyle.NoPen)
                     painter.drawPixmap(dest, bpix, QRectF(content))
                 else:
-                    bcol = BUILDINGS[cell.building]["color"]
+                    bcol = BUILDINGS[paint_building]["color"]
                     if bcol:
                         painter.setBrush(QBrush(QColor(*bcol)))
                         painter.setPen(QPen(QColor(30, 30, 30, 200), 1.0))
