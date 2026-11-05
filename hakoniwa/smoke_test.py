@@ -2544,6 +2544,7 @@ def test_dialog_import_offscreen():
     assert not dlg.hud.icon_bar.button("guestbook").isChecked()
     # Settings live in their own drawer (設定 icon), not under tools.
     assert dlg.hud.settings_drawer.isHidden()
+
     # 通知 chrome on by default: 格資訊 + 日誌 visible; marquee hidden (no alerts).
     assert dlg.hud.icon_bar.button("notify").isChecked()
     assert dlg.hud._status_chrome_on is True
@@ -2551,6 +2552,7 @@ def test_dialog_import_offscreen():
     assert not dlg.hud.log_view.isHidden()
     assert dlg.hud.alert_marquee.isHidden()
     assert not dlg.hud.alert_marquee.has_alerts()
+
     # No top instruction banner (「點選格子…」/ shortcut strip) on open.
     from PySide6.QtWidgets import QLabel
 
@@ -2580,7 +2582,10 @@ def test_dialog_import_offscreen():
             assert btn.isEnabled()
         else:
             assert not btn.isEnabled(), key
-    # Status overlay: locked order 狀態→資金→糧食→人口→回合→格數→分數; no connection mode.
+    # Status overlay: odometer strip; order 狀態→資金→糧食→人口→回合→格數→分數.
+    from hakoniwa.odometer import HakoniwaStatusBar
+
+    assert isinstance(dlg.stats, HakoniwaStatusBar)
     st = dlg.stats.text()
     assert "資金" in st and "糧食" in st and "人口" in st
     assert "回合" in st and "格數" in st and "分數" in st
@@ -2592,9 +2597,15 @@ def test_dialog_import_offscreen():
     i_turn, i_cells = st.index("回合"), st.index("格數")
     i_score = st.index("分數")
     assert i_status < i_funds < i_food < i_pop < i_turn < i_cells < i_score, st
-    # Status HUD is a single horizontal line (no wrap / multi-line).
+    # Status HUD is a single horizontal line (no wrap); frameless over map.
     assert dlg.stats.wordWrap() is False
     assert "\n" not in st
+    sheet = dlg.hud.styleSheet()
+    assert "border: none" in sheet or "border:none" in sheet.replace(" ", "")
+    # Green status box removed — strip background must be transparent.
+    assert "QWidget#hakoniwaHudStatus" in sheet
+    status_block = sheet.split("QWidget#hakoniwaHudStatus")[1].split("}")[0]
+    assert "transparent" in status_block, status_block
     dlg.show()
     dlg.resize(960, 780)
     dlg._refresh_ui()
@@ -2607,7 +2618,10 @@ def test_dialog_import_offscreen():
     )
     status_h = dlg.stats.height()
     line_h = dlg.stats.fontMetrics().height()
-    assert status_h <= line_h + 16, (status_h, line_h, dlg.stats.text())
+
+    # Digit cells + padding stay roughly one text line tall.
+    assert status_h <= line_h + 24, (status_h, line_h, dlg.stats.text())
+
     # 建築 icon opens build toolbar; 設定 opens server settings separately.
     # Use isHidden() — isVisible() is false while the dialog itself is not shown.
     dlg.hud.tools_btn.setChecked(True)
@@ -2624,6 +2638,7 @@ def test_dialog_import_offscreen():
     dlg.hud.icon_bar.button("guestbook").setChecked(False)
     assert dlg.hud.guestbook_frame.isHidden()
 
+
     # 通知 toggles 格資訊 + 日誌 + 走馬燈 in sync (marquee needs alerts).
     dlg.hud.set_sample_alerts()
     assert dlg.hud.alert_marquee.has_alerts()
@@ -2639,6 +2654,7 @@ def test_dialog_import_offscreen():
     # Clear alerts → marquee hides even with chrome on.
     dlg.hud.set_alerts([])
     assert dlg.hud.alert_marquee.isHidden()
+
 
     # Select a buildable grass cell → farm/factory enable.
     land = [(i, j) for i in range(20) for j in range(20) if dlg.state.is_land(i, j)]
@@ -3293,6 +3309,45 @@ def _write_foreshorten_proof_png(path: Path) -> None:
     print(f"oblique proof: wrote {path} (params y_scale={OBLIQUE_Y_SCALE:.6f})")
 
 
+def test_odometer_status_seen_skip():
+    """Open-island roll only when persisted turn advances; same-turn skips."""
+    import os
+    import tempfile
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from hakoniwa.odometer import (
+        format_grouped,
+        load_status_seen,
+        save_status_seen,
+        snapshot_from_state,
+    )
+    from hakoniwa.model import IslandState
+
+    assert format_grouped(12480) == "12,480"
+    app = QApplication.instance() or QApplication([])
+    del app
+    state = IslandState.new_game()
+    snap = snapshot_from_state(state)
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "hakoniwa_status_seen.json"
+        save_status_seen(path, snap)
+        again = load_status_seen(path)
+        assert again is not None
+        assert again["turn"] == snap["turn"]
+        assert again["funds"] == snap["funds"]
+        # Same turn → skip roll.
+        assert again["turn"] == state.turn
+        # Advance turn snapshot → would roll on next open.
+        advanced = dict(snap)
+        advanced["turn"] = snap["turn"] + 1
+        advanced["funds"] = snap["funds"] + 50
+        save_status_seen(path, advanced)
+        seen2 = load_status_seen(path)
+        assert seen2 is not None and seen2["turn"] != state.turn
+
+
 def main():
     test_grid_geometry()
     test_oblique_foreshortening_invariant()
@@ -3320,6 +3375,7 @@ def main():
     test_save_load_roundtrip()
     test_remote_url_normalize()
     test_tool_enabled_rules()
+    test_odometer_status_seen_skip()
     test_dialog_import_offscreen()
     test_oblique_preview_png_if_possible()
     test_server_api_if_available()

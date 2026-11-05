@@ -46,7 +46,9 @@ ICON_GAP = 6
 ICON_ANIM_MS = 720
 ICON_KEYS = ("notify", "build", "info", "guestbook", "settings")
 ICON_TIPS = {
+
     "notify": "通知：格資訊／日誌／警報走馬燈",
+
     "build": "建築／工具",
     "info": "格子資訊",
     "guestbook": "訪客留言板",
@@ -478,8 +480,10 @@ class HakoniwaIconBar(QWidget):
     def exclusive_open(self, kind: Optional[str]) -> None:
         """Check only ``kind`` among mutually exclusive bottom drawers.
 
+
         ``notify`` (status chrome) and ``info`` (tile panel) stay independent.
         """
         exclusive = ("build", "guestbook", "settings")
+
         for key in exclusive:
             self.set_checked(key, key == kind)

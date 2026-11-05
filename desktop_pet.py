@@ -27,7 +27,8 @@ from PySide6.QtCore import (
 from PySide6.QtGui import (
     QPixmap, QImage, QPainter, QColor, QCursor, QIcon, QAction, QMovie,
     QDesktopServices,
-    QPainterPath, QLinearGradient, QBrush, QPen, QFont, QFontMetrics,
+    QPainterPath, QLinearGradient, QRadialGradient, QBrush, QPen, QFont,
+    QFontMetrics,
 )
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout, QHBoxLayout, QGridLayout,
@@ -58,7 +59,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261104.02"
+APP_VERSION = "261105.02"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -2718,6 +2719,156 @@ class CrumbleDownLabel(QWidget):
         painter.end()
 
 
+# ---------------------------------------------------------------------------
+# Bokeh Lights — soft floating orbs for Document Record（文檔紀錄）
+# ---------------------------------------------------------------------------
+# 「散景光點（Bokeh Lights）」: soft radial discs float upward (~7–14s),
+# slight L/R drift, fade in then out. Theme steel-blue / sky / soft gilt.
+BOKEH_COUNT = 14
+BOKEH_COLORS = (
+    QColor(232, 242, 248, 90),    # light sky
+    QColor(176, 224, 255, 75),    # soft sky
+    QColor(135, 206, 250, 70),    # menu border sky
+    QColor(255, 255, 255, 55),    # white mist
+    QColor(232, 212, 139, 50),    # existing gilt warm (#e8d48b)
+    QColor(201, 168, 76, 45),     # existing gilt (#c9a84c)
+)
+
+
+class BokehLightsCanvas(QWidget):
+    """Dreamy soft-circle lights drifting upward behind document UI."""
+
+    def __init__(self, parent=None, *, count: int = BOKEH_COUNT):
+        super().__init__(parent)
+        self._count = max(10, int(count))
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._lights: list[dict] = []
+        self._seeded = False
+        self._timer = QTimer(self)
+        self._timer.setInterval(33)  # ~30 fps — soft, not frantic
+        self._timer.timeout.connect(self._tick)
+
+    def start(self) -> None:
+        if not self._timer.isActive():
+            self._timer.start()
+
+    def stop(self) -> None:
+        self._timer.stop()
+
+    def _spawn(self, w: float, h: float, *, fresh: bool = False) -> dict:
+        # Life span 7–14s; progress 0→1 over that window.
+        life = random.uniform(7.0, 14.0)
+        radius = random.uniform(10.0, 36.0)
+        return {
+            "x": random.uniform(radius, max(radius + 1.0, w - radius)),
+            # Start near bottom (or slightly below) when fresh; else scatter.
+            "y": (
+                h + random.uniform(4.0, 40.0)
+                if fresh
+                else random.uniform(0.0, h)
+            ),
+            "r": radius,
+            "life": life,
+            "age": 0.0 if fresh else random.uniform(0.0, life * 0.85),
+            "drift_amp": random.uniform(6.0, 22.0),
+            "drift_freq": random.uniform(0.08, 0.22),
+            "drift_phase": random.uniform(0.0, 2.0 * math.pi),
+            "base_alpha": random.uniform(0.35, 1.0),
+            "color": random.choice(BOKEH_COLORS),
+            # Vertical travel covers most of the panel height over life.
+            "rise": h + radius * 2.0 + random.uniform(10.0, 40.0),
+            "y0": 0.0,  # set on spawn
+        }
+
+    def _ensure(self, w: float, h: float) -> None:
+        if self._seeded and self._lights:
+            return
+        self._lights = []
+        for _ in range(self._count):
+            light = self._spawn(w, h, fresh=False)
+            # Back-compute start so current y matches age progress.
+            u = light["age"] / light["life"]
+            light["y0"] = light["y"] + light["rise"] * u
+            self._lights.append(light)
+        self._seeded = True
+
+    def _respawn(self, light: dict, w: float, h: float) -> None:
+        fresh = self._spawn(w, h, fresh=True)
+        fresh["y0"] = fresh["y"]
+        light.update(fresh)
+
+    def _tick(self) -> None:
+        w = float(max(1, self.width()))
+        h = float(max(1, self.height()))
+        self._ensure(w, h)
+        dt = 0.033
+        for light in self._lights:
+            light["age"] += dt
+            u = light["age"] / light["life"]  # 0..1+
+            if u >= 1.0 or light["y"] < -light["r"] - 8.0:
+                self._respawn(light, w, h)
+                continue
+            # Ease upward from y0.
+            light["y"] = light["y0"] - light["rise"] * u
+            light["x"] = light["x"] + (
+                light["drift_amp"]
+                * 0.02
+                * math.sin(
+                    light["age"] * light["drift_freq"] * 2.0 * math.pi
+                    + light["drift_phase"]
+                )
+            )
+            # Keep gently inside horizontally.
+            if light["x"] < -light["r"]:
+                light["x"] = w + light["r"] * 0.2
+            elif light["x"] > w + light["r"]:
+                light["x"] = -light["r"] * 0.2
+        self.update()
+
+    @staticmethod
+    def _fade(u: float) -> float:
+        """Fade in early, hold, fade out near the end (and near top)."""
+        if u < 0.0:
+            return 0.0
+        if u < 0.12:
+            return u / 0.12
+        if u > 0.78:
+            return max(0.0, (1.0 - u) / 0.22)
+        return 1.0
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        del event
+        w = float(max(1, self.width()))
+        h = float(max(1, self.height()))
+        self._ensure(w, h)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+
+        for light in self._lights:
+            u = light["age"] / light["life"]
+            fade = self._fade(u) * light["base_alpha"]
+            if fade < 0.02:
+                continue
+            r = light["r"]
+            # Soft “blur”: radial gradient disc (CSS bokeh stand-in).
+            grad = QRadialGradient(QPointF(light["x"], light["y"]), r)
+            core = QColor(light["color"])
+            mid = QColor(light["color"])
+            edge = QColor(light["color"])
+            core.setAlpha(int(core.alpha() * fade))
+            mid.setAlpha(int(mid.alpha() * fade * 0.45))
+            edge.setAlpha(0)
+            grad.setColorAt(0.0, core)
+            grad.setColorAt(0.45, mid)
+            grad.setColorAt(1.0, edge)
+            painter.setBrush(QBrush(grad))
+            painter.drawEllipse(QPointF(light["x"], light["y"]), r, r)
+
+        painter.end()
+
+
 class DocumentSubMenu(PopupPanel):
     """Submenu for Document record; auto-paginates when there are many files."""
 
@@ -2738,17 +2889,26 @@ class DocumentSubMenu(PopupPanel):
         top_layout.setContentsMargins(0, 0, 0, 0)
         top_layout.setSpacing(0)
 
+        # Layering top→bottom: content (title/text/controls) > bokeh > panel bg
         self.container = QFrame(self)
         self.container.setObjectName("subMenuContainer")
         top_layout.addWidget(self.container)
 
-        self.main_layout = QVBoxLayout(self.container)
+        self.bokeh = BokehLightsCanvas(self.container, count=BOKEH_COUNT)
+        self.bokeh.lower()
+
+        self.content = QWidget(self.container)
+        self.content.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.content.setStyleSheet("background: transparent;")
+        self.content.raise_()
+
+        self.main_layout = QVBoxLayout(self.content)
         self.main_layout.setContentsMargins(8, 8, 8, 8)
         self.main_layout.setSpacing(4)
 
         header = QHBoxLayout()
         header.setSpacing(4)
-        self.title_label = CrumbleDownLabel(DOCUMENT_RECORD_TITLE_DEFAULT, self)
+        self.title_label = CrumbleDownLabel(DOCUMENT_RECORD_TITLE_DEFAULT, self.content)
         self.btn_open_folder = QPushButton()
         self.btn_open_folder.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon)
@@ -2790,6 +2950,36 @@ class DocumentSubMenu(PopupPanel):
         self.setStyleSheet(MENU_STYLE + """
             DocumentSubMenu { background-color: transparent; }
         """)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._sync_layers()
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self._sync_layers()
+        self.bokeh.start()
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        if hasattr(self, "bokeh"):
+            self.bokeh.stop()
+        super().hideEvent(event)
+
+    def _sync_layers(self) -> None:
+        if not hasattr(self, "container"):
+            return
+        r = self.container.rect()
+        self.bokeh.setGeometry(r)
+        self.content.setGeometry(r)
+        self.bokeh.lower()
+        self.content.raise_()
+
+    def _fit_to_content(self) -> None:
+        self.content.adjustSize()
+        hint = self.content.sizeHint()
+        self.container.setFixedSize(max(hint.width(), 240), max(hint.height(), 120))
+        self.adjustSize()
+        self._sync_layers()
 
     def button_style(self, base_color):
         return menu_button_style(base_color)
@@ -2919,7 +3109,7 @@ class DocumentSubMenu(PopupPanel):
 
         self.show_page(0)
 
-        self.adjustSize()
+        self._fit_to_content()
         screen_geo = screen_available_geometry(self)
         x = anchor_geometry.x() + anchor_geometry.width()
         y = anchor_geometry.y()
@@ -2931,6 +3121,7 @@ class DocumentSubMenu(PopupPanel):
         self.show()
         self.raise_()
         self.activateWindow()
+        self.bokeh.start()
 
     def _clear_layout(self, layout):
         while layout.count():
@@ -2949,9 +3140,9 @@ class DocumentSubMenu(PopupPanel):
         if not visible:
             hint = "(No matching files)" if (self.search_edit.text() or "").strip() else "(No files)"
             lbl = QLabel(hint)
-            lbl.setStyleSheet("color: #dddddd;")
+            lbl.setStyleSheet("color: #dddddd; background: transparent;")
             self.files_container.addWidget(lbl)
-            self.adjustSize()
+            self._fit_to_content()
             return
 
         total_pages = max(1, (len(visible) + self.items_per_page - 1) // self.items_per_page)
@@ -2992,6 +3183,7 @@ class DocumentSubMenu(PopupPanel):
             prev_btn.setEnabled(self.current_page > 0)
             prev_btn.clicked.connect(lambda checked=False: self.show_page(self.current_page - 1))
             page_label = QLabel(f"{self.current_page + 1} / {total_pages}")
+            page_label.setStyleSheet("color: white; background: transparent;")
             next_btn = QPushButton("Next")
             next_btn.setEnabled(self.current_page < total_pages - 1)
             next_btn.clicked.connect(lambda checked=False: self.show_page(self.current_page + 1))
@@ -3000,7 +3192,7 @@ class DocumentSubMenu(PopupPanel):
             self.pagination_container.addWidget(next_btn)
             self.pagination_container.addStretch()
 
-        self.adjustSize()
+        self._fit_to_content()
 
     def open_path(self, path):
         try:
@@ -3162,6 +3354,178 @@ class JitterSettleLabel(QWidget):
 
 # File shortcuts submenu (opened via Social Icon Fill on the main menu)
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Falling Petals — weather particle layer for File/URL Shortcuts (指定傳送)
+# ---------------------------------------------------------------------------
+# 「飄落花瓣（Falling Petals）」: Qt / QPainter take on Canvas 2D petals.
+# Structured so mode could later swap to snow/rain (same particle loop).
+WEATHER_MODE_PETALS = "petals"
+PETAL_COUNT = 42
+PETAL_COLORS = (
+    QColor(232, 242, 248, 200),   # light sky
+    QColor(176, 224, 255, 180),   # soft sky
+    QColor(135, 206, 250, 170),   # menu border sky
+    QColor(255, 255, 255, 160),   # white
+    QColor(200, 220, 235, 190),   # cool steel mist
+)
+
+
+class WeatherParticleCanvas(QWidget):
+    """Ambient weather particles (petals now; snow/rain-ready structure)."""
+
+    def __init__(self, parent=None, *, mode: str = WEATHER_MODE_PETALS, count: int = PETAL_COUNT):
+        super().__init__(parent)
+        self._mode = mode
+        self._count = max(8, int(count))
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._particles: list[dict] = []
+        self._seeded = False
+        self._cursor = QPointF(-9999.0, -9999.0)
+        self._prev_cursor = QPointF(-9999.0, -9999.0)
+        self._cursor_vel = QPointF(0.0, 0.0)
+        self._timer = QTimer(self)
+        self._timer.setInterval(16)
+        self._timer.timeout.connect(self._tick)
+
+    def set_mode(self, mode: str) -> None:
+        """Swap weather kind (petals / future snow / rain) and reseed."""
+        self._mode = mode or WEATHER_MODE_PETALS
+        self._seeded = False
+        self._particles.clear()
+        self.update()
+
+    def start(self) -> None:
+        if not self._timer.isActive():
+            self._timer.start()
+
+    def stop(self) -> None:
+        self._timer.stop()
+
+    def _spawn_one(self, w: float, h: float, *, at_top: bool = False) -> dict:
+        size = random.uniform(5.0, 11.0)
+        return {
+            "x": random.uniform(-8.0, w + 8.0),
+            "y": (random.uniform(-40.0, -6.0) if at_top else random.uniform(-20.0, h)),
+            "vy": random.uniform(0.35, 0.95),
+            "vx": random.uniform(-0.25, 0.25),
+            "push_vx": 0.0,
+            "push_vy": 0.0,
+            "sway_amp": random.uniform(0.6, 1.8),
+            "sway_freq": random.uniform(0.6, 1.4),
+            "sway_phase": random.uniform(0.0, 2.0 * math.pi),
+            "rot": random.uniform(0.0, 360.0),
+            "rot_v": random.uniform(-1.8, 1.8),
+            "flip_phase": random.uniform(0.0, 2.0 * math.pi),
+            "flip_freq": random.uniform(0.5, 1.2),
+            "size": size,
+            "color": random.choice(PETAL_COLORS),
+            "age": random.uniform(0.0, 100.0),
+        }
+
+    def _ensure(self, w: float, h: float) -> None:
+        if self._seeded and self._particles:
+            return
+        self._particles = [
+            self._spawn_one(w, h, at_top=False) for _ in range(self._count)
+        ]
+        self._seeded = True
+
+    def _poll_cursor(self) -> None:
+        local = self.mapFromGlobal(QCursor.pos())
+        cur = QPointF(float(local.x()), float(local.y()))
+        if self.rect().contains(local):
+            self._cursor_vel = QPointF(
+                cur.x() - self._prev_cursor.x(),
+                cur.y() - self._prev_cursor.y(),
+            )
+            self._cursor = cur
+        else:
+            self._cursor = QPointF(-9999.0, -9999.0)
+            self._cursor_vel = QPointF(0.0, 0.0)
+        self._prev_cursor = cur
+
+    def _tick(self) -> None:
+        w = float(max(1, self.width()))
+        h = float(max(1, self.height()))
+        self._ensure(w, h)
+        self._poll_cursor()
+        cur = self._cursor
+        vel = self._cursor_vel
+        speed = math.hypot(vel.x(), vel.y())
+
+        for p in self._particles:
+            p["age"] += 0.016
+            # Natural fall + sway.
+            sway = p["sway_amp"] * math.sin(
+                p["age"] * p["sway_freq"] * 2.0 * math.pi + p["sway_phase"]
+            )
+            p["x"] += p["vx"] + sway * 0.08 + p["push_vx"]
+            p["y"] += p["vy"] + p["push_vy"]
+            p["rot"] += p["rot_v"]
+
+            # Cursor push: nearby petals nudged by cursor velocity, then decay.
+            if speed > 0.4 and cur.x() > -9000:
+                dx = p["x"] - cur.x()
+                dy = p["y"] - cur.y()
+                dist = math.hypot(dx, dy)
+                if dist < 70.0 and dist > 0.5:
+                    strength = (1.0 - dist / 70.0) * min(1.0, speed / 18.0)
+                    p["push_vx"] += vel.x() * 0.12 * strength
+                    p["push_vy"] += vel.y() * 0.12 * strength
+
+            p["push_vx"] *= 0.90
+            p["push_vy"] *= 0.90
+
+            # Respawn at top when past bottom (or far sideways).
+            if p["y"] > h + 16.0 or p["x"] < -30.0 or p["x"] > w + 30.0:
+                fresh = self._spawn_one(w, h, at_top=True)
+                p.update(fresh)
+
+        self.update()
+
+    def _draw_petal(self, painter: QPainter, p: dict) -> None:
+        # Fake turn via horizontal scale; slight vertical squash.
+        flip = math.sin(p["age"] * p["flip_freq"] * 2.0 * math.pi + p["flip_phase"])
+        scale_x = 0.25 + 0.75 * abs(flip)
+        size = p["size"]
+        painter.save()
+        painter.translate(p["x"], p["y"])
+        painter.rotate(p["rot"])
+        painter.scale(scale_x, 1.0)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(p["color"])
+        # Soft teardrop / petal: ellipse + tip.
+        painter.drawEllipse(QRectF(-size * 0.45, -size * 0.7, size * 0.9, size * 1.35))
+        tip = QPainterPath()
+        tip.moveTo(0.0, -size * 0.85)
+        tip.quadTo(size * 0.35, -size * 0.2, 0.0, size * 0.55)
+        tip.quadTo(-size * 0.35, -size * 0.2, 0.0, -size * 0.85)
+        painter.drawPath(tip)
+        # Vein hint
+        vein = QColor(p["color"])
+        vein.setAlpha(min(255, p["color"].alpha() + 40))
+        pen = QPen(vein)
+        pen.setWidthF(1.0)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawLine(QPointF(0.0, -size * 0.55), QPointF(0.0, size * 0.35))
+        painter.restore()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        del event
+        w = float(max(1, self.width()))
+        h = float(max(1, self.height()))
+        self._ensure(w, h)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        if self._mode == WEATHER_MODE_PETALS:
+            for p in self._particles:
+                self._draw_petal(painter, p)
+        # Future: elif self._mode == "snow": ... elif "rain": ...
+        painter.end()
+
+
 class FileShortcutsSubMenu(PopupPanel):
     """Submenu listing file/URL shortcuts; opened from the main pet menu icon."""
 
@@ -3178,15 +3542,26 @@ class FileShortcutsSubMenu(PopupPanel):
         top_layout.setContentsMargins(0, 0, 0, 0)
         top_layout.setSpacing(0)
 
+        # Layering top→bottom: content (text/controls) > petals > panel bg
         self.container = QFrame(self)
         self.container.setObjectName("subMenuContainer")
         top_layout.addWidget(self.container)
 
-        self.main_layout = QVBoxLayout(self.container)
+        self.petals = WeatherParticleCanvas(
+            self.container, mode=WEATHER_MODE_PETALS, count=PETAL_COUNT
+        )
+        self.petals.lower()
+
+        self.content = QWidget(self.container)
+        self.content.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.content.setStyleSheet("background: transparent;")
+        self.content.raise_()
+
+        self.main_layout = QVBoxLayout(self.content)
         self.main_layout.setContentsMargins(8, 8, 8, 8)
         self.main_layout.setSpacing(4)
 
-        self.title_label = JitterSettleLabel(FILE_URL_SHORTCUTS_TITLE, self)
+        self.title_label = JitterSettleLabel(FILE_URL_SHORTCUTS_TITLE, self.content)
         self.main_layout.addWidget(self.title_label)
 
         self.search_edit = QLineEdit()
@@ -3215,6 +3590,29 @@ class FileShortcutsSubMenu(PopupPanel):
     def button_style(self, base_color):
         return menu_button_style(base_color)
 
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._sync_layers()
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self._sync_layers()
+        self.petals.start()
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        if hasattr(self, "petals"):
+            self.petals.stop()
+        super().hideEvent(event)
+
+    def _sync_layers(self) -> None:
+        if not hasattr(self, "container"):
+            return
+        r = self.container.rect()
+        self.petals.setGeometry(r)
+        self.content.setGeometry(r)
+        self.petals.lower()
+        self.content.raise_()
+
     def _filtered_shortcuts(self):
         query = (self.search_edit.text() or "").strip().lower()
         if not query:
@@ -3242,11 +3640,11 @@ class FileShortcutsSubMenu(PopupPanel):
         shortcuts = self._filtered_shortcuts()
         if not self._all_shortcuts:
             lbl = QLabel("(No file shortcuts)")
-            lbl.setStyleSheet("color: #dddddd;")
+            lbl.setStyleSheet("color: #dddddd; background: transparent;")
             self.items_container.addWidget(lbl)
         elif not shortcuts:
             lbl = QLabel("(No matching shortcuts)")
-            lbl.setStyleSheet("color: #dddddd;")
+            lbl.setStyleSheet("color: #dddddd; background: transparent;")
             self.items_container.addWidget(lbl)
         else:
             for sc in shortcuts:
@@ -3269,7 +3667,11 @@ class FileShortcutsSubMenu(PopupPanel):
                     lambda checked=False, p=path, t=sc_type: self.open_shortcut.emit(p, t)
                 )
                 self.items_container.addWidget(btn)
+        self.content.adjustSize()
+        hint = self.content.sizeHint()
+        self.container.setFixedSize(max(hint.width(), 220), max(hint.height(), 120))
         self.adjustSize()
+        self._sync_layers()
 
     def refresh_and_show(self, anchor_geometry):
         self._all_shortcuts = [
@@ -3282,7 +3684,7 @@ class FileShortcutsSubMenu(PopupPanel):
         self.search_edit.blockSignals(False)
         self._rebuild_items()
 
-        self.adjustSize()
+        self._sync_layers()
         screen_geo = screen_available_geometry(self)
         x = anchor_geometry.x() + anchor_geometry.width()
         y = anchor_geometry.y()
@@ -3294,6 +3696,7 @@ class FileShortcutsSubMenu(PopupPanel):
         self.show()
         self.raise_()
         self.activateWindow()
+        self.petals.start()
 
     def _hide_if_inactive(self):
         if self._suppress_hide or self.isActiveWindow():
@@ -5497,6 +5900,187 @@ class ParticleNetworkCanvas(QWidget):
         screen.end()
 
 
+# ---------------------------------------------------------------------------
+# Shine Sweep Button — metal/glass glint on solid Mini-program tiles
+# ---------------------------------------------------------------------------
+# 「光澤掃過按鈕（Shine Sweep Button）」: Qt take on CSS overflow:hidden +
+# ::after skewX(-20deg) gradient band sweeping left→right (~2.4s idle;
+# faster on hover) with slight lift + deeper shadow.
+SHINE_IDLE_MS = 2400
+SHINE_HOVER_MS = 900
+SHINE_LIFT_PX = 3.0
+SHINE_BAND_FRAC = 0.32
+SHINE_SKEW_DEG = -20.0
+SHINE_BTN_H = 28
+SHINE_RADIUS = 6.0
+
+
+def _qcolor_from_hex(hex_color: str, alpha: int = 255) -> QColor:
+    text = (hex_color or "").strip().lstrip("#")
+    if len(text) != 6:
+        return QColor(74, 74, 74, alpha)
+    try:
+        return QColor(int(text[0:2], 16), int(text[2:4], 16), int(text[4:6], 16), alpha)
+    except ValueError:
+        return QColor(74, 74, 74, alpha)
+
+
+class ShineSweepButton(QWidget):
+    """Opaque solid tile with a looping diagonal shine sweep."""
+
+    clicked = Signal()
+
+    def __init__(self, text: str, base_color: str, parent=None):
+        super().__init__(parent)
+        self._text = text or ""
+        self._base = _qcolor_from_hex(base_color, 255)
+        self._hover_fill = _qcolor_from_hex(darken_color(base_color, 0.72), 255)
+        self._hovering = False
+        self._lift_t = 0.0  # 0 idle → 1 full hover lift
+        self.setMinimumHeight(SHINE_BTN_H + int(SHINE_LIFT_PX) + 2)
+        self.setMinimumWidth(180)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setMouseTracking(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+        self._lift_anim = QPropertyAnimation(self, b"liftProgress", self)
+        self._lift_anim.setDuration(180)
+        self._lift_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+        self._elapsed = QElapsedTimer()
+        self._timer = QTimer(self)
+        self._timer.setInterval(16)
+        self._timer.timeout.connect(self.update)
+
+    def _get_lift_progress(self) -> float:
+        return self._lift_t
+
+    def _set_lift_progress(self, value: float) -> None:
+        self._lift_t = max(0.0, min(1.0, float(value)))
+        self.update()
+
+    liftProgress = Property(float, _get_lift_progress, _set_lift_progress)
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        if not self._elapsed.isValid():
+            self._elapsed.start()
+        if not self._timer.isActive():
+            self._timer.start()
+        super().showEvent(event)
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        self._timer.stop()
+        super().hideEvent(event)
+
+    def enterEvent(self, event) -> None:  # noqa: N802
+        self._hovering = True
+        self._lift_anim.stop()
+        self._lift_anim.setStartValue(self._lift_t)
+        self._lift_anim.setEndValue(1.0)
+        self._lift_anim.start()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        self._hovering = False
+        self._lift_anim.stop()
+        self._lift_anim.setStartValue(self._lift_t)
+        self._lift_anim.setEndValue(0.0)
+        self._lift_anim.start()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton:
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton and self.rect().contains(
+            event.position().toPoint()
+        ):
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def _shine_progress(self) -> float:
+        period = SHINE_HOVER_MS if self._hovering else SHINE_IDLE_MS
+        if not self._elapsed.isValid() or period <= 0:
+            return 0.0
+        return (self._elapsed.elapsed() % period) / float(period)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        del event
+        w = float(self.width())
+        h = float(self.height())
+        lift = self._lift_t * SHINE_LIFT_PX
+        btn_h = float(SHINE_BTN_H)
+        # Button rests near the bottom; hover lifts it (paint-only).
+        top = h - btn_h - 1.0 - lift
+        rect = QRectF(0.5, top, w - 1.0, btn_h)
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+
+        # Soft shadow under the tile (deepens with lift).
+        if self._lift_t > 0.01:
+            shadow = QColor(0, 0, 0, int(40 + 70 * self._lift_t))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(shadow)
+            painter.drawRoundedRect(
+                QRectF(rect.left() + 1.0, rect.top() + lift + 2.5, rect.width(), rect.height()),
+                SHINE_RADIUS,
+                SHINE_RADIUS,
+            )
+
+        # Clip = overflow:hidden
+        clip = QPainterPath()
+        clip.addRoundedRect(rect, SHINE_RADIUS, SHINE_RADIUS)
+        painter.setClipPath(clip)
+
+        fill = self._hover_fill if self._hovering else self._base
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(fill)
+        painter.drawRoundedRect(rect, SHINE_RADIUS, SHINE_RADIUS)
+
+        # Diagonal shine band (skewX ≈ -20°), sweeps left → right.
+        t = self._shine_progress()
+        band_w = max(18.0, rect.width() * SHINE_BAND_FRAC)
+        # Travel from fully left of tile to fully right.
+        x = rect.left() - band_w + t * (rect.width() + 2.0 * band_w)
+        painter.save()
+        painter.translate(x + band_w * 0.5, rect.center().y())
+        painter.shear(math.tan(math.radians(SHINE_SKEW_DEG)), 0.0)
+        grad = QLinearGradient(-band_w * 0.5, 0.0, band_w * 0.5, 0.0)
+        peak = QColor(255, 255, 255, 95 if self._hovering else 70)
+        grad.setColorAt(0.0, QColor(255, 255, 255, 0))
+        grad.setColorAt(0.45, peak)
+        grad.setColorAt(0.55, peak)
+        grad.setColorAt(1.0, QColor(255, 255, 255, 0))
+        painter.setBrush(QBrush(grad))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRect(QRectF(-band_w * 0.5, -rect.height(), band_w, rect.height() * 2.0))
+        painter.restore()
+
+        painter.setClipping(False)
+
+        # Label — match menu QPushButton (white, left, padded).
+        font = QFont(self.font())
+        font.setPointSize(9)
+        painter.setFont(font)
+        painter.setPen(QColor(255, 255, 255))
+        text_rect = QRectF(rect.left() + 7.0, rect.top(), rect.width() - 14.0, rect.height())
+        painter.drawText(
+            text_rect,
+            int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
+            self._text,
+        )
+        painter.end()
+
+
 class MiniProgramsSubMenu(PopupPanel):
     """Second-level menu under Mini programs: Text records + Calculations."""
 
@@ -5541,65 +6125,37 @@ class MiniProgramsSubMenu(PopupPanel):
         sep.setStyleSheet("background-color: rgba(255,255,255,120);")
         layout.addWidget(sep)
 
-        # Text records >>
-        text_row = QHBoxLayout()
-        text_row.setSpacing(4)
-        text_lbl = QLabel("Text records")
-        text_lbl.setStyleSheet(
-            "color: white; font-weight: bold; background: transparent;"
-        )
-        btn_text = QPushButton(">>")
-        btn_text.setFixedWidth(30)
-        btn_text.setStyleSheet("text-align: center;" + menu_button_style("#4a4a4a"))
-        btn_text.clicked.connect(self.open_text_records)
-        text_row.addWidget(text_lbl)
-        text_row.addStretch()
-        text_row.addWidget(btn_text)
-        layout.addLayout(text_row)
+        # Text records / Calculations — Folder Shortcuts List Row Fill (no shine).
+        self.btn_text_records = ListRowFillItem(1, "Text records", self.content)
+        self.btn_text_records.clicked.connect(self.open_text_records)
+        layout.addWidget(self.btn_text_records)
 
-        # Calculations >>
-        ops_row = QHBoxLayout()
-        ops_row.setSpacing(4)
-        ops_lbl = QLabel("Calculations")
-        ops_lbl.setStyleSheet(
-            "color: white; font-weight: bold; background: transparent;"
-        )
-        btn_ops = QPushButton(">>")
-        btn_ops.setFixedWidth(30)
-        btn_ops.setStyleSheet("text-align: center;" + menu_button_style("#4a4a4a"))
-        btn_ops.clicked.connect(self.open_operations)
-        ops_row.addWidget(ops_lbl)
-        ops_row.addStretch()
-        ops_row.addWidget(btn_ops)
-        layout.addLayout(ops_row)
+        self.btn_calculations = ListRowFillItem(2, "Calculations", self.content)
+        self.btn_calculations.clicked.connect(self.open_operations)
+        layout.addWidget(self.btn_calculations)
 
-        sep2 = QLabel()
-        sep2.setFixedHeight(1)
-        sep2.setStyleSheet("background-color: rgba(255,255,255,120);")
-        layout.addWidget(sep2)
+        # Solid Mini-program tiles — Shine Sweep (existing tile colors kept).
+        self.btn_pomodoro = ShineSweepButton("Pomodoro", "#6e4a2a", self.content)
+        self.btn_pomodoro.clicked.connect(self.open_pomodoro)
+        layout.addWidget(self.btn_pomodoro)
 
-        # Solid fills sit above the particle canvas (opaque button faces).
-        btn_pomodoro = QPushButton("Pomodoro")
-        btn_pomodoro.setStyleSheet(menu_button_style("#6e4a2a"))
-        btn_pomodoro.clicked.connect(self.open_pomodoro)
-        layout.addWidget(btn_pomodoro)
-
-        btn_translate = QPushButton("Translate")
-        btn_translate.setStyleSheet(menu_button_style("#2a5a4a"))
-        btn_translate.clicked.connect(self.open_translate)
-        layout.addWidget(btn_translate)
+        self.btn_translate = ShineSweepButton("Translate", "#2a5a4a", self.content)
+        self.btn_translate.clicked.connect(self.open_translate)
+        layout.addWidget(self.btn_translate)
 
         # Marked unfinished per user 2026-11-02 — keep entry, show WIP clearly.
-        btn_hakoniwa = QPushButton("箱庭島（未完成）／Hakoniwa (WIP)")
-        btn_hakoniwa.setStyleSheet(menu_button_style("#2a4a6e"))
-        btn_hakoniwa.clicked.connect(self.open_hakoniwa)
-        layout.addWidget(btn_hakoniwa)
+        self.btn_hakoniwa = ShineSweepButton(
+            "箱庭島（未完成）／Hakoniwa (WIP)", "#2a4a6e", self.content
+        )
+        self.btn_hakoniwa.clicked.connect(self.open_hakoniwa)
+        layout.addWidget(self.btn_hakoniwa)
 
         # Transparent Fish Tank — below 箱庭島; marked unfinished (2026-11-02).
-        btn_fish_tank = QPushButton("透明魚缸（未完成）／Fish Tank (WIP)")
-        btn_fish_tank.setStyleSheet(menu_button_style("#1a5a6e"))
-        btn_fish_tank.clicked.connect(self.open_fish_tank)
-        layout.addWidget(btn_fish_tank)
+        self.btn_fish_tank = ShineSweepButton(
+            "透明魚缸（未完成）／Fish Tank (WIP)", "#1a5a6e", self.content
+        )
+        self.btn_fish_tank.clicked.connect(self.open_fish_tank)
+        layout.addWidget(self.btn_fish_tank)
 
         self.setStyleSheet(MENU_STYLE + """
             MiniProgramsSubMenu { background-color: transparent; }
@@ -6571,7 +7127,12 @@ HEARTBEAT_RIPPLE_B = QColor(232, 212, 139, 200)  # #e8d48b
 
 
 class HeartbeatOverlay(QWidget):
-    """Frameless overlay: scale pet pixmap once, paint two center ripples that fade."""
+    """Frameless overlay: scale pet pixmap once, paint two center ripples that fade.
+
+    Scale is applied around the pet's current screen center (transform origin =
+    widget/pixmap center). Grab() device-pixel size is mapped back to the host's
+    logical size so HiDPI never inflates the first frame toward the top-left.
+    """
 
     def __init__(self, host: "PetWindow", pet_pixmap: QPixmap):
         super().__init__(None)
@@ -6592,15 +7153,39 @@ class HeartbeatOverlay(QWidget):
             | Qt.WindowType.WindowStaysOnTopHint
         )
 
-        pet_size = max(host.width(), host.height(), 48)
+        # Logical pet box (matches PetWindow fixed square), not grab() pixels.
+        self._pet_w = max(1, host.width())
+        self._pet_h = max(1, host.height())
+        pet_size = max(self._pet_w, self._pet_h, 48)
+        # Normalize grab so logical size == host (keeps HiDPI sharpness).
+        dpr = max(float(self._pix.devicePixelRatio()), 1.0)
+        phys_w = max(1, int(round(self._pet_w * dpr)))
+        phys_h = max(1, int(round(self._pet_h * dpr)))
+        normalized = self._pix.scaled(
+            phys_w,
+            phys_h,
+            Qt.AspectRatioMode.IgnoreAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        normalized.setDevicePixelRatio(dpr)
+        self._pix = normalized
         # Room for ripples beyond the scaled pet.
         side = int(pet_size * 2.6)
         self._pet_size = pet_size
         self.setFixedSize(side, side)
-        center = host.frameGeometry().center()
-        self.move(center.x() - side // 2, center.y() - side // 2)
+        self._recenter_on_host()
+
+    def _recenter_on_host(self) -> None:
+        """Pin overlay so its center == host widget center in global coords."""
+        host = self._host
+        try:
+            center = host.mapToGlobal(host.rect().center())
+        except RuntimeError:
+            return
+        self.move(center.x() - self.width() // 2, center.y() - self.height() // 2)
 
     def start(self):
+        self._recenter_on_host()
         self._host.setWindowOpacity(0.0)
         self._elapsed.start()
         self._progress = 0.0
@@ -6676,20 +7261,18 @@ class HeartbeatOverlay(QWidget):
                 QPoint(int(cx), int(cy)), int(radius), int(radius)
             )
 
-        # Pet thud (scale up then back).
+        # Pet thud: scale around center (no top-left origin offset).
         scale = self._scale_at(t)
         if not self._pix.isNull():
-            pw = max(1, int(self._pix.width() * scale))
-            ph = max(1, int(self._pix.height() * scale))
-            scaled = self._pix.scaled(
-                pw,
-                ph,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-            x = int(cx - scaled.width() / 2.0)
-            y = int(cy - scaled.height() / 2.0)
-            painter.drawPixmap(x, y, scaled)
+            dpr = max(float(self._pix.devicePixelRatio()), 1.0)
+            lw = self._pix.width() / dpr
+            lh = self._pix.height() / dpr
+            painter.save()
+            painter.translate(cx, cy)
+            painter.scale(scale, scale)
+            # drawPixmap respects pixmap DPR → logical lw×lh, origin top-left of pet.
+            painter.drawPixmap(QPointF(-lw / 2.0, -lh / 2.0), self._pix)
+            painter.restore()
         painter.end()
 
 

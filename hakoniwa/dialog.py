@@ -14,7 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from PySide6.QtCore import Qt, QEvent
+from PySide6.QtCore import Qt, QEvent, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut, QResizeEvent, QShowEvent
 from PySide6.QtWidgets import (
     QDialog,
@@ -33,7 +33,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+
 from .alert_marquee import AlertMarquee
+
 from .hud_icons import HakoniwaIconBar
 
 from .demos import island_summary, local_demo_islands
@@ -91,6 +93,13 @@ from .model import (
     TERRAIN,
     IslandState,
 )
+from .odometer import (
+    HakoniwaStatusBar,
+    load_status_seen,
+    save_status_seen,
+    snapshot_from_state,
+    status_seen_path,
+)
 from .remote import HakoniwaRemote, HakoniwaRemoteError, try_connect
 from .save import default_save_path, load_island, save_island
 from .tiles import ATLAS
@@ -102,14 +111,23 @@ _OVERLAY_BG = "rgba(12, 28, 18, 77)"
 _OVERLAY_BORDER = "rgba(150, 200, 150, 130)"
 
 # In-map HUD styles (status / tile / log / guestbook / tools).
+# Status strip: fully frameless over the map (no green box); digit cells
+# carry their own dark fill in odometer.DigitReel.
 HAKONIWA_HUD_STYLE = f"""
-QLabel#hakoniwaHudStatus {{
-    background-color: rgba(18, 42, 26, 210);
-    color: #e4f5e4;
-    border: 1px solid rgba(90, 150, 90, 200);
-    border-radius: 3px;
-    padding: 3px 10px;
-    /* Single-line status strip — do not wrap stats. */
+QWidget#hakoniwaHudStatus {{
+    background: transparent;
+    background-color: transparent;
+    color: #ffffff;
+    border: none;
+    padding: 2px 4px;
+    font-weight: bold;
+    /* Frameless odometer strip floating on the map. */
+}}
+QLabel#hakoniwaHudStatusPlain {{
+    background: transparent;
+    color: #ffffff;
+    border: none;
+    font-weight: bold;
 }}
 QLabel#hakoniwaHudTile {{
     background-color: rgba(16, 40, 28, 170);
@@ -133,7 +151,9 @@ QFrame#hakoniwaHudGuestbookFrame {{
     border-radius: 4px;
 }}
 QFrame#hakoniwaToolsDrawer,
+
 QFrame#hakoniwaSettingsDrawer {{
+
     background-color: rgba(24, 36, 28, 230);
     border: 1px solid rgba(180, 120, 50, 200);
     border-radius: 4px;
@@ -159,6 +179,7 @@ class HakoniwaMapHud(QWidget):
 
     Layout (user-locked annotation):
       - status bar → top center
+
       - alert marquee → under status (警報走馬燈; via 通知; hidden without alerts)
       - tile info → top-left (below status／marquee; 資訊 or 通知 chrome)
       - icon bar → bottom-left (通知／建築／資訊／留言／設定)
@@ -167,6 +188,7 @@ class HakoniwaMapHud(QWidget):
       - tools / settings drawers → above icon bar when open
 
     「通知」toggles status chrome in sync: 格資訊 + 行動日誌 + 警報走馬燈.
+
     """
 
     def __init__(self, map_widget: HakoniwaMapWidget, parent=None):
@@ -176,8 +198,8 @@ class HakoniwaMapHud(QWidget):
         self.map.setParent(self)
         self.map.lower()
 
-        self.stats = QLabel(self)
-        self.stats.setObjectName("hakoniwaHudStatus")
+        # Odometer status strip (狀態 text + digit reels); no frame; bold.
+        self.stats = HakoniwaStatusBar(self)
         # User-locked: status HUD is one horizontal line (no wrap).
         self.stats.setWordWrap(False)
         self.stats.setAlignment(
@@ -236,6 +258,8 @@ class HakoniwaMapHud(QWidget):
         self.settings_layout.setSpacing(4)
         settings_outer.addWidget(self.settings_body)
 
+
+
         # Guestbook cluster (view + form) — closed by default; open via 留言.
         self.guestbook_frame = QFrame(self)
         self.guestbook_frame.setObjectName("hakoniwaHudGuestbookFrame")
@@ -256,6 +280,7 @@ class HakoniwaMapHud(QWidget):
         self.guestbook_form.setSpacing(4)
         gb_col.addLayout(self.guestbook_form)
 
+
         # Status chrome (格資訊 + 日誌 + 走馬燈) starts on — panels as today.
         self._status_chrome_on = True
 
@@ -266,6 +291,7 @@ class HakoniwaMapHud(QWidget):
         if notify_btn is not None:
             notify_btn.setToolTip("通知：格資訊／日誌／警報走馬燈")
             notify_btn.setChecked(True)
+
         info_btn = self.icon_bar.button("info")
         if info_btn is not None:
             info_btn.setChecked(True)
@@ -274,6 +300,7 @@ class HakoniwaMapHud(QWidget):
         self.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
+
 
     def _apply_status_chrome(self) -> None:
         """Show/hide 格資訊 + 日誌 + 走馬燈 together from ``_status_chrome_on``."""
@@ -347,6 +374,7 @@ class HakoniwaMapHud(QWidget):
             self.settings_drawer.setVisible(checked)
 
         self._layout_overlays()
+
         self._raise_overlays()
 
     def toggle_tools(self) -> None:
@@ -360,8 +388,10 @@ class HakoniwaMapHud(QWidget):
             btn.setChecked(False)
 
     def close_bottom_panels(self) -> None:
+
         """Close build / guestbook / settings drawers (chrome／info stay)."""
         for kind in ("build", "guestbook", "settings"):
+
             btn = self.icon_bar.button(kind)
             if btn is not None and btn.isChecked():
                 btn.setChecked(False)
@@ -401,6 +431,8 @@ class HakoniwaMapHud(QWidget):
             self.guestbook_frame,
             self.tools_drawer,
             self.settings_drawer,
+
+
             self.icon_bar,
         ):
             # isHidden() = explicit hide; isVisible() is false before ancestors show.
@@ -414,14 +446,16 @@ class HakoniwaMapHud(QWidget):
         self.map.lower()
 
         margin = 8
-        # Status — top center, single horizontal line (no wrap / multi-line).
+        # Status — top center, single horizontal line (odometer strip; no wrap).
         fm = self.stats.fontMetrics()
+        hint = self.stats.sizeHint()
         text = self.stats.text() or ""
-        text_w = fm.horizontalAdvance(text) + 24
-        status_h = max(fm.height() + 10, 26)
+        text_w = max(hint.width(), fm.horizontalAdvance(text) + 24)
+        status_h = max(hint.height(), fm.height() + 10, 26)
         status_w = min(max(text_w, 200), w - 2 * margin)
         status_x = (w - status_w) // 2
         self.stats.setGeometry(status_x, margin, status_w, status_h)
+
 
         # Alert marquee — directly under the status strip (same width band).
         below = margin + status_h
@@ -438,6 +472,7 @@ class HakoniwaMapHud(QWidget):
             tile_w = min(220, max(140, w // 4))
             tile_h = max(self.sel_label.sizeHint().height() + 8, 56)
             self.sel_label.setGeometry(margin, below + 6, tile_w, tile_h)
+
 
         # Icon bar — bottom-left (replaces orange 工具／設定).
         # Use isHidden(), not isVisible(): during __init__ / pre-show layout,
@@ -457,8 +492,10 @@ class HakoniwaMapHud(QWidget):
         # Drawers — above the icon bar, left side
         drawer_w = min(280, max(200, w // 3))
         drawer_h = min(h - 2 * margin - btn_h - 8, max(220, int(h * 0.62)))
+
         for drawer in (self.tools_drawer, self.settings_drawer):
             if not drawer.isHidden():
+
                 dh = drawer_h if drawer is self.tools_drawer else min(drawer_h, 160)
                 self_y = max(margin, btn_y - 6 - dh)
                 drawer.setGeometry(margin, self_y, drawer_w, dh)
@@ -474,7 +511,9 @@ class HakoniwaMapHud(QWidget):
         # Guestbook — bottom center, between icon bar and log (when open)
         if not self.guestbook_frame.isHidden():
             gb_left = btn_x + (btn_w + 8 if btn_w else 0)
+
             gb_right = w - margin - (log_w if not self.log_view.isHidden() else 0) - 8
+
             gb_w = max(180, gb_right - gb_left)
             gb_h = min(130, max(96, h // 5))
             if gb_w < 160:
@@ -722,12 +761,23 @@ class HakoniwaIslandDialog(QDialog):
         self.setStyleSheet(dp.CALC_DIALOG_STYLE + getattr(dp, "MINI_PROGRAM_STYLE", ""))
 
         self._save_path = self._resolve_save_path()
+        self._status_seen_path = status_seen_path(self._save_path)
         # Optional user PNGs: Data/hakoniwa/user/ (beside save) then assets/user/.
         configure_user_art(self._save_path.parent.parent)
         ATLAS.invalidate_user_cache()
         loaded = load_island(self._save_path)
         self.state = loaded if loaded is not None else IslandState.new_game()
         self.selected = None
+        # Open-island odometer roll: only when persisted turn snapshot advanced.
+        self._pending_open_roll: Optional[Tuple[Dict[str, int], Dict[str, int]]] = None
+        self._open_roll_armed = False
+        seen = load_status_seen(self._status_seen_path)
+        current = snapshot_from_state(self.state)
+        if seen is not None and int(seen.get("turn", -1)) != int(current["turn"]):
+            self._pending_open_roll = (seen, current)
+        else:
+            # Same turn (or first visit): show current; do not replay the roll.
+            save_status_seen(self._status_seen_path, current)
 
         root = dp.install_ornate_calc_frame(self)
         root.setSpacing(4)
@@ -1060,24 +1110,50 @@ class HakoniwaIslandDialog(QDialog):
         self.guest_text.clear()
         self._refresh_ui()
 
+    def showEvent(self, event: QShowEvent) -> None:  # noqa: N802
+        super().showEvent(event)
+        # Arm open-island odometer roll once the window is on screen.
+        if self._pending_open_roll is not None and not self._open_roll_armed:
+            self._open_roll_armed = True
+            frm, to = self._pending_open_roll
+            self._pending_open_roll = None
+            monster_bit = self._monster_status_suffix()
+            self.stats.set_values(frm, animate=False, suffix=monster_bit)
+            # Persist *current* snapshot immediately so a same-turn re-open
+            # does not replay the roll even if the animation is still running.
+            save_status_seen(self._status_seen_path, to)
+            QTimer.singleShot(
+                40,
+                lambda: self.stats.set_values(
+                    to, animate=True, suffix=self._monster_status_suffix()
+                ),
+            )
+            if hasattr(self, "hud"):
+                self.hud._layout_overlays()
+
+    def _monster_status_suffix(self) -> str:
+        if not self.state.monsters:
+            return ""
+        m = self.state.monsters[0]
+        return f" | 怪獸 {m.label()}({m.i},{m.j})"
+
     def _refresh_ui(self) -> None:
         s = self.state
-        # Status overlay: funds / food / turn / land / pop / monster.
+        # Status overlay: funds / food / turn / land / pop / score / monster.
         # Server mode ([本機]/連線) lives in tools → settings, not here.
-        monster_bit = ""
-        if s.monsters:
-            m = s.monsters[0]
-            monster_bit = f" | 怪獸 {m.label()}({m.i},{m.j})"
-        # One line, locked order: 狀態 → 資金 → 糧食 → 人口 → 回合 → 格數；分數附於格數後.
-        # 銀行存款附在資金欄內（不另開欄位，以免打亂順序）.
-        funds_bit = f"資金 {s.funds}"
-        if s.bank_deposit > 0:
-            funds_bit += f"（存{s.bank_deposit}）"
-        self.stats.setText(
-            f"狀態 | {funds_bit} | 糧食 {s.food} | "
-            f"人口 {s.population} | 回合 {s.turn} | "
-            f"格數 {s.land_count()} | 分數 {s.island_score()}{monster_bit}"
-        )
+        # Order locked: 狀態 | 資金[odo] | 糧食 | 人口 | 回合 | 格數 | 分數.
+        monster_bit = self._monster_status_suffix()
+        current = snapshot_from_state(s)
+        # While a pending open-roll is waiting for showEvent, park digits on the
+        # previous snapshot so the roll is visible; otherwise update live.
+        if self._pending_open_roll is not None:
+            frm, _to = self._pending_open_roll
+            self.stats.set_values(frm, animate=False, suffix=monster_bit)
+        else:
+            # Mid-session: short reel when visible; snap while hidden (tests).
+            animate = self.isVisible()
+            self.stats.set_values(current, animate=animate, suffix=monster_bit)
+            save_status_seen(self._status_seen_path, current)
         self.log_view.setPlainText("\n".join(s.log[-30:]))
         bar = self.log_view.verticalScrollBar()
         bar.setValue(bar.maximum())
