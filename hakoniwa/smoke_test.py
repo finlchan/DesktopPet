@@ -39,6 +39,7 @@ from hakoniwa.model import (
     COST_BREAKWATER,
     COST_CASINO,
     COST_DEFENSE,
+    COST_DECOY,
     COST_EXCAVATE,
     COST_FACTORY,
     COST_FARM,
@@ -112,6 +113,7 @@ from hakoniwa.model import (
     SCORE_PER_BANK,
     SCORE_PER_BREAKWATER,
     SCORE_PER_CASINO,
+    SCORE_PER_DECOY,
     SCORE_PER_HOTEL,
     SCORE_PER_MONUMENT,
     SCORE_PER_OILFIELD,
@@ -245,6 +247,8 @@ def test_catalog_costs():
     assert COST_MISSILE_CHEAP == 10
     assert COST_MISSILE_BASE == 300
     assert COST_DEFENSE == 1000
+    assert COST_DECOY == 1
+    assert SCORE_PER_DECOY == 5
     assert COST_HARBOR == 800
     assert COST_SHIPYARD == 500
     assert COST_MONUMENT == 9999
@@ -2527,6 +2531,131 @@ def test_defense_and_missile_base():
     assert ok is False and "建築" in reason
 
 
+def test_decoy_and_tourism_camouflage():
+    """紙糊假設施＋觀光偽裝＋防衛自爆（定本ハリボテ／偽裝／再建設）."""
+    state = IslandState.new_game()
+    land = [(i, j) for i in range(20) for j in range(20) if state.is_land(i, j)]
+    grass = [
+        (i, j)
+        for i, j in land
+        if state.cell(i, j).terrain == "grass" and state.cell(i, j).building is None
+    ]
+    while len(grass) < 4:
+        for i, j in land:
+            if state.cell(i, j).terrain == "dirt" and state.cell(i, j).building is None:
+                assert state.level_land(i, j) == "ok"
+                grass.append((i, j))
+                if len(grass) >= 4:
+                    break
+        else:
+            break
+    assert len(grass) >= 4
+    bi, bj = grass[0]
+    di, dj = grass[1]
+    fi, fj = grass[2]
+    gi, gj = grass[3]
+
+    # Place missile base + decoy + real defense.
+    state.funds = max(
+        state.funds, COST_MISSILE_BASE + COST_DEFENSE + COST_DECOY + 50
+    )
+    assert state.place_building(bi, bj, "missile_base") == "ok"
+    assert state.place_building(di, dj, "decoy") == "ok"
+    assert state.cell(di, dj).building == "decoy"
+    assert state.place_building(fi, fj, "defense") == "ok"
+
+    # Decoy is NOT real defense cover.
+    assert not state.protected_by_defense(di, dj)
+    assert (di, dj) not in state.defense_positions()
+    assert state.protected_by_defense(fi, fj)
+
+    # Tourism camouflage: missile→forest, decoy→defense, true defense unchanged.
+    t_terrain, t_bldg = state.tourist_appearance(bi, bj)
+    assert t_terrain == "forest" and t_bldg is None
+    t_terrain, t_bldg = state.tourist_appearance(di, dj)
+    assert t_terrain == state.cell(di, dj).terrain and t_bldg == "defense"
+    t_terrain, t_bldg = state.tourist_appearance(fi, fj)
+    assert t_bldg == "defense"
+    # Owner truth unchanged.
+    assert state.cell(bi, bj).building == "missile_base"
+    assert state.cell(di, dj).building == "decoy"
+
+    # Tiny score weight vs real defense.
+    score_with = state.island_score()
+    state.cell(di, dj).building = None
+    score_without = state.island_score()
+    assert score_with - score_without == SCORE_PER_DECOY
+    state.cell(di, dj).building = "decoy"
+
+    # Missile can target decoy (no monster) and tears it down.
+    ok, _ = tool_enabled(state, "missile", (di, dj))
+    assert ok is True
+    funds_before = state.funds
+    cheap = state.missile_cost()
+    assert state.fire_missile(di, dj) == "ok"
+    assert state.cell(di, dj).building is None
+    assert state.funds == funds_before - cheap
+    assert any("紙糊" in line for line in state.log)
+
+    # Rebuild decoy and stomp: crushed, monster survives (no 自爆).
+    state.cell(di, dj).terrain = "grass"
+    state.cell(di, dj).building = None
+    state.funds = max(state.funds, COST_DECOY)
+    assert state.place_building(di, dj, "decoy") == "ok"
+    from hakoniwa.model import Monster
+
+    m = Monster(kind="inora", i=di, j=dj, hp=1)
+    state.monsters = [m]
+    notes = state._stomp_cell(di, dj, m)
+    assert any("紙糊" in n for n in notes)
+    assert state.has_monster()
+    assert state.cell(di, dj).building is None
+    state.monsters = []
+
+    # Defense rebuild = detonate clears nearby monsters.
+    state.funds = max(state.funds, COST_DEFENSE)
+    near = next(
+        (
+            (x, y)
+            for x, y in state.cells_within(fi, fj, DEFENSE_RADIUS)
+            if (x, y) != (fi, fj) and state.is_land(x, y)
+        ),
+        None,
+    )
+    assert near is not None
+    m2 = state.spawn_monster(*near)
+    assert m2 is not None
+    ok, _ = tool_enabled(state, "defense", (fi, fj))
+    assert ok is True  # rebuild/detonate path
+    funds_before = state.funds
+    assert state.place_building(fi, fj, "defense") == "ok"
+    assert state.cell(fi, fj).building is None
+    assert not state.has_monster()
+    assert state.funds == funds_before - COST_DEFENSE
+    assert any("自爆" in line for line in state.log)
+
+    # Toolbar: decoy on empty grass.
+    state.funds = max(state.funds, COST_DECOY)
+    ok, _ = tool_enabled(state, "decoy", (gi, gj))
+    assert ok is True
+    assert state.place_building(gi, gj, "decoy") == "ok"
+
+    # Save round-trip keeps decoy + missile_base.
+    data = state.to_dict()
+    assert data["version"] == SAVE_VERSION
+    loaded = IslandState.from_dict(data)
+    assert loaded.building_count("decoy") == 1
+    assert loaded.building_count("missile_base") == 1
+    assert loaded.tourist_appearance(bi, bj) == ("forest", None)
+    t_terrain, t_bldg = loaded.tourist_appearance(gi, gj)
+    assert t_bldg == "defense"
+
+    # Demo coral includes camouflage targets for offline 觀光.
+    coral = make_demo_coral()
+    assert coral.building_count("missile_base") >= 1
+    assert coral.building_count("decoy") >= 1
+
+
 def test_tool_enabled_rules():
     state = IslandState.new_game()
     # No selection → cell tools disabled; wait needs a monster; export needs port;
@@ -2643,6 +2772,20 @@ def test_dialog_import_offscreen():
     assert dlg.server_url.parent() is dlg.hud.settings_body
     assert dlg.conn_status.parent() is dlg.hud.settings_body
     assert not dlg.hud.tools_drawer.isVisible()
+    # Guestbook closed by default; open via 留言 icon.
+    assert dlg.hud.guestbook_frame.isHidden()
+    assert not dlg.hud.icon_bar.button("guestbook").isChecked()
+    # Settings live in their own drawer (設定 icon), not under tools.
+    assert dlg.hud.settings_drawer.isHidden()
+
+    # 通知 chrome on by default: 格資訊 + 日誌 visible; marquee hidden (no alerts).
+    assert dlg.hud.icon_bar.button("notify").isChecked()
+    assert dlg.hud._status_chrome_on is True
+    assert not dlg.hud.sel_label.isHidden()
+    assert not dlg.hud.log_view.isHidden()
+    assert dlg.hud.alert_marquee.isHidden()
+    assert not dlg.hud.alert_marquee.has_alerts()
+
     # No top instruction banner (「點選格子…」/ shortcut strip) on open.
     from PySide6.QtWidgets import QLabel
 
@@ -2650,15 +2793,20 @@ def test_dialog_import_offscreen():
     for lab in dlg.findChildren(QLabel):
         t = lab.text() or ""
         assert not any(b in t for b in banner_bits), t
-    # Tools button geometry is correct even before the dialog is shown
+    # Icon bar geometry is correct even before the dialog is shown
     # (isHidden()-based layout; was stuck at top-left with isVisible()).
+    assert not dlg.hud.icon_bar.isHidden()
     assert not dlg.hud.tools_btn.isHidden()
-    btn_geo = dlg.hud.tools_btn.geometry()
+    btn_geo = dlg.hud.icon_bar.geometry()
     assert btn_geo.y() >= dlg.hud.height() // 2, (
         btn_geo,
         dlg.hud.size(),
     )
     assert btn_geo.x() <= 16, btn_geo
+    # Five icon buttons: 通知／建築／資訊／留言／設定
+    from hakoniwa.hud_icons import ICON_KEYS
+
+    assert set(dlg.hud.icon_bar.buttons) == set(ICON_KEYS)
     # No selection → cell tools disabled；誘致不需選格（資金足夠時可點）；
     # 火箭發射無基地時仍鎖.
     dlg._refresh_toolbar()
@@ -2667,7 +2815,10 @@ def test_dialog_import_offscreen():
             assert btn.isEnabled()
         else:
             assert not btn.isEnabled(), key
-    # Status overlay: locked order 狀態→資金→糧食→人口→回合→格數→分數; no connection mode.
+    # Status overlay: odometer strip; order 狀態→資金→糧食→人口→回合→格數→分數.
+    from hakoniwa.odometer import HakoniwaStatusBar
+
+    assert isinstance(dlg.stats, HakoniwaStatusBar)
     st = dlg.stats.text()
     assert "資金" in st and "糧食" in st and "人口" in st
     assert "回合" in st and "格數" in st and "分數" in st
@@ -2679,28 +2830,64 @@ def test_dialog_import_offscreen():
     i_turn, i_cells = st.index("回合"), st.index("格數")
     i_score = st.index("分數")
     assert i_status < i_funds < i_food < i_pop < i_turn < i_cells < i_score, st
-    # Status HUD is a single horizontal line (no wrap / multi-line).
+    # Status HUD is a single horizontal line (no wrap); frameless over map.
     assert dlg.stats.wordWrap() is False
     assert "\n" not in st
+    sheet = dlg.hud.styleSheet()
+    assert "border: none" in sheet or "border:none" in sheet.replace(" ", "")
+    # Green status box removed — strip background must be transparent.
+    assert "QWidget#hakoniwaHudStatus" in sheet
+    status_block = sheet.split("QWidget#hakoniwaHudStatus")[1].split("}")[0]
+    assert "transparent" in status_block, status_block
     dlg.show()
     dlg.resize(960, 780)
     dlg._refresh_ui()
     app.processEvents()
-    # After show: tools button still bottom-left without needing a click.
-    btn_geo = dlg.hud.tools_btn.geometry()
+    # After show: icon bar still bottom-left without needing a click.
+    btn_geo = dlg.hud.icon_bar.geometry()
     assert btn_geo.y() >= dlg.hud.height() - btn_geo.height() - 24, (
         btn_geo,
         dlg.hud.size(),
     )
     status_h = dlg.stats.height()
     line_h = dlg.stats.fontMetrics().height()
-    assert status_h <= line_h + 16, (status_h, line_h, dlg.stats.text())
-    # Opening tools drawer exposes build toolbar + server settings.
+
+    # Digit cells + padding stay roughly one text line tall.
+    assert status_h <= line_h + 24, (status_h, line_h, dlg.stats.text())
+
+    # 建築 icon opens build toolbar; 設定 opens server settings separately.
     # Use isHidden() — isVisible() is false while the dialog itself is not shown.
     dlg.hud.tools_btn.setChecked(True)
     assert not dlg.hud.tools_drawer.isHidden()
+    assert dlg.hud.settings_drawer.isHidden()
     dlg.hud.tools_btn.setChecked(False)
     assert dlg.hud.tools_drawer.isHidden()
+    dlg.hud.icon_bar.button("settings").setChecked(True)
+    assert not dlg.hud.settings_drawer.isHidden()
+    dlg.hud.icon_bar.button("settings").setChecked(False)
+    # 留言 toggles guestbook (starts closed).
+    dlg.hud.icon_bar.button("guestbook").setChecked(True)
+    assert not dlg.hud.guestbook_frame.isHidden()
+    dlg.hud.icon_bar.button("guestbook").setChecked(False)
+    assert dlg.hud.guestbook_frame.isHidden()
+
+
+    # 通知 toggles 格資訊 + 日誌 + 走馬燈 in sync (marquee needs alerts).
+    dlg.hud.set_sample_alerts()
+    assert dlg.hud.alert_marquee.has_alerts()
+    assert not dlg.hud.alert_marquee.isHidden()
+    dlg.hud.icon_bar.button("notify").setChecked(False)
+    assert dlg.hud.sel_label.isHidden()
+    assert dlg.hud.log_view.isHidden()
+    assert dlg.hud.alert_marquee.isHidden()
+    dlg.hud.icon_bar.button("notify").setChecked(True)
+    assert not dlg.hud.sel_label.isHidden()
+    assert not dlg.hud.log_view.isHidden()
+    assert not dlg.hud.alert_marquee.isHidden()
+    # Clear alerts → marquee hides even with chrome on.
+    dlg.hud.set_alerts([])
+    assert dlg.hud.alert_marquee.isHidden()
+
 
     # Select a buildable grass cell → farm/factory enable.
     land = [(i, j) for i in range(20) for j in range(20) if dlg.state.is_land(i, j)]
@@ -2753,7 +2940,10 @@ def test_dialog_import_offscreen():
     assert tour.guestbook_view is not None
     assert hasattr(tour.map, "zoom_by")
     assert tour.guestbook_view.parent() is tour.hud.guestbook_frame
-    assert not tour.hud.tools_btn.isVisible()
+    assert tour.hud.tools_btn.isHidden()
+    assert tour.hud.guestbook_frame.isHidden()
+    tour.hud.icon_bar.button("guestbook").setChecked(True)
+    assert not tour.hud.guestbook_frame.isHidden()
     tour.state.add_comment("Tourist", "nice pines")
     tour._show_guestbook(tour.state.list_comments())
     assert "Tourist" in tour.guestbook_view.toPlainText()
@@ -2764,7 +2954,7 @@ def test_dialog_import_offscreen():
 
 
 def _write_ui_overlay_proof(dlg) -> None:
-    """Grab map HUD proving status/tile/log/guestbook/tools live on the map."""
+    """Grab map HUD proving status/tile/log/icon-bar/tools live on the map."""
     from PySide6.QtWidgets import QApplication
 
     out_dir = Path(__file__).resolve().parents[1] / "hakoniwa" / "testdata"
@@ -2772,7 +2962,7 @@ def _write_ui_overlay_proof(dlg) -> None:
 
     dlg.resize(960, 780)
     dlg.show()
-    dlg.hud.tools_btn.setChecked(False)
+    dlg.hud.close_bottom_panels()
     dlg._refresh_ui()
     app = QApplication.instance()
     if app is not None:
@@ -3352,6 +3542,45 @@ def _write_foreshorten_proof_png(path: Path) -> None:
     print(f"oblique proof: wrote {path} (params y_scale={OBLIQUE_Y_SCALE:.6f})")
 
 
+def test_odometer_status_seen_skip():
+    """Open-island roll only when persisted turn advances; same-turn skips."""
+    import os
+    import tempfile
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from hakoniwa.odometer import (
+        format_grouped,
+        load_status_seen,
+        save_status_seen,
+        snapshot_from_state,
+    )
+    from hakoniwa.model import IslandState
+
+    assert format_grouped(12480) == "12,480"
+    app = QApplication.instance() or QApplication([])
+    del app
+    state = IslandState.new_game()
+    snap = snapshot_from_state(state)
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "hakoniwa_status_seen.json"
+        save_status_seen(path, snap)
+        again = load_status_seen(path)
+        assert again is not None
+        assert again["turn"] == snap["turn"]
+        assert again["funds"] == snap["funds"]
+        # Same turn → skip roll.
+        assert again["turn"] == state.turn
+        # Advance turn snapshot → would roll on next open.
+        advanced = dict(snap)
+        advanced["turn"] = snap["turn"] + 1
+        advanced["funds"] = snap["funds"] + 50
+        save_status_seen(path, advanced)
+        seen2 = load_status_seen(path)
+        assert seen2 is not None and seen2["turn"] != state.turn
+
+
 def main():
     test_grid_geometry()
     test_oblique_foreshortening_invariant()
@@ -3364,6 +3593,7 @@ def main():
     test_settlements_and_disasters()
     test_monster_events()
     test_defense_and_missile_base()
+    test_decoy_and_tourism_camouflage()
     test_harbor_shipyard_trade()
     test_monument_and_island_score()
     test_mountain_quarry_labor()
@@ -3380,6 +3610,7 @@ def main():
     test_save_load_roundtrip()
     test_remote_url_normalize()
     test_tool_enabled_rules()
+    test_odometer_status_seen_skip()
     test_dialog_import_offscreen()
     test_oblique_preview_png_if_possible()
     test_server_api_if_available()

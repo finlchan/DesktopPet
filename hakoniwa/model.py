@@ -17,7 +17,9 @@ buildings (spawn/stomp/missile stubs), 港灣／造船所／貿易輸出（臨�
 大學／研究所色塊＋輕量研究 buff（變體：下一科技折扣／減災；費用估算見常數）,
 養殖場色塊（變體：淺灘產糧）／遊樂園色塊（變體：依人口觀光收入）／
 發電廠色塊（SE 電力 stub：被動產資＋工場供電加產）,
-海底基地色塊（定本：深海飛彈基地；觀光偽裝成海）.
+
+海底基地色塊（定本：深海飛彈基地；觀光偽裝成海）＋紙糊假設施（ハリボテ）＋觀光偽裝（飛彈基地→森；紙糊→防衛）.
+
 Color-block placeholders only — user art later.
 """
 
@@ -53,6 +55,7 @@ COST_MISSILE = 20       # ミサイル発射 stub（定本 20 億／發；無基
 COST_MISSILE_CHEAP = 10 # 有飛彈基地時較便宜
 COST_MISSILE_BASE = 300 # ミサイル基地（定本 300 億）
 COST_DEFENSE = 1000     # 防衛施設（定本 1000 億）
+COST_DECOY = 1          # ハリボテ／紙糊假設施（定本 1 億；外觀像防衛、無實防、易毀）
 COST_HARBOR = 800       # 港灣（變體／改造常見 800 億；須臨海）
 COST_SHIPYARD = 500     # 造船所（變體常見 500 億；須臨海）
 COST_BREAKWATER = 200   # 防波堤（變體／防災；臨海；減海嘯）
@@ -144,7 +147,10 @@ PLACEABLE_BUILDINGS = frozenset(
         "aquafarm",
         "amusement_park",
         "power_plant",
+
         "undersea_base",
+        "decoy",
+
     }
 )
 COASTAL_BUILDINGS = frozenset({"harbor", "shipyard", "breakwater"})
@@ -173,7 +179,10 @@ SCORE_PER_BREAKWATER = 50
 SCORE_PER_OILFIELD = 120
 SCORE_PER_DEFENSE = 40
 SCORE_PER_MISSILE_BASE = 30
+
 SCORE_PER_UNDERSEA_BASE = 500  # 深海軍事：遠高於陸上飛彈基地（費用 8000）
+SCORE_PER_DECOY = 5  # 紙糊：嚇阻用，分數極低（遠低於真防衛）
+
 SCORE_PER_BANK = 90
 SCORE_PER_SUPERMARKET = 40
 SCORE_PER_SHRINE = 800
@@ -308,11 +317,18 @@ BUILDINGS = {
     # 軍事色塊佔位（定本費用；美術後補）
     "defense": {"label": "防衛設施", "color": (48, 88, 160), "cost": COST_DEFENSE},
     "missile_base": {"label": "飛彈基地", "color": (160, 72, 48), "cost": COST_MISSILE_BASE},
+
     # 深海軍事色塊：略深藍於海面，觀光模式隱藏成海.
     "undersea_base": {
         "label": "海底基地",
         "color": (18, 48, 92),
         "cost": COST_UNDERSEA_BASE,
+    },
+    # 紙糊假設施：色調接近防衛（嚇阻）；島主可辨；觀光畫面偽裝成防衛
+    "decoy": {
+        "label": "紙糊假設施",
+        "color": (96, 128, 176),
+        "cost": COST_DECOY,
     },
     # 港灣／造船所／防波堤色塊（臨海；美術後補）
     "harbor": {"label": "港灣", "color": (40, 140, 168), "cost": COST_HARBOR},
@@ -510,7 +526,10 @@ def compute_island_score(
     aquafarms: int = 0,
     amusement_parks: int = 0,
     power_plants: int = 0,
+
     undersea_bases: int = 0,
+    decoys: int = 0,
+
     satellite_active: bool = False,
     bank_deposit: int = 0,
 ) -> int:
@@ -530,7 +549,10 @@ def compute_island_score(
         + max(0, int(oilfields)) * SCORE_PER_OILFIELD
         + max(0, int(defenses)) * SCORE_PER_DEFENSE
         + max(0, int(missile_bases)) * SCORE_PER_MISSILE_BASE
+
         + max(0, int(undersea_bases)) * SCORE_PER_UNDERSEA_BASE
+        + max(0, int(decoys)) * SCORE_PER_DECOY
+
         + max(0, int(banks)) * SCORE_PER_BANK
         + max(0, int(supermarkets)) * SCORE_PER_SUPERMARKET
         + max(0, int(shrines)) * SCORE_PER_SHRINE
@@ -935,21 +957,27 @@ class IslandState:
             aquafarms=self.aquafarm_count(),
             amusement_parks=self.amusement_park_count(),
             power_plants=self.power_plant_count(),
+            decoys=self.building_count("decoy"),
             satellite_active=self.has_satellite(),
             bank_deposit=self.bank_deposit,
         )
 
     def tourist_appearance(self, i: int, j: int) -> Tuple[str, Optional[str]]:
-        """觀光者所見：飛彈基地→森；海底基地→海（定本 §4.2）.
 
-        Owner / developer view keeps the true cell. Decoy camouflage is a
-        separate open PR; this ships the undersea / missile-base pair.
+        """觀光者所見：飛彈基地→森；海底基地→海；紙糊假設施→防衛（定本 §4.2）.
+
+        Catalog §4.2. Owner / developer view keeps the true cell.
+
         """
         c = self.cell(i, j)
         if c.building == "missile_base":
             return "forest", None
+
         if c.building == "undersea_base":
             return "sea", None
+        if c.building == "decoy":
+            return c.terrain, "defense"
+
         return c.terrain, c.building
 
     def happiness_bonus(self) -> int:
@@ -1051,6 +1079,9 @@ class IslandState:
         if self.monster_at(i, j) is not None:
             return "此格有怪獸，無法建設"
         c = self.cell(i, j)
+        # Catalog: 防衛再建設＝自爆清怪（周圍 DEFENSE_RADIUS）.
+        if kind == "defense" and c.building == "defense":
+            return self.detonate_defense(i, j)
         if c.building is not None:
             return "此格已有建築（請先移除或整地）"
         if kind in MOUNTAIN_ONLY_BUILDINGS:
@@ -1074,6 +1105,29 @@ class IslandState:
         c.building = kind
         label = BUILDINGS[kind]["label"]
         self._log(f"回合 {self.turn}：在 ({i},{j}) 建設{label}（−{cost} 資金）")
+        return "ok"
+
+    def detonate_defense(self, i: int, j: int) -> str:
+        """防衛設施再建設＝自爆：清周圍怪獸；設施自身銷毀（定本）."""
+        c = self.cell(i, j)
+        if c.building != "defense":
+            return "此格沒有防衛設施可自爆"
+        if self.funds < COST_DEFENSE:
+            return f"資金不足（防衛自爆需要 {COST_DEFENSE}）"
+        self.funds -= COST_DEFENSE
+        c.building = None
+        cleared: List[str] = []
+        for ni, nj in self.cells_within(i, j, DEFENSE_RADIUS):
+            m = self.monster_at(ni, nj)
+            if m is None:
+                continue
+            self.monsters = [x for x in self.monsters if x is not m]
+            cleared.append(f"{m.label()}({ni},{nj})")
+        detail = f"；清除怪獸：{'、'.join(cleared)}" if cleared else "；周圍無怪獸"
+        self._log(
+            f"回合 {self.turn}：防衛設施自爆 ({i},{j})"
+            f"（−{COST_DEFENSE} 資金）{detail}"
+        )
         return "ok"
 
     def can_excavate(self, i: int, j: int) -> bool:
@@ -1403,11 +1457,13 @@ class IslandState:
         """飛彈 stub：對選格發射；有飛彈基地則較便宜。命中怪獸則擊破。
 
         防衛設施周圍：落空飛彈的「附帶傷害」無效（本機無落空毀陸時僅記 log）。
+        紙糊假設施易毀：著彈格有紙糊則拆除（真防衛不受直擊拆除）。
         """
         cost = self.missile_cost()
         if self.funds < cost:
             return f"資金不足（飛彈需要 {cost}）"
         self.funds -= cost
+
         if self.undersea_base_count() > 0 and self.building_count("missile_base") > 0:
             base_note = "（有飛彈／海底基地）"
         elif self.undersea_base_count() > 0:
@@ -1416,8 +1472,19 @@ class IslandState:
             base_note = "（有飛彈基地）"
         else:
             base_note = ""
+        c = self.cell(i, j)
+        decoy_hit = c.building == "decoy"
+        if decoy_hit:
+            c.building = None
+
         m = self.monster_at(i, j)
         if m is None:
+            if decoy_hit:
+                self._log(
+                    f"回合 {self.turn}：飛彈拆毀紙糊假設施 ({i},{j}){base_note}"
+                    f"（−{cost} 資金）"
+                )
+                return "ok"
             # Miss stub: near defense → no collateral (missile damage nullified).
             if self.protected_by_defense(i, j):
                 self._log(
@@ -1521,6 +1588,17 @@ class IslandState:
             self.monsters = [x for x in self.monsters if x is not monster]
             notes.append(
                 f"{monster.label()}踩到防衛設施！自爆清除 ({i},{j})"
+            )
+            return notes
+
+        # 紙糊假設施：踩毀但不自爆清怪（嚇阻無效）.
+        if c.building == "decoy":
+            c.building = None
+            if c.terrain in LAND_TERRAINS and c.terrain != "dirt":
+                c.terrain = "dirt"
+            c.trees = 0
+            notes.append(
+                f"{monster.label()}踩穿紙糊假設施 ({i},{j}) — 毫無防衛效果"
             )
             return notes
 
@@ -1680,15 +1758,23 @@ class IslandState:
         if self.has_research_lab():
             notes.append("研究所減災中（地震／海嘯／噴火）")
 
-        # Fire: 町／都市／工場 → 荒地（鄰森／紀念碑則不易發生；衛星不減火）
+        # Fire: 町／都市／工場／紙糊 → 荒地（鄰森／紀念碑則不易發生；紙糊易燃無減免；衛星不減火）
         for i in range(self.size):
             for j in range(self.size):
                 c = self.cell(i, j)
-                flammable = c.terrain in ("town", "city") or c.building == "factory"
+                is_decoy = c.building == "decoy"
+                flammable = (
+                    c.terrain in ("town", "city")
+                    or c.building == "factory"
+                    or is_decoy
+                )
                 if not flammable:
                     continue
                 chance = FIRE_BASE_CHANCE
-                if self._has_forest_neighbor(i, j):
+                if is_decoy:
+                    # 紙糊易毀：提高著火率且不受鄰森減免.
+                    chance = min(1.0, FIRE_BASE_CHANCE * 3.0)
+                elif self._has_forest_neighbor(i, j):
                     chance *= FOREST_FIRE_FACTOR
                 if random.random() >= chance:
                     continue

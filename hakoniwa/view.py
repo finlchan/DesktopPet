@@ -57,9 +57,9 @@ class HakoniwaMapWidget(QWidget):
 
     cell_clicked = Signal(int, int)
 
-    def __init__(
-        self, state: IslandState, parent=None, *, tourist_mode: bool = False
-    ):
+
+    def __init__(self, state: IslandState, parent=None, *, tourist_mode: bool = False):
+
         super().__init__(parent)
         self.state = state
         self.tourist_mode = bool(tourist_mode)
@@ -75,7 +75,9 @@ class HakoniwaMapWidget(QWidget):
         self.setCursor(Qt.CursorShape.CrossCursor)
         tip = "滾輪縮放 · 中鍵／右鍵拖曳平移 · 左鍵選格"
         if self.tourist_mode:
-            tip += "（觀光偽裝：飛彈基地→森、海底基地→海）"
+
+            tip += "（觀光偽裝：飛彈基地→森、海底基地→海、紙糊→防衛）"
+
         self.setToolTip(tip)
         self._recompute_origin()
 
@@ -237,7 +239,9 @@ class HakoniwaMapWidget(QWidget):
             # Align by **alpha content AABB** (not PNG canvas): content left↔right
             # = diamond W↔E (full cell W), content bottom = S tip; top may rise
             # above N. No diamond clip (terrain tops stay clipped above).
-            # Tourism mode uses camouflaged building key (may be None).
+
+            # Tourism camouflage may swap / hide the painted building key.
+
             if paint_building and paint_building in BUILDINGS:
                 bpix = self._atlas.building_pixmap(paint_building)
                 if bpix is not None and not bpix.isNull():

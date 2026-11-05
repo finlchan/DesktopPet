@@ -35,7 +35,11 @@ not a flat top-down square grid rotated 45°.
 | Aquafarm | 養殖場 300（**淺灘**色塊；目錄「淺灘產糧」變體）；被動產糧 30／回合（無勞動） |
 | Amusement park | 遊樂園 1300（平地色塊；目錄費用 `?` → 介於賭場與空港）；島分數／安穩＋5／觀光收入（依人口加碼，高於賭場） |
 | Power plant | 發電廠 650（平地色塊；SE 電力 stub）；被動產資 15／回合；有電時工場產出 ×1.2 |
+
 | Undersea base | 海底基地 8000（**深海**色塊；定本同飛彈基地）；飛彈優惠；觀光偽裝成海；陸上飛彈基地觀光偽裝成森 |
+| Decoy | 紙糊假設施 1（平地色塊；定本ハリボテ）；外觀像防衛、無實防、易毀；觀光顯示為防衛 |
+| Camouflage | 觀光偽裝：飛彈基地→森；海底基地→海；紙糊→防衛（島主畫面仍見真貌）；防衛再建設＝自爆清周圍怪 |
+
 | Attract | 誘致活動 1000（定本；不耗回合）；下回合餵飽時額外人口；有空港再加 inbound |
 | Forbidden | Orthographic-only / pure `rotate(45°)` (equal diamond W/H on screen) |
 | No | Under-tile thickness / skirts |
@@ -50,12 +54,21 @@ All numeric / function chrome sits **inside the map viewport** (`HakoniwaMapHud`
 | Overlay | Position | Notes |
 |---|---|---|
 | Status | Top center | **Single line**; order 狀態→資金→糧食→人口→回合→格數→分數; no connection mode |
-| Tile info | Top-left | Below status |
-| Action log | Bottom-right | ~70% transparent frame |
-| Guestbook | Bottom center | ~70% transparent frame |
-| Tools / settings | Bottom-left button → drawer | Build toolbar + server connection |
 
-No permanent right-side build column. Server URL / 本機·連線 live under tools → settings.
+| Alert marquee | Under status | 警報走馬燈; shown when 通知 chrome on **and** alerts queued |
+| Tile info | Top-left | Below status／marquee; 資訊 icon or 通知 chrome (open by default) |
+| Action log | Bottom-right | ~70% transparent; part of 通知 chrome |
+
+| Guestbook | Bottom center | ~70% transparent; **closed by default**; open via 留言 icon |
+| Icon bar | Bottom-left | 通知／建築／資訊／留言／設定 — hover micro-animations |
+| Build drawer | Above icon bar | 建築 icon → build toolbar |
+| Settings drawer | Above icon bar | 設定 icon → server connection |
+
+
+「通知」toggles status chrome in sync: 格資訊 + 行動日誌 + 警報走馬燈（無警報時走馬燈保持隱藏）。
+
+
+No permanent right-side build column. Server URL / 本機·連線 live under 設定.
 
 ## User-provided art (optional)
 
@@ -79,7 +92,9 @@ portrait subjects:
 |---|---|
 | Terrain | `sea.png` `shallow.png` `oilfield.png` `dirt.png` `grass.png` `forest.png` `mountain.png` `village.png` `town.png` `city.png` |
 | Backdrop | `ocean-background.png` |
-| Buildings | `farm.png` `factory.png` `quarry.png` `defense.png` `missile_base.png` `undersea_base.png` `harbor.png` `shipyard.png` `breakwater.png` `monument.png` `bank.png` `supermarket.png` `shrine.png` `park.png` `airport.png` `rocket_base.png` `hotel.png` `casino.png` `university.png` `research_lab.png` `aquafarm.png` `amusement_park.png` `power_plant.png` |
+
+| Buildings | `farm.png` `factory.png` `quarry.png` `defense.png` `missile_base.png` `undersea_base.png` `decoy.png` `harbor.png` `shipyard.png` `breakwater.png` `monument.png` `bank.png` `supermarket.png` `shrine.png` `park.png` `airport.png` `rocket_base.png` `hotel.png` `casino.png` `university.png` `research_lab.png` `aquafarm.png` `amusement_park.png` `power_plant.png` |
+
 | Monsters | `inora.png` |
 
 Fallback when a file is absent: buildings／monsters → solid color; terrain → bundled
