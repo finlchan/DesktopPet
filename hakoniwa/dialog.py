@@ -13,7 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from PySide6.QtCore import Qt, QEvent
+from PySide6.QtCore import Qt, QEvent, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut, QResizeEvent, QShowEvent
 from PySide6.QtWidgets import (
     QDialog,
@@ -87,6 +87,13 @@ from .model import (
     TERRAIN,
     IslandState,
 )
+from .odometer import (
+    HakoniwaStatusBar,
+    load_status_seen,
+    save_status_seen,
+    snapshot_from_state,
+    status_seen_path,
+)
 from .remote import HakoniwaRemote, HakoniwaRemoteError, try_connect
 from .save import default_save_path, load_island, save_island
 from .tiles import ATLAS
@@ -98,14 +105,23 @@ _OVERLAY_BG = "rgba(12, 28, 18, 77)"
 _OVERLAY_BORDER = "rgba(150, 200, 150, 130)"
 
 # In-map HUD styles (status / tile / log / guestbook / tools).
+# Status strip: fully frameless over the map (no green box); digit cells
+# carry their own dark fill in odometer.DigitReel.
 HAKONIWA_HUD_STYLE = f"""
-QLabel#hakoniwaHudStatus {{
-    background-color: rgba(18, 42, 26, 210);
-    color: #e4f5e4;
-    border: 1px solid rgba(90, 150, 90, 200);
-    border-radius: 3px;
-    padding: 3px 10px;
-    /* Single-line status strip — do not wrap stats. */
+QWidget#hakoniwaHudStatus {{
+    background: transparent;
+    background-color: transparent;
+    color: #ffffff;
+    border: none;
+    padding: 2px 4px;
+    font-weight: bold;
+    /* Frameless odometer strip floating on the map. */
+}}
+QLabel#hakoniwaHudStatusPlain {{
+    background: transparent;
+    color: #ffffff;
+    border: none;
+    font-weight: bold;
 }}
 QLabel#hakoniwaHudTile {{
     background-color: rgba(16, 40, 28, 170);
@@ -181,8 +197,8 @@ class HakoniwaMapHud(QWidget):
         self.map.setParent(self)
         self.map.lower()
 
-        self.stats = QLabel(self)
-        self.stats.setObjectName("hakoniwaHudStatus")
+        # Odometer status strip (狀態 text + digit reels); no frame; bold.
+        self.stats = HakoniwaStatusBar(self)
         # User-locked: status HUD is one horizontal line (no wrap).
         self.stats.setWordWrap(False)
         self.stats.setAlignment(
@@ -305,11 +321,12 @@ class HakoniwaMapHud(QWidget):
         self.map.lower()
 
         margin = 8
-        # Status — top center, single horizontal line (no wrap / multi-line).
+        # Status — top center, single horizontal line (odometer strip; no wrap).
         fm = self.stats.fontMetrics()
+        hint = self.stats.sizeHint()
         text = self.stats.text() or ""
-        text_w = fm.horizontalAdvance(text) + 24
-        status_h = max(fm.height() + 10, 26)
+        text_w = max(hint.width(), fm.horizontalAdvance(text) + 24)
+        status_h = max(hint.height(), fm.height() + 10, 26)
         status_w = min(max(text_w, 200), w - 2 * margin)
         self.stats.setGeometry((w - status_w) // 2, margin, status_w, status_h)
 
@@ -605,12 +622,23 @@ class HakoniwaIslandDialog(QDialog):
         self.setStyleSheet(dp.CALC_DIALOG_STYLE + getattr(dp, "MINI_PROGRAM_STYLE", ""))
 
         self._save_path = self._resolve_save_path()
+        self._status_seen_path = status_seen_path(self._save_path)
         # Optional user PNGs: Data/hakoniwa/user/ (beside save) then assets/user/.
         configure_user_art(self._save_path.parent.parent)
         ATLAS.invalidate_user_cache()
         loaded = load_island(self._save_path)
         self.state = loaded if loaded is not None else IslandState.new_game()
         self.selected = None
+        # Open-island odometer roll: only when persisted turn snapshot advanced.
+        self._pending_open_roll: Optional[Tuple[Dict[str, int], Dict[str, int]]] = None
+        self._open_roll_armed = False
+        seen = load_status_seen(self._status_seen_path)
+        current = snapshot_from_state(self.state)
+        if seen is not None and int(seen.get("turn", -1)) != int(current["turn"]):
+            self._pending_open_roll = (seen, current)
+        else:
+            # Same turn (or first visit): show current; do not replay the roll.
+            save_status_seen(self._status_seen_path, current)
 
         root = dp.install_ornate_calc_frame(self)
         root.setSpacing(4)
@@ -943,24 +971,50 @@ class HakoniwaIslandDialog(QDialog):
         self.guest_text.clear()
         self._refresh_ui()
 
+    def showEvent(self, event: QShowEvent) -> None:  # noqa: N802
+        super().showEvent(event)
+        # Arm open-island odometer roll once the window is on screen.
+        if self._pending_open_roll is not None and not self._open_roll_armed:
+            self._open_roll_armed = True
+            frm, to = self._pending_open_roll
+            self._pending_open_roll = None
+            monster_bit = self._monster_status_suffix()
+            self.stats.set_values(frm, animate=False, suffix=monster_bit)
+            # Persist *current* snapshot immediately so a same-turn re-open
+            # does not replay the roll even if the animation is still running.
+            save_status_seen(self._status_seen_path, to)
+            QTimer.singleShot(
+                40,
+                lambda: self.stats.set_values(
+                    to, animate=True, suffix=self._monster_status_suffix()
+                ),
+            )
+            if hasattr(self, "hud"):
+                self.hud._layout_overlays()
+
+    def _monster_status_suffix(self) -> str:
+        if not self.state.monsters:
+            return ""
+        m = self.state.monsters[0]
+        return f" | 怪獸 {m.label()}({m.i},{m.j})"
+
     def _refresh_ui(self) -> None:
         s = self.state
-        # Status overlay: funds / food / turn / land / pop / monster.
+        # Status overlay: funds / food / turn / land / pop / score / monster.
         # Server mode ([本機]/連線) lives in tools → settings, not here.
-        monster_bit = ""
-        if s.monsters:
-            m = s.monsters[0]
-            monster_bit = f" | 怪獸 {m.label()}({m.i},{m.j})"
-        # One line, locked order: 狀態 → 資金 → 糧食 → 人口 → 回合 → 格數；分數附於格數後.
-        # 銀行存款附在資金欄內（不另開欄位，以免打亂順序）.
-        funds_bit = f"資金 {s.funds}"
-        if s.bank_deposit > 0:
-            funds_bit += f"（存{s.bank_deposit}）"
-        self.stats.setText(
-            f"狀態 | {funds_bit} | 糧食 {s.food} | "
-            f"人口 {s.population} | 回合 {s.turn} | "
-            f"格數 {s.land_count()} | 分數 {s.island_score()}{monster_bit}"
-        )
+        # Order locked: 狀態 | 資金[odo] | 糧食 | 人口 | 回合 | 格數 | 分數.
+        monster_bit = self._monster_status_suffix()
+        current = snapshot_from_state(s)
+        # While a pending open-roll is waiting for showEvent, park digits on the
+        # previous snapshot so the roll is visible; otherwise update live.
+        if self._pending_open_roll is not None:
+            frm, _to = self._pending_open_roll
+            self.stats.set_values(frm, animate=False, suffix=monster_bit)
+        else:
+            # Mid-session: short reel when visible; snap while hidden (tests).
+            animate = self.isVisible()
+            self.stats.set_values(current, animate=animate, suffix=monster_bit)
+            save_status_seen(self._status_seen_path, current)
         self.log_view.setPlainText("\n".join(s.log[-30:]))
         bar = self.log_view.verticalScrollBar()
         bar.setValue(bar.maximum())
