@@ -531,18 +531,53 @@ AOUT_HEADERS = (
     "CHAINAGE",
     "EASTING",
     "NORTHING",
+    "LEVEL",
     "LHS_EASTING_OFFSET",
     "LHS_NORTHING_OFFSET",
+    "LHS_LEVEL_OFFSET",
     "RHS_EASTING_OFFSET",
     "RHS_NORTHING_OFFSET",
+    "RHS_LEVEL_OFFSET",
 )
 
 
 def densify_aout_rows(
-    horiz: Sequence[HorizSeg], *, step: float = 1.0
+    horiz: Sequence[HorizSeg],
+    verts: Sequence[VertSeg],
+    cross: Optional[Sequence[CrossSeg]] = None,
+    *,
+    step: float = 1.0,
 ) -> List[Dict[str, float]]:
-    """OSCH2_AOut rows from horizontal geometry at the given sampling step."""
-    return densify_horizontal(horiz, step=step)
+    """
+    OSCH2_AOut rows: horizontal densify + centreline LEVEL + LHS/RHS levels.
+
+    ``*_OFFSET`` columns follow the macro naming quirk and store absolute
+    edge E/N/Lv (LHS/RHS level = centreline ± crossfall × width).
+    Rows without a vertical level are skipped.
+    """
+    dens = densify_horizontal(horiz, step=step)
+    xf = list(cross or [])
+    out: List[Dict[str, float]] = []
+    for pt in dens:
+        lv = vertical_level_at(verts, pt["chainage"])
+        if lv is None:
+            continue
+        level = float(lv)
+        if xf:
+            lcf, rcf, llen, rlen = crossfall_at(xf, pt["chainage"])
+            lhs_lv = level + (lcf / 100.0) * llen
+            rhs_lv = level + (rcf / 100.0) * rlen
+        else:
+            lhs_lv = level
+            rhs_lv = level
+        row = dict(pt)
+        row["level"] = level
+        row["lhs_level"] = float(lhs_lv)
+        row["rhs_level"] = float(rhs_lv)
+        out.append(row)
+    if not out:
+        raise ValueError("No densified AOut points with levels")
+    return out
 
 
 def write_aout_workbook(path: str | Path, dens_rows: Sequence[Dict[str, float]]) -> None:
@@ -561,10 +596,13 @@ def write_aout_workbook(path: str | Path, dens_rows: Sequence[Dict[str, float]])
                 float(pt["chainage"]),
                 float(pt["easting"]),
                 float(pt["northing"]),
+                float(pt["level"]),
                 float(pt["lhs_easting"]),
                 float(pt["lhs_northing"]),
+                float(pt["lhs_level"]),
                 float(pt["rhs_easting"]),
                 float(pt["rhs_northing"]),
+                float(pt["rhs_level"]),
             ]
         )
     Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -597,7 +635,7 @@ def parse_alignment2_workbook(
     horiz = parse_horizontal_rows(h_rows)
     verts = parse_vertical_rows(v_rows)
     cross = parse_crossfall_rows(c_rows) if c_rows else []
-    aout = densify_aout_rows(horiz, step=step)
+    aout = densify_aout_rows(horiz, verts, cross, step=step)
     points = build_design_points(horiz, verts, step=step)
     return {
         "horizontal": horiz,
@@ -625,7 +663,7 @@ def rebuild_design(
     """Re-densify imported geometry at a new sampling interval."""
     if step <= 0:
         raise ValueError("step must be > 0")
-    aout = densify_aout_rows(horiz, step=step)
+    aout = densify_aout_rows(horiz, verts, cross, step=step)
     points = build_design_points(horiz, verts, step=step)
     return {
         "horizontal": list(horiz),
