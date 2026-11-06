@@ -59,7 +59,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261106.04"
+APP_VERSION = "261106.05"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -2170,7 +2170,8 @@ def alignment_deviation(points, easting, northing, level):
     Returns dict:
       chainage, easting, northing, level (design),
       d_easting, d_northing, d_level (observed − design),
-      offset_plan (plan distance to design point).
+      offset (signed plan offset; left negative / right positive),
+      offset_plan (absolute plan distance).
     Level on the design point is interpolated with the same segment
     parameter t used for E/N.
     """
@@ -2180,6 +2181,7 @@ def alignment_deviation(points, easting, northing, level):
     n = float(northing)
     lv = float(level)
 
+    # cand = (dist2, ch, qx, qy, qlv, seg_de, seg_dn)
     best = None
     for i in range(len(points) - 1):
         a, b = points[i], points[i + 1]
@@ -2188,19 +2190,31 @@ def alignment_deviation(points, easting, northing, level):
         )
         ch = _lerp(a[0], b[0], t)
         qlv = _lerp(a[3], b[3], t)
-        cand = (dist2, ch, qx, qy, qlv)
+        cand = (dist2, ch, qx, qy, qlv, b[1] - a[1], b[2] - a[2])
         if best is None or cand[0] < best[0]:
             best = cand
 
     # Also consider exact vertices (covers zero-length edge cases).
-    for pt in points:
+    for i, pt in enumerate(points):
         dx, dy = e - pt[1], n - pt[2]
         dist2 = dx * dx + dy * dy
-        cand = (dist2, pt[0], pt[1], pt[2], pt[3])
+        if i + 1 < len(points):
+            seg_de = points[i + 1][1] - pt[1]
+            seg_dn = points[i + 1][2] - pt[2]
+        elif i > 0:
+            seg_de = pt[1] - points[i - 1][1]
+            seg_dn = pt[2] - points[i - 1][2]
+        else:
+            seg_de, seg_dn = 0.0, 0.0
+        cand = (dist2, pt[0], pt[1], pt[2], pt[3], seg_de, seg_dn)
         if best is None or cand[0] < best[0]:
             best = cand
 
-    dist2, ch, de, dn, dlv = best
+    dist2, ch, de, dn, dlv, seg_de, seg_dn = best
+    dist = math.sqrt(max(0.0, dist2))
+    # Sign via 2D cross in E/N (same convention as Alignment(2) OSCH_SUR).
+    cross = seg_dn * (e - de) - seg_de * (n - dn)
+    offset = -dist if cross < 0.0 else dist
     return {
         "chainage": ch,
         "easting": de,
@@ -2209,16 +2223,30 @@ def alignment_deviation(points, easting, northing, level):
         "d_easting": e - de,
         "d_northing": n - dn,
         "d_level": lv - dlv,
-        "offset_plan": math.sqrt(max(0.0, dist2)),
+        "offset": offset,
+        "offset_plan": dist,
     }
 
 
 # Alignment(1) batch sheet (大量運算) — Input/Output column layout:
-#   Row1 groups: INPUT | OUTPUT | | | INPUT | | | OUTPUT
-#   Row2 fields: chainage | easting | northing | level | easting | northing | level | chainage
-# Left block:  Input chainage → Output E/N/Lv   (alignment_at_chainage)
-# Right block: Input E/N/Lv → Output chainage  (alignment_deviation)
+#   Row1 groups: INPUT | OUTPUT | | | INPUT | | | OUTPUT | |
+#   Row2 fields: chainage | easting | northing | level |
+#                easting | northing | level | chainage | offset | diff level
+# Left:  Input chainage → Output E/N/Lv              (alignment_at_chainage)
+# Right: Input E/N/Lv → Output chainage/offset/ΔLv   (alignment_deviation)
 _ALIGN_BATCH_HEADERS = (
+    "chainage",
+    "easting",
+    "northing",
+    "level",
+    "easting",
+    "northing",
+    "level",
+    "chainage",
+    "offset",
+    "diff level",
+)
+_ALIGN_BATCH_HEADERS_LEGACY = (
     "chainage",
     "easting",
     "northing",
@@ -2238,33 +2266,69 @@ def _align_batch_cell_empty(value):
     return False
 
 
+def _align_batch_field_name(text):
+    raw = str(text or "").strip().lower().replace("_", " ")
+    raw = " ".join(raw.split())
+    aliases = {
+        "chainage": "chainage",
+        "chanage": "chainage",
+        "easting": "easting",
+        "northing": "northing",
+        "level": "level",
+        "offset": "offset",
+        "plan offset": "offset",
+        "offset plan": "offset",
+        "diff level": "diff level",
+        "difflevel": "diff level",
+        "level diff": "diff level",
+        "d level": "diff level",
+        "dlevel": "diff level",
+        "delta level": "diff level",
+    }
+    return aliases.get(raw)
+
+
 def _detect_alignment_batch_layout(ws):
     """
     Locate the Input/Output header pair for an Alignment(1) batch sheet.
 
-    Returns (header_row_1based, data_start_row_1based) or raises ValueError.
+    Returns (group_row_1based, data_start_row_1based, legacy: bool).
+    Legacy sheets only had right Output = chainage (8 cols); upgraded in-place.
     """
     max_scan = min(getattr(ws, "max_row", 0) or 0, 30)
     for r in range(1, max_scan + 1):
         labels = [
             str(ws.cell(r, c).value or "").strip().upper()
-            for c in range(1, 9)
+            for c in range(1, 11)
         ]
         if labels[0] != "INPUT" or labels[1] != "OUTPUT":
             continue
         if labels[4] != "INPUT" or labels[7] != "OUTPUT":
             continue
         fields = [
-            str(ws.cell(r + 1, c).value or "").strip().lower()
-            for c in range(1, 9)
+            _align_batch_field_name(ws.cell(r + 1, c).value)
+            for c in range(1, 11)
         ]
-        if fields != list(_ALIGN_BATCH_HEADERS):
-            continue
-        return r, r + 2
+        if fields == list(_ALIGN_BATCH_HEADERS):
+            return r, r + 2, False
+        # Legacy: right Output was chainage-only (cols A–H).
+        if fields[:8] == list(_ALIGN_BATCH_HEADERS_LEGACY) and all(
+            f is None for f in fields[8:]
+        ):
+            return r, r + 2, True
     raise ValueError(
-        "Batch sheet not recognized. Need row INPUT/OUTPUT groups and "
-        "headers: chainage|easting|northing|level|easting|northing|level|chainage"
+        "Batch sheet not recognized. Need INPUT/OUTPUT groups and headers: "
+        "chainage|easting|northing|level|easting|northing|level|"
+        "chainage|offset|diff level"
     )
+
+
+def _ensure_alignment_batch_delta_headers(ws, group_row):
+    """Write / upgrade right-hand Output headers to chainage|offset|diff level."""
+    field_row = group_row + 1
+    ws.cell(group_row, 8).value = "OUTPUT"
+    for col, name in enumerate(_ALIGN_BATCH_HEADERS, start=1):
+        ws.cell(field_row, col).value = name
 
 
 def load_alignment_batch_workbook(path):
@@ -2280,7 +2344,9 @@ def load_alignment_batch_workbook(path):
         raise ValueError("Batch import supports .xlsx / .xlsm only")
     wb = openpyxl.load_workbook(path)
     ws = wb[wb.sheetnames[0]]
-    _group_row, data_start = _detect_alignment_batch_layout(ws)
+    group_row, data_start, legacy = _detect_alignment_batch_layout(ws)
+    if legacy:
+        _ensure_alignment_batch_delta_headers(ws, group_row)
     return wb, ws, data_start
 
 
@@ -2289,8 +2355,8 @@ def fill_alignment_batch_sheet(ws, points, data_start=3):
     Fill empty Output cells on an Alignment(1) batch sheet.
 
     Left: A chainage → B/C/D easting/northing/level when those are empty.
-    Right: E/F/G easting/northing/level → H chainage when H is empty.
-    Existing Output values are left unchanged. Returns stats dict.
+    Right: E/F/G easting/northing/level → H/I/J chainage/offset/diff level
+    when those are empty. Existing Output values are left unchanged.
     """
     if not points or len(points) < 2:
         raise ValueError("Import a design alignment first (need ≥2 points)")
@@ -2308,6 +2374,8 @@ def fill_alignment_batch_sheet(ws, points, data_start=3):
         n_in = _align_cell_float(ws.cell(r, 6).value)
         lv_in = _align_cell_float(ws.cell(r, 7).value)
         ch_out = ws.cell(r, 8).value
+        off_out = ws.cell(r, 9).value
+        dlv_out = ws.cell(r, 10).value
 
         row_used = False
         if ch_in is not None and all(
@@ -2323,13 +2391,14 @@ def fill_alignment_batch_sheet(ws, points, data_start=3):
             except ValueError:
                 errors += 1
 
-        if (
-            None not in (e_in, n_in, lv_in)
-            and _align_batch_cell_empty(ch_out)
+        if None not in (e_in, n_in, lv_in) and all(
+            _align_batch_cell_empty(v) for v in (ch_out, off_out, dlv_out)
         ):
             try:
                 out = alignment_deviation(points, e_in, n_in, lv_in)
                 ws.cell(r, 8).value = float(out["chainage"])
+                ws.cell(r, 9).value = float(out["offset"])
+                ws.cell(r, 10).value = float(out["d_level"])
                 filled_right += 1
                 row_used = True
             except ValueError:
@@ -4475,7 +4544,7 @@ class AlignmentCalcDialog(FramelessCalcDialog):
         batch_import_btn.setToolTip(
             "Import Alignment(1) batch sheet "
             "(INPUT chainage → OUTPUT E/N/Lv | "
-            "INPUT E/N/Lv → OUTPUT chainage)"
+            "INPUT E/N/Lv → OUTPUT chainage / offset / diff level)"
         )
         batch_import_btn.clicked.connect(self._import_batch_excel)
         batch_row.addWidget(batch_import_btn)
@@ -4700,7 +4769,8 @@ class AlignmentCalcDialog(FramelessCalcDialog):
                 f"ΔN: {out['d_northing']:+.3f}\n"
                 f"◆ Design Lv: {out['level']:.4f}   "
                 f"ΔLv: {out['d_level']:+.4f}\n"
-                f"◆ Plan offset: {out['offset_plan']:.3f} m"
+                f"◆ Offset: {out['offset']:+.3f} m  "
+                f"(plan {out['offset_plan']:.3f} m)"
             )
             self.result2.show()
         except ValueError as exc:
