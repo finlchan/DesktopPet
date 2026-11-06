@@ -14,10 +14,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from PySide6.QtCore import QEvent, QSize, Qt, QTimer
+from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtGui import (
-    QBrush,
-    QColor,
     QKeySequence,
     QResizeEvent,
     QShortcut,
@@ -36,8 +34,6 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QScrollArea,
     QSizePolicy,
-    QTreeWidget,
-    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -55,9 +51,22 @@ from .build_tree import (
     unlock_prereq,
 )
 from .hud_icons import HakoniwaIconBar
-from .list_row_fill import LIST_ROW_HEIGHT, HakoniwaListRowFillItem
+from .list_row_fill import HakoniwaListRowFillItem
 
 from .demos import island_summary, local_demo_islands
+
+
+class _BuildChildButton(QPushButton):
+    """Child building／tool row under a List Row Fill category."""
+
+    activated = Signal()
+
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.activated.emit()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
 from .model import (
     BANK_TRANSFER_LOT,
     BUILDABLE,
@@ -202,42 +211,32 @@ QLineEdit#hakoniwaHudInput {{
     border-radius: 3px;
     padding: 2px 4px;
 }}
-/* Building tree — text only; orange select like icon-bar active. */
-QTreeWidget#hakoniwaBuildTree {{
+/* Building nav — category List Row Fill widgets + child text rows. */
+QScrollArea#hakoniwaBuildNav {{
+    background: transparent;
+    border: none;
+}}
+QWidget#hakoniwaBuildNavBody {{
+    background: transparent;
+}}
+QPushButton#hakoniwaBuildChild {{
     background: transparent;
     color: {_HUD_TEXT};
     border: none;
-    outline: none;
+    text-align: left;
+    padding: 3px 8px 3px 16px;
     font-size: 10pt;
-    show-decoration-selected: 1;
+    min-height: 22px;
 }}
-QTreeWidget#hakoniwaBuildTree::item {{
-    padding: 3px 6px;
-    border-radius: 2px;
-}}
-QTreeWidget#hakoniwaBuildTree::item:selected {{
-    background-color: {_ACCENT_BG};
-    color: #fff8f0;
-}}
-QTreeWidget#hakoniwaBuildTree::item:hover:!selected {{
+QPushButton#hakoniwaBuildChild:hover {{
     background-color: rgba(28, 52, 56, 180);
 }}
-QTreeWidget#hakoniwaBuildTree::item:disabled {{
-    color: rgba(140, 170, 168, 140);
+QPushButton#hakoniwaBuildChild[locked="true"] {{
+    color: rgba(140, 170, 168, 160);
 }}
-QTreeWidget#hakoniwaBuildTree::branch {{
-    background: transparent;
-    border-image: none;
-}}
-QTreeWidget#hakoniwaBuildTree::branch:has-children:!has-siblings:closed,
-QTreeWidget#hakoniwaBuildTree::branch:closed:has-children:has-siblings {{
-    border-image: none;
-    image: none;
-}}
-QTreeWidget#hakoniwaBuildTree::branch:open:has-children:!has-siblings,
-QTreeWidget#hakoniwaBuildTree::branch:open:has-children:has-siblings {{
-    border-image: none;
-    image: none;
+QPushButton#hakoniwaBuildChild[selected="true"] {{
+    background-color: {_ACCENT_BG};
+    color: #fff8f0;
 }}
 QScrollBar:vertical {{
     background: transparent;
@@ -359,24 +358,30 @@ class HakoniwaMapHud(QWidget):
         drawer_outer.setContentsMargins(6, 6, 6, 6)
         drawer_outer.setSpacing(4)
 
-        # Content browse/build: left text tree + right detail (no thumbnails).
+        # Content browse/build: left category List Row Fill nav + right detail.
+        # (Custom scroll list — not QTreeWidget setItemWidget — so number / → /
+        # separators always paint.)
         browse_row = QHBoxLayout()
         browse_row.setContentsMargins(0, 0, 0, 0)
         browse_row.setSpacing(6)
 
-        self.build_tree = QTreeWidget()
-        self.build_tree.setObjectName("hakoniwaBuildTree")
-        self.build_tree.setHeaderHidden(True)
-        # Category rows use List Row Fill widgets (own →); hide stock branch arrows.
-        self.build_tree.setRootIsDecorated(False)
-        self.build_tree.setAnimated(True)
-        self.build_tree.setIndentation(14)
-        self.build_tree.setUniformRowHeights(False)
-        self.build_tree.setHorizontalScrollBarPolicy(
+        self.build_nav = QScrollArea()
+        self.build_nav.setObjectName("hakoniwaBuildNav")
+        self.build_nav.setWidgetResizable(True)
+        self.build_nav.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
-        self.build_tree.setExpandsOnDoubleClick(False)
-        browse_row.addWidget(self.build_tree, stretch=2)
+        self.build_nav.setFrameShape(QFrame.Shape.NoFrame)
+        self.build_nav_body = QWidget()
+        self.build_nav_body.setObjectName("hakoniwaBuildNavBody")
+        self.build_nav_layout = QVBoxLayout(self.build_nav_body)
+        self.build_nav_layout.setContentsMargins(0, 0, 0, 0)
+        self.build_nav_layout.setSpacing(0)
+        self.build_nav_layout.addStretch(1)
+        self.build_nav.setWidget(self.build_nav_body)
+        # Compat alias used by older tests / call sites.
+        self.build_tree = self.build_nav
+        browse_row.addWidget(self.build_nav, stretch=2)
 
         detail = QFrame()
         detail.setObjectName("hakoniwaBuildDetailPane")
@@ -1027,8 +1032,6 @@ class HakoniwaIslandDialog(QDialog):
             self.tool_buttons[key] = btn
 
         self._populate_build_tree()
-        self.hud.build_tree.itemSelectionChanged.connect(self._on_build_tree_sel)
-        self.hud.build_tree.itemDoubleClicked.connect(self._on_build_tree_activate)
         self.hud.build_place_btn.clicked.connect(self._on_build_place_clicked)
 
         tools_lay = self.hud.tools_layout
@@ -1212,77 +1215,106 @@ class HakoniwaIslandDialog(QDialog):
         self.map.zoom_by(factor)
 
     def _populate_build_tree(self) -> None:
-        """Fill the formal catalog category tree (text rows, no thumbnails).
+        """Fill catalog categories with List Row Fill headers + child rows.
 
-        Main categories use List Row Fill hover widgets (number · name · →);
-        children start collapsed.
+        Category rows always show number · name · (→ on hover) and thin
+        separators above/below. Children start collapsed.
         """
-        tree = self.hud.build_tree
-        tree.clear()
-        self._tree_items: Dict[str, QTreeWidgetItem] = {}
+        lay = self.hud.build_nav_layout
+        # Clear previous widgets (keep trailing stretch).
+        while lay.count() > 1:
+            item = lay.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+
+        self._tree_items: Dict[str, QPushButton] = {}
+        self._child_base_labels: Dict[str, str] = {}
         self._category_rows: Dict[str, HakoniwaListRowFillItem] = {}
-        self._category_items: List[QTreeWidgetItem] = []
+        self._category_panels: Dict[str, QWidget] = {}
+        self._category_expanded: Dict[str, bool] = {}
+        self._category_names: List[str] = []
+
         cat_index = 0
         for cat_name, keys in build_tree_categories():
-            cat_item = QTreeWidgetItem([""])  # label drawn by List Row Fill widget
-            cat_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
-            cat_item.setData(0, Qt.ItemDataRole.UserRole, None)
-            cat_item.setData(0, Qt.ItemDataRole.UserRole + 1, cat_name)
-            cat_item.setSizeHint(0, QSize(0, LIST_ROW_HEIGHT))
+            child_specs: List[Tuple[str, str, str]] = []
             for key in keys:
-                # Settlements (if buildings) + all TOOL_SPECS keys in categories.
                 if key in settlement_keys_for_tree():
                     label = display_label(key)
                     digit = ""
-                    name = label
                 elif key in self._tool_spec_by_key:
                     name, _cost, digit = self._tool_spec_by_key[key]
                     label = display_label(key, name)
                 else:
                     continue
-                child = QTreeWidgetItem([label])
-                child.setData(0, Qt.ItemDataRole.UserRole, key)
-                child.setToolTip(
-                    0, f"{label}" + (f" · 快捷鍵 {digit}" if digit else "")
-                )
-                cat_item.addChild(child)
-                self._tree_items[key] = child
-            if cat_item.childCount() == 0:
+                child_specs.append((key, label, digit))
+            if not child_specs:
                 continue
             cat_index += 1
-            tree.addTopLevelItem(cat_item)
-            # Prefs follow-up: child items default collapsed.
-            cat_item.setExpanded(False)
-            row = HakoniwaListRowFillItem(cat_index, cat_name, tree)
+
+            row = HakoniwaListRowFillItem(cat_index, cat_name, self.hud.build_nav_body)
             row.clicked.connect(
-                lambda checked=False, it=cat_item, r=row: self._toggle_build_category(
-                    it, r
-                )
+                lambda checked=False, n=cat_name: self._toggle_build_category(n)
             )
-            tree.setItemWidget(cat_item, 0, row)
+            lay.insertWidget(lay.count() - 1, row)
             self._category_rows[cat_name] = row
-            self._category_items.append(cat_item)
+            self._category_names.append(cat_name)
+            self._category_expanded[cat_name] = False
 
-    def _toggle_build_category(
-        self, item: QTreeWidgetItem, row: HakoniwaListRowFillItem
-    ) -> None:
-        """Expand／collapse a main category from its List Row Fill click."""
-        nxt = not item.isExpanded()
-        item.setExpanded(nxt)
-        row.setExpandedVisual(nxt)
+            panel = QWidget(self.hud.build_nav_body)
+            panel_lay = QVBoxLayout(panel)
+            panel_lay.setContentsMargins(0, 0, 0, 0)
+            panel_lay.setSpacing(0)
+            for key, label, digit in child_specs:
+                btn = _BuildChildButton(label)
+                btn.setObjectName("hakoniwaBuildChild")
+                btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                tip = label + (f" · 快捷鍵 {digit}" if digit else "")
+                btn.setToolTip(tip)
+                btn.setProperty("toolKey", key)
+                btn.setProperty("locked", False)
+                btn.setProperty("selected", False)
+                btn.clicked.connect(
+                    lambda checked=False, k=key: self._on_build_child_clicked(k)
+                )
+                btn.activated.connect(
+                    lambda k=key: self._on_build_child_activate(k)
+                )
+                panel_lay.addWidget(btn)
+                self._tree_items[key] = btn
+                self._child_base_labels[key] = label
+            panel.setVisible(False)  # children default collapsed
+            lay.insertWidget(lay.count() - 1, panel)
+            self._category_panels[cat_name] = panel
 
-    def _on_build_tree_sel(self) -> None:
-        items = self.hud.build_tree.selectedItems()
-        key = None
-        if items:
-            key = items[0].data(0, Qt.ItemDataRole.UserRole)
-        self.hud._build_tree_key = key if isinstance(key, str) else None
+    def _toggle_build_category(self, cat_name: str) -> None:
+        """Expand／collapse children under a List Row Fill category."""
+        panel = self._category_panels.get(cat_name)
+        if panel is None:
+            return
+        nxt = not self._category_expanded.get(cat_name, False)
+        self._category_expanded[cat_name] = nxt
+        panel.setVisible(nxt)
+
+    def is_category_expanded(self, cat_name: str) -> bool:
+        return bool(self._category_expanded.get(cat_name, False))
+
+    def _select_build_child(self, key: str) -> None:
+        """Mark ``key`` selected in the nav and refresh the detail pane."""
+        self.hud._build_tree_key = key
+        for k, btn in self._tree_items.items():
+            on = k == key
+            if btn.property("selected") != on:
+                btn.setProperty("selected", on)
+                btn.style().unpolish(btn)
+                btn.style().polish(btn)
         self._refresh_build_detail()
 
-    def _on_build_tree_activate(self, item: QTreeWidgetItem, _column: int) -> None:
-        key = item.data(0, Qt.ItemDataRole.UserRole)
-        if not isinstance(key, str):
-            return
+    def _on_build_child_clicked(self, key: str) -> None:
+        self._select_build_child(key)
+
+    def _on_build_child_activate(self, key: str) -> None:
+        self._select_build_child(key)
         met, _ = unlock_met(self.state, key)
         if not met:
             return
@@ -1302,32 +1334,23 @@ class HakoniwaIslandDialog(QDialog):
             self._do_action(key)
 
     def _refresh_build_tree_locks(self) -> None:
-        """Hard-lock tree rows whose island unlock prerequisites are unmet."""
+        """Hard-lock child rows whose island unlock prerequisites are unmet."""
         lock = " 🔒"
-        for key, item in getattr(self, "_tree_items", {}).items():
+        for key, btn in getattr(self, "_tree_items", {}).items():
             met, reason = unlock_met(self.state, key)
-            base = display_label(
-                key,
-                self._tool_spec_by_key[key][0]
-                if key in self._tool_spec_by_key
-                else None,
-            )
-            # Keep Enabled so rows stay browsable for detail; Place / double-click
-            # stay hard-blocked via unlock_met (prefs 前置不滿足不可點).
-            item.setFlags(
-                Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
-            )
+            base = self._child_base_labels.get(key, display_label(key))
+            # Browsable for detail; Place / activate blocked via unlock_met.
             if met:
-                item.setText(0, base)
-                item.setForeground(0, QBrush())
-                item.setData(0, Qt.ItemDataRole.UserRole + 1, False)
-                item.setToolTip(0, base)
+                btn.setText(base)
+                btn.setProperty("locked", False)
+                btn.setToolTip(base)
             else:
-                item.setText(0, base + lock)
-                item.setForeground(0, QBrush(QColor(140, 170, 168, 160)))
-                item.setData(0, Qt.ItemDataRole.UserRole + 1, True)
+                btn.setText(base + lock)
+                btn.setProperty("locked", True)
                 tip = f"{base}\n鎖定：{reason}" if reason else f"{base}\n鎖定"
-                item.setToolTip(0, tip)
+                btn.setToolTip(tip)
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
 
     def _refresh_build_detail(self) -> None:
         key = self.hud._build_tree_key

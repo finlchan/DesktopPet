@@ -2931,34 +2931,34 @@ def test_dialog_import_offscreen():
     assert str(COST_FARM) in dlg.tool_buttons["farm"].text()
     assert "防衛" in dlg.tool_buttons["defense"].text()
     assert "飛彈基地" in dlg.tool_buttons["missile_base"].text()
-    # Building tree drawer: formal categories + detail pane (no thumbnails).
-    assert dlg.hud.build_tree.topLevelItemCount() >= 5
-    # Category labels live on List Row Fill widgets (not item text).
-    from PySide6.QtCore import Qt as _Qt
+    # Building nav: List Row Fill categories + detail pane (no thumbnails).
+    from hakoniwa.list_row_fill import (
+        LIST_ROW_ANIM_MS,
+        HakoniwaListRowFillItem,
+    )
 
-    cat_names = [
-        dlg.hud.build_tree.topLevelItem(i).data(0, _Qt.ItemDataRole.UserRole + 1)
-        for i in range(dlg.hud.build_tree.topLevelItemCount())
-    ]
-    assert "生産" in cat_names and "港湾" in cat_names and "軍事" in cat_names
+    assert len(dlg._category_names) >= 5
+    assert "生産" in dlg._category_names and "港湾" in dlg._category_names
+    assert "軍事" in dlg._category_names
     assert "生産" in dlg._category_rows
-    from hakoniwa.list_row_fill import HakoniwaListRowFillItem, LIST_ROW_ANIM_MS
-
     assert isinstance(dlg._category_rows["生産"], HakoniwaListRowFillItem)
     assert LIST_ROW_ANIM_MS == 500
+    # Number on every category row (01…).
+    assert dlg._category_rows["開發"].index == 1
+    assert dlg._category_rows["生産"].index == 2
     # Children default collapsed.
-    for it in dlg._category_items:
-        assert it.isExpanded() is False
+    for name in dlg._category_names:
+        assert dlg.is_category_expanded(name) is False
+        assert dlg._category_panels[name].isHidden()
     assert "shipyard" in dlg._tree_items
-    assert "🔒" in dlg._tree_items["shipyard"].text(0)
-    assert "🔒" in dlg._tree_items["missile_base"].text(0)
-    assert "🔒" not in dlg._tree_items["farm"].text(0)
+    assert "🔒" in dlg._tree_items["shipyard"].text()
+    assert "🔒" in dlg._tree_items["missile_base"].text()
+    assert "🔒" not in dlg._tree_items["farm"].text()
     # Expand 港湾 then select a locked row — detail browses; Place stays off.
-    harbor_cat = dlg._tree_items["shipyard"].parent()
-    assert harbor_cat is not None
-    dlg._toggle_build_category(harbor_cat, dlg._category_rows["港湾"])
-    assert harbor_cat.isExpanded()
-    dlg.hud.build_tree.setCurrentItem(dlg._tree_items["shipyard"])
+    dlg._toggle_build_category("港湾")
+    assert dlg.is_category_expanded("港湾")
+    assert not dlg._category_panels["港湾"].isHidden()
+    dlg._select_build_child("shipyard")
     assert "造船" in dlg.hud.build_detail_title.text()
     assert not dlg.hud.build_place_btn.isEnabled()
     # Unlock defense → missile_base row clears lock (top up for 防衛＋飛彈費用).
@@ -2991,7 +2991,7 @@ def test_dialog_import_offscreen():
         other_grass = dirt
     dlg._on_cell_clicked(*other_grass)
     dlg._refresh_toolbar()
-    assert "🔒" not in dlg._tree_items["missile_base"].text(0)
+    assert "🔒" not in dlg._tree_items["missile_base"].text()
     assert dlg.tool_buttons["missile_base"].isEnabled()
 
     # Map pan/zoom API.
