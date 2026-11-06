@@ -14,7 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from PySide6.QtCore import Qt, QEvent, QTimer
+from PySide6.QtCore import QEvent, QSize, Qt, QTimer
 from PySide6.QtGui import (
     QBrush,
     QColor,
@@ -55,6 +55,7 @@ from .build_tree import (
     unlock_prereq,
 )
 from .hud_icons import HakoniwaIconBar
+from .list_row_fill import LIST_ROW_HEIGHT, HakoniwaListRowFillItem
 
 from .demos import island_summary, local_demo_islands
 from .model import (
@@ -366,13 +367,15 @@ class HakoniwaMapHud(QWidget):
         self.build_tree = QTreeWidget()
         self.build_tree.setObjectName("hakoniwaBuildTree")
         self.build_tree.setHeaderHidden(True)
-        self.build_tree.setRootIsDecorated(True)
+        # Category rows use List Row Fill widgets (own →); hide stock branch arrows.
+        self.build_tree.setRootIsDecorated(False)
         self.build_tree.setAnimated(True)
         self.build_tree.setIndentation(14)
-        self.build_tree.setUniformRowHeights(True)
+        self.build_tree.setUniformRowHeights(False)
         self.build_tree.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
+        self.build_tree.setExpandsOnDoubleClick(False)
         browse_row.addWidget(self.build_tree, stretch=2)
 
         detail = QFrame()
@@ -1209,16 +1212,23 @@ class HakoniwaIslandDialog(QDialog):
         self.map.zoom_by(factor)
 
     def _populate_build_tree(self) -> None:
-        """Fill the formal catalog category tree (text rows, no thumbnails)."""
+        """Fill the formal catalog category tree (text rows, no thumbnails).
+
+        Main categories use List Row Fill hover widgets (number · name · →);
+        children start collapsed.
+        """
         tree = self.hud.build_tree
         tree.clear()
         self._tree_items: Dict[str, QTreeWidgetItem] = {}
+        self._category_rows: Dict[str, HakoniwaListRowFillItem] = {}
+        self._category_items: List[QTreeWidgetItem] = []
+        cat_index = 0
         for cat_name, keys in build_tree_categories():
-            cat_item = QTreeWidgetItem([cat_name])
-            cat_item.setFlags(
-                Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
-            )
+            cat_item = QTreeWidgetItem([""])  # label drawn by List Row Fill widget
+            cat_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
             cat_item.setData(0, Qt.ItemDataRole.UserRole, None)
+            cat_item.setData(0, Qt.ItemDataRole.UserRole + 1, cat_name)
+            cat_item.setSizeHint(0, QSize(0, LIST_ROW_HEIGHT))
             for key in keys:
                 # Settlements (if buildings) + all TOOL_SPECS keys in categories.
                 if key in settlement_keys_for_tree():
@@ -1232,12 +1242,34 @@ class HakoniwaIslandDialog(QDialog):
                     continue
                 child = QTreeWidgetItem([label])
                 child.setData(0, Qt.ItemDataRole.UserRole, key)
-                child.setToolTip(0, f"{label}" + (f" · 快捷鍵 {digit}" if digit else ""))
+                child.setToolTip(
+                    0, f"{label}" + (f" · 快捷鍵 {digit}" if digit else "")
+                )
                 cat_item.addChild(child)
                 self._tree_items[key] = child
-            if cat_item.childCount() > 0:
-                tree.addTopLevelItem(cat_item)
-                cat_item.setExpanded(True)
+            if cat_item.childCount() == 0:
+                continue
+            cat_index += 1
+            tree.addTopLevelItem(cat_item)
+            # Prefs follow-up: child items default collapsed.
+            cat_item.setExpanded(False)
+            row = HakoniwaListRowFillItem(cat_index, cat_name, tree)
+            row.clicked.connect(
+                lambda checked=False, it=cat_item, r=row: self._toggle_build_category(
+                    it, r
+                )
+            )
+            tree.setItemWidget(cat_item, 0, row)
+            self._category_rows[cat_name] = row
+            self._category_items.append(cat_item)
+
+    def _toggle_build_category(
+        self, item: QTreeWidgetItem, row: HakoniwaListRowFillItem
+    ) -> None:
+        """Expand／collapse a main category from its List Row Fill click."""
+        nxt = not item.isExpanded()
+        item.setExpanded(nxt)
+        row.setExpandedVisual(nxt)
 
     def _on_build_tree_sel(self) -> None:
         items = self.hud.build_tree.selectedItems()
