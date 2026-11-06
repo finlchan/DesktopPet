@@ -59,7 +59,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261106.01"
+APP_VERSION = "261106.02"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -4414,14 +4414,17 @@ class AlignmentCalcDialog(FramelessCalcDialog):
 
 
 class Alignment2CalcDialog(FramelessCalcDialog):
-    """Alignment(2) — OSCH design Hv/Va import; chainage ↔ survey compare."""
+    """Alignment(2) — OSCH design Hv/Va import; densify AOut; query."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Alignment(2)")
-        self.setMinimumSize(580, 460)
-        self.resize(620, 500)
+        self.setMinimumSize(580, 500)
+        self.resize(640, 540)
         self._points = []  # densified (ch, E, N, Lv); session-only
+        self._aout = []  # densified AOut rows; session-only
+        self._horiz = []
+        self._verts = []
         self._cross = []
 
         root = install_ornate_calc_frame(self)
@@ -4435,15 +4438,49 @@ class Alignment2CalcDialog(FramelessCalcDialog):
         import_btn.setFixedHeight(24)
         import_btn.setToolTip(
             "Import OSCH design workbook "
-            "(OSCH2_AIn / OSCH2_VIn / OSCH3_LRHS)"
+            "(OSCH2_AIn / OSCH2_VIn·Vln / OSCH3_LRHS)"
         )
         import_btn.clicked.connect(self._import_from_excel)
         import_row.addWidget(import_btn)
+        output_btn = QPushButton("Output")
+        output_btn.setObjectName("calcAction")
+        output_btn.setFixedHeight(24)
+        output_btn.setToolTip(
+            "Save densified design as OSCH2_AOut Excel "
+            "(CHAINAGE / E / N / LHS·RHS edge coords)"
+        )
+        output_btn.clicked.connect(self._output_aout_excel)
+        import_row.addWidget(output_btn)
         self.status = QLabel("No design alignment loaded")
         self.status.setObjectName("calcFieldCaption")
         self.status.setWordWrap(True)
         import_row.addWidget(self.status, 1)
         root.addLayout(import_row)
+
+        # Sampling interval — every ? m = 1 point (feeds densify + AOut)
+        step_row = QHBoxLayout()
+        step_row.setSpacing(6)
+        step_cap = QLabel("every")
+        step_cap.setObjectName("calcFieldCaption")
+        step_row.addWidget(step_cap)
+        self.step_spin = QDoubleSpinBox()
+        self.step_spin.setRange(0.01, 1000.0)
+        self.step_spin.setDecimals(3)
+        self.step_spin.setSingleStep(0.5)
+        self.step_spin.setValue(1.0)
+        self.step_spin.setSuffix(" m")
+        self.step_spin.setFixedWidth(110)
+        self.step_spin.setToolTip(
+            "Sampling interval for densify / OSCH2_AOut "
+            "(default 1 m = 1 point)"
+        )
+        self.step_spin.valueChanged.connect(self._on_step_changed)
+        step_row.addWidget(self.step_spin)
+        step_tail = QLabel("= 1 point")
+        step_tail.setObjectName("calcFieldCaption")
+        step_row.addWidget(step_tail)
+        step_row.addStretch()
+        root.addLayout(step_row)
 
         # Box 1 — design chainage → E/N/level (+ crossfall levels)
         box1, box1_l = self._section_frame(
@@ -4508,6 +4545,34 @@ class Alignment2CalcDialog(FramelessCalcDialog):
         if len(self._points) < 2:
             raise ValueError("Import an OSCH design Excel first")
 
+    def _apply_loaded(self, data, *, seed_inputs=False):
+        self._horiz = data.get("horizontal") or []
+        self._verts = data.get("vertical") or []
+        self._cross = data.get("crossfall") or []
+        self._aout = data.get("aout") or []
+        self._points = data["points"]
+        meta = data["meta"]
+        step = float(meta.get("step") or self.step_spin.value())
+        self.status.setText(
+            f"Loaded {meta['count']} design pts  ·  "
+            f"AOut {meta.get('aout_count', len(self._aout))}  ·  "
+            f"every {step:g} m  ·  "
+            f"chainage {meta['ch_start']:g} → {meta['ch_end']:g}"
+        )
+        if not seed_inputs:
+            return
+        mid = 0.5 * (meta["ch_start"] + meta["ch_end"])
+        self.ch_in.setValue(mid)
+        try:
+            import alignment2 as a2
+
+            des = a2.design_at_chainage(self._points, mid, self._cross)
+            self.n_in.setValue(des["northing"])
+            self.e_in.setValue(des["easting"])
+            self.lv_in.setValue(des["level"])
+        except ValueError:
+            pass
+
     def _import_from_excel(self):
         path, _ = QFileDialog.getOpenFileName(
             self,
@@ -4520,29 +4585,61 @@ class Alignment2CalcDialog(FramelessCalcDialog):
         try:
             import alignment2 as a2
 
-            data = a2.parse_alignment2_workbook(path)
+            data = a2.parse_alignment2_workbook(
+                path, step=float(self.step_spin.value())
+            )
         except Exception as exc:
             self.status.setText(f"Import failed: {exc}")
             QMessageBox.warning(self, "Alignment(2)", f"Import failed:\n{exc}")
             return
-        self._points = data["points"]
-        self._cross = data.get("crossfall") or []
-        meta = data["meta"]
-        self.status.setText(
-            f"Loaded {meta['count']} design pts  ·  "
-            f"chainage {meta['ch_start']:g} → {meta['ch_end']:g}"
-        )
-        mid = 0.5 * (meta["ch_start"] + meta["ch_end"])
-        self.ch_in.setValue(mid)
+        self._apply_loaded(data, seed_inputs=True)
+
+    def _on_step_changed(self, _value=None):
+        if not self._horiz:
+            return
         try:
             import alignment2 as a2
 
-            des = a2.design_at_chainage(self._points, mid, self._cross)
-            self.n_in.setValue(des["northing"])
-            self.e_in.setValue(des["easting"])
-            self.lv_in.setValue(des["level"])
-        except ValueError:
-            pass
+            data = a2.rebuild_design(
+                self._horiz,
+                self._verts,
+                self._cross,
+                step=float(self.step_spin.value()),
+            )
+        except Exception as exc:
+            self.status.setText(f"Resample failed: {exc}")
+            return
+        self._apply_loaded(data, seed_inputs=False)
+
+    def _output_aout_excel(self):
+        if not self._aout:
+            QMessageBox.warning(
+                self,
+                "Alignment(2)",
+                "Import an OSCH design Excel first, then Output.",
+            )
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save OSCH2_AOut Excel",
+            "OSCH2_AOut.xlsx",
+            "Excel workbooks (*.xlsx);;All files (*)",
+        )
+        if not path:
+            return
+        if not path.lower().endswith((".xlsx", ".xlsm", ".xls")):
+            path = path + ".xlsx"
+        try:
+            import alignment2 as a2
+
+            a2.write_aout_workbook(path, self._aout)
+        except Exception as exc:
+            QMessageBox.warning(self, "Alignment(2)", f"Output failed:\n{exc}")
+            return
+        self.status.setText(
+            f"Saved AOut · {len(self._aout)} pts · every "
+            f"{float(self.step_spin.value()):g} m → {path}"
+        )
 
     def _calc_from_chainage(self):
         try:
