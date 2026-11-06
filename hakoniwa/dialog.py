@@ -14,7 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from PySide6.QtCore import QEvent, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import (
     QKeySequence,
     QResizeEvent,
@@ -52,21 +52,9 @@ from .build_tree import (
 )
 from .hud_icons import HakoniwaIconBar
 from .list_row_fill import HakoniwaListRowFillItem
+from .timeline_draw import TimelineDrawPanel, TimelineNodeData
 
 from .demos import island_summary, local_demo_islands
-
-
-class _BuildChildButton(QPushButton):
-    """Child building／tool row under a List Row Fill category."""
-
-    activated = Signal()
-
-    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.activated.emit()
-            event.accept()
-            return
-        super().mouseDoubleClickEvent(event)
 from .model import (
     BANK_TRANSFER_LOT,
     BUILDABLE,
@@ -211,32 +199,13 @@ QLineEdit#hakoniwaHudInput {{
     border-radius: 3px;
     padding: 2px 4px;
 }}
-/* Building nav — category List Row Fill widgets + child text rows. */
+/* Building nav — category List Row Fill + Timeline Draw children. */
 QScrollArea#hakoniwaBuildNav {{
     background: transparent;
     border: none;
 }}
 QWidget#hakoniwaBuildNavBody {{
     background: transparent;
-}}
-QPushButton#hakoniwaBuildChild {{
-    background: transparent;
-    color: {_HUD_TEXT};
-    border: none;
-    text-align: left;
-    padding: 3px 8px 3px 16px;
-    font-size: 10pt;
-    min-height: 22px;
-}}
-QPushButton#hakoniwaBuildChild:hover {{
-    background-color: rgba(28, 52, 56, 180);
-}}
-QPushButton#hakoniwaBuildChild[locked="true"] {{
-    color: rgba(140, 170, 168, 160);
-}}
-QPushButton#hakoniwaBuildChild[selected="true"] {{
-    background-color: {_ACCENT_BG};
-    color: #fff8f0;
 }}
 QScrollBar:vertical {{
     background: transparent;
@@ -1215,10 +1184,11 @@ class HakoniwaIslandDialog(QDialog):
         self.map.zoom_by(factor)
 
     def _populate_build_tree(self) -> None:
-        """Fill catalog categories with List Row Fill headers + child rows.
+        """Fill catalog categories with List Row Fill headers + Timeline children.
 
         Category rows always show number · name · (→ on hover) and thin
-        separators above/below. Children start collapsed.
+        separators above/below. Children start collapsed; expand plays
+        Timeline Draw (~2.4s).
         """
         lay = self.hud.build_nav_layout
         # Clear previous widgets (keep trailing stretch).
@@ -1228,26 +1198,33 @@ class HakoniwaIslandDialog(QDialog):
             if w is not None:
                 w.deleteLater()
 
-        self._tree_items: Dict[str, QPushButton] = {}
+        self._tree_items: Dict[str, TimelineNodeData] = {}
         self._child_base_labels: Dict[str, str] = {}
+        self._child_details: Dict[str, str] = {}
         self._category_rows: Dict[str, HakoniwaListRowFillItem] = {}
-        self._category_panels: Dict[str, QWidget] = {}
+        self._category_panels: Dict[str, TimelineDrawPanel] = {}
         self._category_expanded: Dict[str, bool] = {}
         self._category_names: List[str] = []
+        self._key_to_category: Dict[str, str] = {}
 
         cat_index = 0
         for cat_name, keys in build_tree_categories():
-            child_specs: List[Tuple[str, str, str]] = []
+            child_specs: List[Tuple[str, str, str, str]] = []
             for key in keys:
                 if key in settlement_keys_for_tree():
                     label = display_label(key)
                     digit = ""
+                    cost = None
                 elif key in self._tool_spec_by_key:
-                    name, _cost, digit = self._tool_spec_by_key[key]
+                    name, cost, digit = self._tool_spec_by_key[key]
                     label = display_label(key, name)
                 else:
                     continue
-                child_specs.append((key, label, digit))
+                if cost is None:
+                    detail = f"⌨{digit}" if digit else ""
+                else:
+                    detail = str(cost)
+                child_specs.append((key, label, digit, detail))
             if not child_specs:
                 continue
             cat_index += 1
@@ -1261,40 +1238,35 @@ class HakoniwaIslandDialog(QDialog):
             self._category_names.append(cat_name)
             self._category_expanded[cat_name] = False
 
-            panel = QWidget(self.hud.build_nav_body)
-            panel_lay = QVBoxLayout(panel)
-            panel_lay.setContentsMargins(0, 0, 0, 0)
-            panel_lay.setSpacing(0)
-            for key, label, digit in child_specs:
-                btn = _BuildChildButton(label)
-                btn.setObjectName("hakoniwaBuildChild")
-                btn.setCursor(Qt.CursorShape.PointingHandCursor)
-                tip = label + (f" · 快捷鍵 {digit}" if digit else "")
-                btn.setToolTip(tip)
-                btn.setProperty("toolKey", key)
-                btn.setProperty("locked", False)
-                btn.setProperty("selected", False)
-                btn.clicked.connect(
-                    lambda checked=False, k=key: self._on_build_child_clicked(k)
-                )
-                btn.activated.connect(
-                    lambda k=key: self._on_build_child_activate(k)
-                )
-                panel_lay.addWidget(btn)
-                self._tree_items[key] = btn
+            panel = TimelineDrawPanel(self.hud.build_nav_body)
+            nodes: List[TimelineNodeData] = []
+            for key, label, digit, detail in child_specs:
+                node = TimelineNodeData(key=key, title=label, detail=detail)
+                nodes.append(node)
+                self._tree_items[key] = node
                 self._child_base_labels[key] = label
+                self._child_details[key] = detail
+                self._key_to_category[key] = cat_name
+            panel.set_nodes(nodes)
+            panel.nodeClicked.connect(self._on_build_child_clicked)
+            panel.nodeActivated.connect(self._on_build_child_activate)
             panel.setVisible(False)  # children default collapsed
             lay.insertWidget(lay.count() - 1, panel)
             self._category_panels[cat_name] = panel
 
     def _toggle_build_category(self, cat_name: str) -> None:
-        """Expand／collapse children under a List Row Fill category."""
+        """Expand／collapse children; expand plays Timeline Draw."""
         panel = self._category_panels.get(cat_name)
         if panel is None:
             return
         nxt = not self._category_expanded.get(cat_name, False)
         self._category_expanded[cat_name] = nxt
-        panel.setVisible(nxt)
+        if nxt:
+            panel.setVisible(True)
+            panel.play_expand()
+        else:
+            panel.reset_collapsed()
+            panel.setVisible(False)
 
     def is_category_expanded(self, cat_name: str) -> bool:
         return bool(self._category_expanded.get(cat_name, False))
@@ -1302,12 +1274,8 @@ class HakoniwaIslandDialog(QDialog):
     def _select_build_child(self, key: str) -> None:
         """Mark ``key`` selected in the nav and refresh the detail pane."""
         self.hud._build_tree_key = key
-        for k, btn in self._tree_items.items():
-            on = k == key
-            if btn.property("selected") != on:
-                btn.setProperty("selected", on)
-                btn.style().unpolish(btn)
-                btn.style().polish(btn)
+        for panel in self._category_panels.values():
+            panel.set_selected_key(key)
         self._refresh_build_detail()
 
     def _on_build_child_clicked(self, key: str) -> None:
@@ -1336,21 +1304,20 @@ class HakoniwaIslandDialog(QDialog):
     def _refresh_build_tree_locks(self) -> None:
         """Hard-lock child rows whose island unlock prerequisites are unmet."""
         lock = " 🔒"
-        for key, btn in getattr(self, "_tree_items", {}).items():
+        for key, node in getattr(self, "_tree_items", {}).items():
             met, reason = unlock_met(self.state, key)
             base = self._child_base_labels.get(key, display_label(key))
-            # Browsable for detail; Place / activate blocked via unlock_met.
-            if met:
-                btn.setText(base)
-                btn.setProperty("locked", False)
-                btn.setToolTip(base)
-            else:
-                btn.setText(base + lock)
-                btn.setProperty("locked", True)
-                tip = f"{base}\n鎖定：{reason}" if reason else f"{base}\n鎖定"
-                btn.setToolTip(tip)
-            btn.style().unpolish(btn)
-            btn.style().polish(btn)
+            title = base if met else base + lock
+            node.title = title
+            node.locked = not met
+            cat = self._key_to_category.get(key)
+            panel = self._category_panels.get(cat) if cat else None
+            if panel is not None:
+                panel.set_node_locked(key, not met, title)
+                tip = base if met else (
+                    f"{base}\n鎖定：{reason}" if reason else f"{base}\n鎖定"
+                )
+                panel.setToolTip(tip if key == (self.hud._build_tree_key or "") else panel.toolTip())
 
     def _refresh_build_detail(self) -> None:
         key = self.hud._build_tree_key

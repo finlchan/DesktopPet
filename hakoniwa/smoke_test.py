@@ -2951,13 +2951,22 @@ def test_dialog_import_offscreen():
         assert dlg.is_category_expanded(name) is False
         assert dlg._category_panels[name].isHidden()
     assert "shipyard" in dlg._tree_items
-    assert "🔒" in dlg._tree_items["shipyard"].text()
-    assert "🔒" in dlg._tree_items["missile_base"].text()
-    assert "🔒" not in dlg._tree_items["farm"].text()
-    # Expand 港湾 then select a locked row — detail browses; Place stays off.
+    assert "🔒" in dlg._tree_items["shipyard"].title
+    assert "🔒" in dlg._tree_items["missile_base"].title
+    assert "🔒" not in dlg._tree_items["farm"].title
+    # Expand 港湾 → Timeline Draw plays; select a locked row.
+    from hakoniwa.timeline_draw import TIMELINE_ANIM_MS, TimelineDrawPanel
+
+    assert TIMELINE_ANIM_MS == 2400
     dlg._toggle_build_category("港湾")
     assert dlg.is_category_expanded("港湾")
-    assert not dlg._category_panels["港湾"].isHidden()
+    harbor_panel = dlg._category_panels["港湾"]
+    assert isinstance(harbor_panel, TimelineDrawPanel)
+    assert not harbor_panel.isHidden()
+    # Animation started from 0; snap complete so nodes are hittable in smoke.
+    assert harbor_panel.drawProgress < 1.0 or harbor_panel._anim.state() != 0
+    harbor_panel.snap_complete()
+    assert harbor_panel.drawProgress == 1.0
     dlg._select_build_child("shipyard")
     assert "造船" in dlg.hud.build_detail_title.text()
     assert not dlg.hud.build_place_btn.isEnabled()
@@ -2991,7 +3000,7 @@ def test_dialog_import_offscreen():
         other_grass = dirt
     dlg._on_cell_clicked(*other_grass)
     dlg._refresh_toolbar()
-    assert "🔒" not in dlg._tree_items["missile_base"].text()
+    assert "🔒" not in dlg._tree_items["missile_base"].title
     assert dlg.tool_buttons["missile_base"].isEnabled()
 
     # Map pan/zoom API.
