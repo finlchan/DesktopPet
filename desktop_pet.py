@@ -59,7 +59,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261106.03"
+APP_VERSION = "261106.04"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -4742,7 +4742,7 @@ class Alignment2CalcDialog(FramelessCalcDialog):
         output_btn.setFixedHeight(24)
         output_btn.setToolTip(
             "Save densified design as OSCH2_AOut Excel "
-            "(CHAINAGE / E / N / LHS·RHS edge coords)"
+            "(CHAINAGE / E / N / LEVEL / LHS·RHS E·N·Lv)"
         )
         output_btn.clicked.connect(self._output_aout_excel)
         import_row.addWidget(output_btn)
