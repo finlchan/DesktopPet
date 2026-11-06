@@ -59,7 +59,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261105.04"
+APP_VERSION = "261106.01"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -4413,6 +4413,193 @@ class AlignmentCalcDialog(FramelessCalcDialog):
             self.result2.show()
 
 
+class Alignment2CalcDialog(FramelessCalcDialog):
+    """Alignment(2) — OSCH design Hv/Va import; chainage ↔ survey compare."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Alignment(2)")
+        self.setMinimumSize(580, 460)
+        self.resize(620, 500)
+        self._points = []  # densified (ch, E, N, Lv); session-only
+        self._cross = []
+
+        root = install_ornate_calc_frame(self)
+        root.setSpacing(6)
+        root.addWidget(make_draggable_title(self, "Alignment(2)"))
+
+        import_row = QHBoxLayout()
+        import_row.setSpacing(6)
+        import_btn = QPushButton("IMPORT")
+        import_btn.setObjectName("calcAction")
+        import_btn.setFixedHeight(24)
+        import_btn.setToolTip(
+            "Import OSCH design workbook "
+            "(OSCH2_AIn / OSCH2_VIn / OSCH3_LRHS)"
+        )
+        import_btn.clicked.connect(self._import_from_excel)
+        import_row.addWidget(import_btn)
+        self.status = QLabel("No design alignment loaded")
+        self.status.setObjectName("calcFieldCaption")
+        self.status.setWordWrap(True)
+        import_row.addWidget(self.status, 1)
+        root.addLayout(import_row)
+
+        # Box 1 — design chainage → E/N/level (+ crossfall levels)
+        box1, box1_l = self._section_frame(
+            "1", "Design chainage → Easting / Northing / level"
+        )
+        cluster1, fields1 = build_calc_action_cluster(
+            [("Chainage", 0.0, 3, 100)],
+            "Calc E/N/Lv",
+            self._calc_from_chainage,
+        )
+        self.ch_in = fields1[0]
+        box1_l.addWidget(cluster1, 0, Qt.AlignmentFlag.AlignLeft)
+        self.result1 = QLabel("")
+        self.result1.setObjectName("calcResult")
+        self.result1.setWordWrap(True)
+        self.result1.hide()
+        box1_l.addWidget(self.result1)
+        root.addWidget(box1)
+
+        # Box 2 — survey N/E/Lv → offset / chainage / level diff (OSCH_SUR)
+        box2, box2_l = self._section_frame(
+            "2", "Survey Northing / Easting / level → O/S + chainage"
+        )
+        cluster2, fields2 = build_calc_action_cluster(
+            [
+                ("Northing", 0.0, 3, 100),
+                ("Easting", 0.0, 3, 100),
+                ("Level", 0.0, 4, 90),
+            ],
+            "Calc O/S",
+            self._calc_from_survey,
+        )
+        self.n_in, self.e_in, self.lv_in = fields2
+        box2_l.addWidget(cluster2, 0, Qt.AlignmentFlag.AlignLeft)
+        self.result2 = QLabel("")
+        self.result2.setObjectName("calcResult")
+        self.result2.setWordWrap(True)
+        self.result2.hide()
+        box2_l.addWidget(self.result2)
+        root.addWidget(box2)
+
+        root.addStretch()
+        close_row = QHBoxLayout()
+        close_row.addStretch()
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        close_row.addWidget(close_btn)
+        root.addLayout(close_row)
+
+    def _section_frame(self, number, title):
+        frame = QFrame()
+        frame.setObjectName("calcSection")
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(8, 6, 8, 8)
+        layout.setSpacing(4)
+        head = QLabel(f"{number}  {title}")
+        head.setObjectName("calcSectionTitle")
+        layout.addWidget(head)
+        return frame, layout
+
+    def _require_points(self):
+        if len(self._points) < 2:
+            raise ValueError("Import an OSCH design Excel first")
+
+    def _import_from_excel(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import OSCH design alignment",
+            "",
+            "Excel workbooks (*.xlsx *.xlsm *.xls);;All files (*)",
+        )
+        if not path:
+            return
+        try:
+            import alignment2 as a2
+
+            data = a2.parse_alignment2_workbook(path)
+        except Exception as exc:
+            self.status.setText(f"Import failed: {exc}")
+            QMessageBox.warning(self, "Alignment(2)", f"Import failed:\n{exc}")
+            return
+        self._points = data["points"]
+        self._cross = data.get("crossfall") or []
+        meta = data["meta"]
+        self.status.setText(
+            f"Loaded {meta['count']} design pts  ·  "
+            f"chainage {meta['ch_start']:g} → {meta['ch_end']:g}"
+        )
+        mid = 0.5 * (meta["ch_start"] + meta["ch_end"])
+        self.ch_in.setValue(mid)
+        try:
+            import alignment2 as a2
+
+            des = a2.design_at_chainage(self._points, mid, self._cross)
+            self.n_in.setValue(des["northing"])
+            self.e_in.setValue(des["easting"])
+            self.lv_in.setValue(des["level"])
+        except ValueError:
+            pass
+
+    def _calc_from_chainage(self):
+        try:
+            import alignment2 as a2
+
+            self._require_points()
+            des = a2.design_at_chainage(
+                self._points, self.ch_in.value(), self._cross
+            )
+            lines = [
+                f"◆ Easting: {des['easting']:.3f}",
+                f"◆ Northing: {des['northing']:.3f}",
+                f"◆ Level: {des['level']:.4f}",
+            ]
+            if "left_level" in des:
+                lines.append(
+                    f"◆ LHS Lv: {des['left_level']:.4f}  "
+                    f"(fall {des['left_fall']:.2f}%)"
+                )
+                lines.append(
+                    f"◆ RHS Lv: {des['right_level']:.4f}  "
+                    f"(fall {des['right_fall']:.2f}%)"
+                )
+            self.result1.setText("\n".join(lines))
+            self.result1.show()
+        except ValueError as exc:
+            self.result1.setText(f"Input error: {exc}")
+            self.result1.show()
+
+    def _calc_from_survey(self):
+        try:
+            import alignment2 as a2
+
+            self._require_points()
+            out = a2.survey_vs_design(
+                self._points,
+                self.n_in.value(),
+                self.e_in.value(),
+                self.lv_in.value(),
+            )
+            side = "left (−)" if out["offset"] < 0 else (
+                "right (+)" if out["offset"] > 0 else "on line"
+            )
+            self.result2.setText(
+                f"◆ Chainage: {out['chainage']:.3f}\n"
+                f"◆ Offset (O/S): {out['offset']:+.3f} m  ({side})\n"
+                f"◆ Level diff: {out['level_diff']:+.4f} m\n"
+                f"◆ Design E: {out['design_easting']:.3f}\n"
+                f"◆ Design N: {out['design_northing']:.3f}\n"
+                f"◆ Design Lv: {out['design_level']:.4f}"
+            )
+            self.result2.show()
+        except ValueError as exc:
+            self.result2.setText(f"Input error: {exc}")
+            self.result2.show()
+
+
 class FreeStationDialog(FramelessCalcDialog):
     """
     Free Station (resection) — mirrors the Free_Station_FAI.xls sheet math.
@@ -6030,7 +6217,7 @@ class TextRecordsSubMenu(PopupPanel):
 # Calculations submenu (third level under Mini programs)
 # ---------------------------------------------------------------------------
 class OperationsSubMenu(PopupPanel):
-    """Third-level menu: Level / Slope / Free station / Alignment(1)."""
+    """Third-level menu: Level / Slope / Free station / Alignment(1)/(2)."""
 
     def __init__(self, config_manager=None):
         super().__init__()
@@ -6039,6 +6226,7 @@ class OperationsSubMenu(PopupPanel):
         self._slope_dialog = None
         self._free_station_dialog = None
         self._alignment_dialog = None
+        self._alignment2_dialog = None
         self.build_ui()
 
     def build_ui(self):
@@ -6082,6 +6270,11 @@ class OperationsSubMenu(PopupPanel):
         btn_alignment.setStyleSheet(menu_button_style("#4a6e5a"))
         btn_alignment.clicked.connect(self.open_alignment)
         layout.addWidget(btn_alignment)
+
+        btn_alignment2 = QPushButton("Alignment(2)")
+        btn_alignment2.setStyleSheet(menu_button_style("#3a6e6a"))
+        btn_alignment2.clicked.connect(self.open_alignment2)
+        layout.addWidget(btn_alignment2)
 
         self.setStyleSheet(MENU_STYLE + """
             OperationsSubMenu { background-color: transparent; }
@@ -6137,6 +6330,15 @@ class OperationsSubMenu(PopupPanel):
         self._alignment_dialog.activateWindow()
         QTimer.singleShot(200, self._release_suppress)
 
+    def open_alignment2(self):
+        self._suppress_hide = True
+        if self._alignment2_dialog is None:
+            self._alignment2_dialog = Alignment2CalcDialog(None)
+        self._alignment2_dialog.show()
+        self._alignment2_dialog.raise_()
+        self._alignment2_dialog.activateWindow()
+        QTimer.singleShot(200, self._release_suppress)
+
     def _release_suppress(self):
         self._suppress_hide = False
 
@@ -6151,6 +6353,7 @@ class OperationsSubMenu(PopupPanel):
                 SlopeCalcDialog,
                 FreeStationDialog,
                 AlignmentCalcDialog,
+                Alignment2CalcDialog,
             ),
         ):
             return
@@ -6161,6 +6364,8 @@ class OperationsSubMenu(PopupPanel):
         if self._free_station_dialog is not None and self._free_station_dialog.isVisible():
             return
         if self._alignment_dialog is not None and self._alignment_dialog.isVisible():
+            return
+        if self._alignment2_dialog is not None and self._alignment2_dialog.isVisible():
             return
         self.hide()
 
@@ -6782,6 +6987,7 @@ class MiniProgramsSubMenu(PopupPanel):
                 SlopeCalcDialog,
                 FreeStationDialog,
                 AlignmentCalcDialog,
+                Alignment2CalcDialog,
                 PomodoroDialog,
                 TranslateDialog,
                 _HakoniwaIslandDialog,
@@ -7579,6 +7785,7 @@ class PetMenu(PopupPanel):
                 SlopeCalcDialog,
                 FreeStationDialog,
                 AlignmentCalcDialog,
+                Alignment2CalcDialog,
                 PomodoroDialog,
                 TranslateDialog,
                 _HakoniwaIslandDialog,
