@@ -1,8 +1,8 @@
 Desktop Pet
 ==================
 
-Version: 261105.03
-Published: 2026-11-05
+Version: 261105.04
+Published: 2026-11-06
 
 A floating shortcut menu and document record gadget on the Windows desktop.
 
@@ -24,7 +24,7 @@ Features
 5. Document Record 文檔紀錄 submenu: browse/search files; header title uses
    崩落／Crumble Down motion; "Open folder" opens storage folder(s).
 6. Mini Programs 副程式: Text records and Calculations (Level calc / Slope
-   calc / Free station), plus Pomodoro, Translate,
+   calc / Free station / Alignment(1)), plus Pomodoro, Translate,
    箱庭島（未完成）／Hakoniwa (WIP) (island sim entry kept; marked unfinished),
    and 透明魚缸（未完成）／Fish Tank (WIP) (Phase 1 local translucent aquarium
    below 箱庭島; high top-down / RTS isometric swim — glass stays transparent;
@@ -81,6 +81,12 @@ Free_Station_FAI.xls / .xlsm survey spreadsheet:
 - Output: station Easting/Northing, reduced level, and the distance-check
   residual ΔHD per accepted pair, plus an Average (mean E / N / RL) of those
   pair results. Copy button copies the result block.
+
+What's new in 261105.04 (2026-11-06)
+--------
+1. Calculations: Alignment(1) — IMPORT Excel (chainage/chanage, Easting,
+   Northing, level); chainage→E/N/Lv linear interpolate; E/N/Lv→nearest
+   design chainage with ΔE/ΔN/ΔLv plan deviation.
 
 What's new in 261105.03 (2026-11-05)
 --------

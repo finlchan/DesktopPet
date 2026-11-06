@@ -59,7 +59,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261105.03"
+APP_VERSION = "261105.04"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -1936,6 +1936,281 @@ def level_at_target(high_level, low_level, full_length, target_distance):
     if full_length <= 0:
         raise ValueError("Full length must be greater than 0")
     return high_level - (high_level - low_level) * (target_distance / full_length)
+
+
+# ---------------------------------------------------------------------------
+# Alignment(1) — chainage ↔ E/N/level along an imported alignment polyline
+# ---------------------------------------------------------------------------
+# Points are (chainage, easting, northing, level), sorted by chainage.
+# Box 1: linear interpolate E/N/level at a query chainage (extrapolate ends).
+# Box 2: project observed E/N onto the plan polyline; report design chainage
+# plus ΔE / ΔN / Δlevel vs that interpolated design point.
+_ALIGN_CHAINAGE_ALIASES = frozenset({"chainage", "chanage", "ch", "chain"})
+_ALIGN_EASTING_ALIASES = frozenset({"easting", "east", "e"})
+_ALIGN_NORTHING_ALIASES = frozenset({"northing", "north", "n"})
+_ALIGN_LEVEL_ALIASES = frozenset({"level", "lv", "rl", "elevation", "elev"})
+
+
+def _align_header_key(text):
+    raw = (text or "").strip().lower().replace(" ", "").replace("_", "")
+    if raw in _ALIGN_CHAINAGE_ALIASES:
+        return "chainage"
+    if raw in _ALIGN_EASTING_ALIASES:
+        return "easting"
+    if raw in _ALIGN_NORTHING_ALIASES:
+        return "northing"
+    if raw in _ALIGN_LEVEL_ALIASES:
+        return "level"
+    return None
+
+
+def _align_cell_float(value):
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+        if number != number:  # NaN
+            return None
+        return number
+    text = str(value).strip().replace(",", "")
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _load_alignment_sheet_rows(path):
+    """Yield row tuples (list of cell values) from the first usable sheet."""
+    path = Path(path)
+    suffix = path.suffix.lower()
+    if suffix in (".xlsx", ".xlsm"):
+        try:
+            import openpyxl
+        except ImportError as exc:
+            raise ImportError(
+                "openpyxl is required to read .xlsx/.xlsm "
+                "(pip install openpyxl)"
+            ) from exc
+        wb = openpyxl.load_workbook(path, data_only=True, read_only=False)
+        try:
+            sheet = wb[wb.sheetnames[0]]
+            for row in sheet.iter_rows(values_only=True):
+                yield list(row)
+        finally:
+            wb.close()
+        return
+    if suffix == ".xls":
+        try:
+            import xlrd
+        except ImportError as exc:
+            raise ImportError(
+                "xlrd is required to read .xls (pip install xlrd)"
+            ) from exc
+        wb = xlrd.open_workbook(path)
+        sheet = wb.sheet_by_index(0)
+        for r in range(sheet.nrows):
+            yield [sheet.cell_value(r, c) for c in range(sheet.ncols)]
+        return
+    raise ValueError(
+        f"Unsupported file type '{suffix or path.name}'. "
+        "Use .xlsm, .xlsx, or .xls"
+    )
+
+
+def parse_alignment_workbook(path):
+    """
+    Import alignment points from Excel.
+
+    Expects a header row with chainage (or misspelled chanage), Easting,
+    Northing, level. Returns a list of (chainage, easting, northing, level)
+    sorted by chainage. Raises ValueError on missing columns / no data.
+    """
+    rows = list(_load_alignment_sheet_rows(path))
+    header_idx = None
+    colmap = {}
+    for idx, row in enumerate(rows):
+        mapping = {}
+        for col, cell in enumerate(row or ()):
+            key = _align_header_key(cell)
+            if key and key not in mapping:
+                mapping[key] = col
+        if all(k in mapping for k in ("chainage", "easting", "northing", "level")):
+            header_idx = idx
+            colmap = mapping
+            break
+    if header_idx is None:
+        raise ValueError(
+            "Header row not found. Need columns: chainage (or chanage), "
+            "Easting, Northing, level"
+        )
+
+    points = []
+    for row in rows[header_idx + 1 :]:
+        if not row:
+            continue
+        ch = _align_cell_float(
+            row[colmap["chainage"]] if colmap["chainage"] < len(row) else None
+        )
+        east = _align_cell_float(
+            row[colmap["easting"]] if colmap["easting"] < len(row) else None
+        )
+        north = _align_cell_float(
+            row[colmap["northing"]] if colmap["northing"] < len(row) else None
+        )
+        level = _align_cell_float(
+            row[colmap["level"]] if colmap["level"] < len(row) else None
+        )
+        if ch is None and east is None and north is None and level is None:
+            continue
+        if None in (ch, east, north, level):
+            continue
+        points.append((ch, east, north, level))
+
+    if len(points) < 2:
+        raise ValueError("Need at least 2 alignment points with chainage/E/N/level")
+
+    points.sort(key=lambda p: p[0])
+    # Drop exact duplicate chainages (keep first).
+    deduped = [points[0]]
+    for pt in points[1:]:
+        if abs(pt[0] - deduped[-1][0]) < 1e-12:
+            continue
+        deduped.append(pt)
+    if len(deduped) < 2:
+        raise ValueError("Need at least 2 distinct chainage points")
+    return deduped
+
+
+def _lerp(a, b, t):
+    return a + (b - a) * t
+
+
+def alignment_at_chainage(points, chainage):
+    """
+    Linear interpolate (chainage→E/N/level) along sorted alignment points.
+
+    Returns (easting, northing, level, note) where note is '' | 'exact' |
+    'extrapolated'. Extrapolates beyond the first/last chainage using the
+    end segment slope.
+    """
+    if not points or len(points) < 2:
+        raise ValueError("Import an alignment first (need ≥2 points)")
+    ch = float(chainage)
+    # Exact vertex hit.
+    for pt in points:
+        if abs(pt[0] - ch) < 1e-9:
+            return pt[1], pt[2], pt[3], "exact"
+
+    # Before first / after last → extrapolate with end segment.
+    if ch < points[0][0]:
+        a, b = points[0], points[1]
+        span = b[0] - a[0]
+        if abs(span) < 1e-15:
+            raise ValueError("Degenerate chainage span")
+        t = (ch - a[0]) / span
+        return (
+            _lerp(a[1], b[1], t),
+            _lerp(a[2], b[2], t),
+            _lerp(a[3], b[3], t),
+            "extrapolated",
+        )
+    if ch > points[-1][0]:
+        a, b = points[-2], points[-1]
+        span = b[0] - a[0]
+        if abs(span) < 1e-15:
+            raise ValueError("Degenerate chainage span")
+        t = (ch - a[0]) / span
+        return (
+            _lerp(a[1], b[1], t),
+            _lerp(a[2], b[2], t),
+            _lerp(a[3], b[3], t),
+            "extrapolated",
+        )
+
+    # Interior segment.
+    for i in range(len(points) - 1):
+        a, b = points[i], points[i + 1]
+        if a[0] <= ch <= b[0]:
+            span = b[0] - a[0]
+            if abs(span) < 1e-15:
+                return a[1], a[2], a[3], "exact"
+            t = (ch - a[0]) / span
+            return (
+                _lerp(a[1], b[1], t),
+                _lerp(a[2], b[2], t),
+                _lerp(a[3], b[3], t),
+                "",
+            )
+    raise ValueError("Chainage not on alignment")
+
+
+def _project_point_to_segment(px, py, ax, ay, bx, by):
+    """Project P onto segment AB. Returns (qx, qy, t in [0,1], dist2)."""
+    abx, aby = bx - ax, by - ay
+    ab2 = abx * abx + aby * aby
+    if ab2 < 1e-24:
+        dx, dy = px - ax, py - ay
+        return ax, ay, 0.0, dx * dx + dy * dy
+    t = ((px - ax) * abx + (py - ay) * aby) / ab2
+    t_clamp = 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)
+    qx = ax + abx * t_clamp
+    qy = ay + aby * t_clamp
+    dx, dy = px - qx, py - qy
+    return qx, qy, t_clamp, dx * dx + dy * dy
+
+
+def alignment_deviation(points, easting, northing, level):
+    """
+    Nearest design point on the plan polyline to (easting, northing).
+
+    Returns dict:
+      chainage, easting, northing, level (design),
+      d_easting, d_northing, d_level (observed − design),
+      offset_plan (plan distance to design point).
+    Level on the design point is interpolated with the same segment
+    parameter t used for E/N.
+    """
+    if not points or len(points) < 2:
+        raise ValueError("Import an alignment first (need ≥2 points)")
+    e = float(easting)
+    n = float(northing)
+    lv = float(level)
+
+    best = None
+    for i in range(len(points) - 1):
+        a, b = points[i], points[i + 1]
+        qx, qy, t, dist2 = _project_point_to_segment(
+            e, n, a[1], a[2], b[1], b[2]
+        )
+        ch = _lerp(a[0], b[0], t)
+        qlv = _lerp(a[3], b[3], t)
+        cand = (dist2, ch, qx, qy, qlv)
+        if best is None or cand[0] < best[0]:
+            best = cand
+
+    # Also consider exact vertices (covers zero-length edge cases).
+    for pt in points:
+        dx, dy = e - pt[1], n - pt[2]
+        dist2 = dx * dx + dy * dy
+        cand = (dist2, pt[0], pt[1], pt[2], pt[3])
+        if best is None or cand[0] < best[0]:
+            best = cand
+
+    dist2, ch, de, dn, dlv = best
+    return {
+        "chainage": ch,
+        "easting": de,
+        "northing": dn,
+        "level": dlv,
+        "d_easting": e - de,
+        "d_northing": n - dn,
+        "d_level": lv - dlv,
+        "offset_plan": math.sqrt(max(0.0, dist2)),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -3967,6 +4242,177 @@ class SlopeCalcDialog(FramelessCalcDialog):
             self.c_result.setText(f"Input error: {exc}")
 
 
+class AlignmentCalcDialog(FramelessCalcDialog):
+    """Alignment(1) — import chainage/E/N/level; interpolate or deviation."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Alignment(1)")
+        self.setMinimumSize(560, 420)
+        self.resize(600, 460)
+        self._points = []  # session-only; not persisted to config
+
+        root = install_ornate_calc_frame(self)
+        root.setSpacing(6)
+        root.addWidget(make_draggable_title(self, "Alignment(1)"))
+
+        # IMPORT row
+        import_row = QHBoxLayout()
+        import_row.setSpacing(6)
+        import_btn = QPushButton("IMPORT")
+        import_btn.setObjectName("calcAction")
+        import_btn.setFixedHeight(24)
+        import_btn.setToolTip(
+            "Import alignment points from Excel "
+            "(chainage/chanage, Easting, Northing, level)"
+        )
+        import_btn.clicked.connect(self._import_from_excel)
+        import_row.addWidget(import_btn)
+        self.status = QLabel("No alignment loaded")
+        self.status.setObjectName("calcFieldCaption")
+        self.status.setWordWrap(True)
+        import_row.addWidget(self.status, 1)
+        root.addLayout(import_row)
+
+        # Box 1 — chainage → E/N/level
+        box1, box1_l = self._section_frame(
+            "1", "Chainage → Easting / Northing / level"
+        )
+        cluster1, fields1 = build_calc_action_cluster(
+            [("Chainage", 0.0, 3, 100)],
+            "Calc E/N/Lv",
+            self._calc_from_chainage,
+        )
+        self.ch_in = fields1[0]
+        box1_l.addWidget(cluster1, 0, Qt.AlignmentFlag.AlignLeft)
+        self.result1 = QLabel("")
+        self.result1.setObjectName("calcResult")
+        self.result1.setWordWrap(True)
+        self.result1.hide()
+        box1_l.addWidget(self.result1)
+        root.addWidget(box1)
+
+        # Box 2 — E/N/level → chainage + deviation
+        box2, box2_l = self._section_frame(
+            "2", "Easting / Northing / level → chainage + deviation"
+        )
+        cluster2, fields2 = build_calc_action_cluster(
+            [
+                ("Easting", 0.0, 3, 100),
+                ("Northing", 0.0, 3, 100),
+                ("Level", 0.0, 4, 90),
+            ],
+            "Calc chainage",
+            self._calc_from_en,
+        )
+        self.e_in, self.n_in, self.lv_in = fields2
+        box2_l.addWidget(cluster2, 0, Qt.AlignmentFlag.AlignLeft)
+        self.result2 = QLabel("")
+        self.result2.setObjectName("calcResult")
+        self.result2.setWordWrap(True)
+        self.result2.hide()
+        box2_l.addWidget(self.result2)
+        root.addWidget(box2)
+
+        root.addStretch()
+        close_row = QHBoxLayout()
+        close_row.addStretch()
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        close_row.addWidget(close_btn)
+        root.addLayout(close_row)
+
+    def _section_frame(self, number, title):
+        frame = QFrame()
+        frame.setObjectName("calcSection")
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(8, 6, 8, 8)
+        layout.setSpacing(4)
+        head = QLabel(f"{number}  {title}")
+        head.setObjectName("calcSectionTitle")
+        layout.addWidget(head)
+        return frame, layout
+
+    def _require_points(self):
+        if len(self._points) < 2:
+            raise ValueError("Import an alignment Excel first")
+
+    def _import_from_excel(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import alignment points",
+            "",
+            "Excel workbooks (*.xlsx *.xlsm *.xls);;All files (*)",
+        )
+        if not path:
+            return
+        try:
+            points = parse_alignment_workbook(path)
+        except Exception as exc:
+            self.status.setText(f"Import failed: {exc}")
+            QMessageBox.warning(self, "Alignment(1)", f"Import failed:\n{exc}")
+            return
+        self._points = points
+        ch0, ch1 = points[0][0], points[-1][0]
+        self.status.setText(
+            f"Loaded {len(points)} points  ·  chainage {ch0:g} → {ch1:g}"
+        )
+        # Seed box defaults from mid alignment for quick try.
+        mid_ch = (ch0 + ch1) / 2.0
+        self.ch_in.setValue(mid_ch)
+        try:
+            e, n, lv, _note = alignment_at_chainage(points, mid_ch)
+            self.e_in.setValue(e)
+            self.n_in.setValue(n)
+            self.lv_in.setValue(lv)
+        except ValueError:
+            pass
+
+    def _calc_from_chainage(self):
+        try:
+            self._require_points()
+            ch = self.ch_in.value()
+            e, n, lv, note = alignment_at_chainage(self._points, ch)
+            extra = ""
+            if note == "exact":
+                extra = "\n(Exact chainage on alignment)"
+            elif note == "extrapolated":
+                extra = "\n(Outside imported range; extrapolated)"
+            self.result1.setText(
+                f"◆ Easting: {e:.3f}\n"
+                f"◆ Northing: {n:.3f}\n"
+                f"◆ Level: {lv:.4f}{extra}"
+            )
+            self.result1.show()
+        except ValueError as exc:
+            self.result1.setText(f"Input error: {exc}")
+            self.result1.show()
+
+    def _calc_from_en(self):
+        try:
+            self._require_points()
+            out = alignment_deviation(
+                self._points,
+                self.e_in.value(),
+                self.n_in.value(),
+                self.lv_in.value(),
+            )
+            self.result2.setText(
+                f"◆ Chainage: {out['chainage']:.3f}\n"
+                f"◆ Design E: {out['easting']:.3f}   "
+                f"ΔE: {out['d_easting']:+.3f}\n"
+                f"◆ Design N: {out['northing']:.3f}   "
+                f"ΔN: {out['d_northing']:+.3f}\n"
+                f"◆ Design Lv: {out['level']:.4f}   "
+                f"ΔLv: {out['d_level']:+.4f}\n"
+                f"◆ Plan offset: {out['offset_plan']:.3f} m"
+            )
+            self.result2.show()
+        except ValueError as exc:
+            self.result2.setText(f"Input error: {exc}")
+            self.result2.show()
+
+
 class FreeStationDialog(FramelessCalcDialog):
     """
     Free Station (resection) — mirrors the Free_Station_FAI.xls sheet math.
@@ -5584,7 +6030,7 @@ class TextRecordsSubMenu(PopupPanel):
 # Calculations submenu (third level under Mini programs)
 # ---------------------------------------------------------------------------
 class OperationsSubMenu(PopupPanel):
-    """Third-level menu: Level calc / Slope calc / Free station."""
+    """Third-level menu: Level / Slope / Free station / Alignment(1)."""
 
     def __init__(self, config_manager=None):
         super().__init__()
@@ -5592,6 +6038,7 @@ class OperationsSubMenu(PopupPanel):
         self._level_dialog = None
         self._slope_dialog = None
         self._free_station_dialog = None
+        self._alignment_dialog = None
         self.build_ui()
 
     def build_ui(self):
@@ -5630,6 +6077,11 @@ class OperationsSubMenu(PopupPanel):
         btn_free_station.setStyleSheet(menu_button_style("#6e5a4a"))
         btn_free_station.clicked.connect(self.open_free_station)
         layout.addWidget(btn_free_station)
+
+        btn_alignment = QPushButton("Alignment(1)")
+        btn_alignment.setStyleSheet(menu_button_style("#4a6e5a"))
+        btn_alignment.clicked.connect(self.open_alignment)
+        layout.addWidget(btn_alignment)
 
         self.setStyleSheet(MENU_STYLE + """
             OperationsSubMenu { background-color: transparent; }
@@ -5676,6 +6128,15 @@ class OperationsSubMenu(PopupPanel):
         self._free_station_dialog.activateWindow()
         QTimer.singleShot(200, self._release_suppress)
 
+    def open_alignment(self):
+        self._suppress_hide = True
+        if self._alignment_dialog is None:
+            self._alignment_dialog = AlignmentCalcDialog(None)
+        self._alignment_dialog.show()
+        self._alignment_dialog.raise_()
+        self._alignment_dialog.activateWindow()
+        QTimer.singleShot(200, self._release_suppress)
+
     def _release_suppress(self):
         self._suppress_hide = False
 
@@ -5683,13 +6144,23 @@ class OperationsSubMenu(PopupPanel):
         if self._suppress_hide or self.isActiveWindow():
             return
         active = QApplication.activeWindow()
-        if isinstance(active, (LevelCalcDialog, SlopeCalcDialog, FreeStationDialog)):
+        if isinstance(
+            active,
+            (
+                LevelCalcDialog,
+                SlopeCalcDialog,
+                FreeStationDialog,
+                AlignmentCalcDialog,
+            ),
+        ):
             return
         if self._level_dialog is not None and self._level_dialog.isVisible():
             return
         if self._slope_dialog is not None and self._slope_dialog.isVisible():
             return
         if self._free_station_dialog is not None and self._free_station_dialog.isVisible():
+            return
+        if self._alignment_dialog is not None and self._alignment_dialog.isVisible():
             return
         self.hide()
 
@@ -6309,6 +6780,8 @@ class MiniProgramsSubMenu(PopupPanel):
                 OperationsSubMenu,
                 LevelCalcDialog,
                 SlopeCalcDialog,
+                FreeStationDialog,
+                AlignmentCalcDialog,
                 PomodoroDialog,
                 TranslateDialog,
                 _HakoniwaIslandDialog,
@@ -7104,6 +7577,8 @@ class PetMenu(PopupPanel):
                 OperationsSubMenu,
                 LevelCalcDialog,
                 SlopeCalcDialog,
+                FreeStationDialog,
+                AlignmentCalcDialog,
                 PomodoroDialog,
                 TranslateDialog,
                 _HakoniwaIslandDialog,
