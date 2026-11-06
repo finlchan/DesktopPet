@@ -162,6 +162,13 @@ SHALLOW_ONLY_BUILDINGS = frozenset({"aquafarm"})
 SEA_ONLY_BUILDINGS = frozenset({"undersea_base"})
 # Catalog: 紀念碑抗怪獸踩踏、抑火災如森（鄰居減火）.
 MONSTER_PROOF_BUILDINGS = frozenset({"monument"})
+# Island unlock chains (建築抽屜硬鎖). Invent only when catalog/rules imply.
+# shipyard after harbor; missile_base after defense. Terrain placement
+# (山／淺灘／臨海) stays in can_place_building, not here.
+BUILDING_UNLOCK_PREREQS: Dict[str, Tuple[str, str]] = {
+    "shipyard": ("harbor", "需要港灣"),
+    "missile_base": ("defense", "需要防衛設施"),
+}
 # Water-like terrains (海嘯鄰接／臨海判定；油田算海域).
 WATER_TERRAINS = frozenset({"sea", "shallow", "oilfield"})
 
@@ -1052,9 +1059,25 @@ class IslandState:
         c = self.cell(i, j)
         return c.terrain == "forest"
 
+    def building_unlock_met(self, kind: str) -> Tuple[bool, str]:
+        """Island unlock gate for placeable buildings (建築抽屜硬鎖).
+
+        Returns (met, reason). Terrain placement is checked separately.
+        """
+        prereq = BUILDING_UNLOCK_PREREQS.get(kind)
+        if prereq is None:
+            return True, ""
+        req, reason = prereq
+        if self.building_count(req) > 0:
+            return True, ""
+        return False, reason
+
     def can_place_building(self, i: int, j: int, kind: str) -> bool:
         """Whether ``kind`` can be placed at (i,j) ignoring funds."""
         if kind not in PLACEABLE_BUILDINGS:
+            return False
+        ok, _ = self.building_unlock_met(kind)
+        if not ok:
             return False
         if self.monster_at(i, j) is not None:
             return False
@@ -1076,6 +1099,9 @@ class IslandState:
     def place_building(self, i: int, j: int, kind: str) -> str:
         if kind not in PLACEABLE_BUILDINGS:
             return "未知建築"
+        ok, reason = self.building_unlock_met(kind)
+        if not ok:
+            return reason
         if self.monster_at(i, j) is not None:
             return "此格有怪獸，無法建設"
         c = self.cell(i, j)

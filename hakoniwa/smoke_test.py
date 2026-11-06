@@ -626,9 +626,8 @@ def test_harbor_shipyard_trade():
     state.food = FOOD_EXPORT_LOT - 1
     assert state.export_food(1) != "ok"
 
-    # Shipyard alone also unlocks export (clear harbor, place shipyard elsewhere).
-    state.cell(ci, cj).building = None
-    assert state.has_harbor() is False
+    # Shipyard alone also unlocks export: need 港灣 first to build 造船所
+    # (建築抽屜硬鎖), then clear harbor so only shipyard remains.
     other = next(
         (
             (i, j)
@@ -641,14 +640,17 @@ def test_harbor_shipyard_trade():
         None,
     )
     if other is None:
-        # Reuse coastal after clearing.
         other = coastal
         state.cell(*other).building = None
         state.cell(*other).terrain = "grass"
     oi, oj = other
+    # Harbor still on (ci,cj) from earlier — unlocks shipyard placement.
+    assert state.has_harbor()
     state.funds = max(state.funds, COST_SHIPYARD)
     assert state.place_building(oi, oj, "shipyard") == "ok"
     assert state.has_shipyard()
+    state.cell(ci, cj).building = None
+    assert state.has_harbor() is False
     assert state.can_trade_export()
     state.food = FOOD_EXPORT_LOT * 2
     funds_before = state.funds
@@ -2138,7 +2140,25 @@ def test_undersea_base_and_tourism_camo():
     assert terr == "sea" and bld is None
 
     mi, mj = grass[0]
-    state.funds = max(state.funds, COST_MISSILE_BASE)
+    di, dj = grass[1] if len(grass) > 1 else grass[0]
+    if (di, dj) == (mi, mj):
+        # Need a second grass cell for 防衛 → 飛彈基地 unlock chain.
+        extra = next(
+            (
+                (i, j)
+                for i, j in land
+                if (i, j) != (mi, mj)
+                and state.cell(i, j).terrain in ("grass", "dirt")
+                and state.cell(i, j).building is None
+            ),
+            None,
+        )
+        assert extra is not None
+        di, dj = extra
+        if state.cell(di, dj).terrain != "grass":
+            assert state.level_land(di, dj) == "ok"
+    state.funds = max(state.funds, COST_MISSILE_BASE + COST_DEFENSE)
+    assert state.place_building(di, dj, "defense") == "ok"
     assert state.place_building(mi, mj, "missile_base") == "ok"
     terr_m, bld_m = state.tourist_appearance(mi, mj)
     assert terr_m == "forest" and bld_m is None
@@ -2383,20 +2403,18 @@ def test_defense_and_missile_base():
     di, dj = grass[1]
     fi, fj = grass[2]
 
-    # Missile base → cheaper missiles.
-    state.funds = max(state.funds, COST_MISSILE_BASE + COST_DEFENSE + 50)
+    # Defense first (unlock), then missile base → cheaper missiles.
+    state.funds = max(state.funds, COST_MISSILE_BASE * 2 + COST_DEFENSE + 50)
     assert state.missile_cost() == COST_MISSILE
+    assert state.place_building(di, dj, "defense") == "ok"
+    assert state.cell(di, dj).building == "defense"
+    assert state.protected_by_defense(di, dj)
     assert state.place_building(bi, bj, "missile_base") == "ok"
     assert state.cell(bi, bj).building == "missile_base"
     assert state.has_missile_base()
     assert state.missile_cost() == COST_MISSILE_CHEAP
     ok, _ = tool_enabled(state, "missile_base", (fi, fj))
     assert ok is True
-
-    # Defense facility covers neighbors within radius.
-    assert state.place_building(di, dj, "defense") == "ok"
-    assert state.cell(di, dj).building == "defense"
-    assert state.protected_by_defense(di, dj)
     covered = state.cells_within(di, dj, DEFENSE_RADIUS)
     assert (di, dj) in covered
     assert len(covered) > 1
@@ -2555,22 +2573,20 @@ def test_decoy_and_tourism_camouflage():
     fi, fj = grass[2]
     gi, gj = grass[3]
 
-    # Place missile base + decoy first, then real defense.
     state.funds = max(
         state.funds, COST_MISSILE_BASE + COST_DEFENSE + COST_DECOY + 50
     )
-    assert state.place_building(bi, bj, "missile_base") == "ok"
+    # Place decoy *before* any real defense — proves 紙糊 grants no cover.
     assert state.place_building(di, dj, "decoy") == "ok"
     assert state.cell(di, dj).building == "decoy"
-
-    # Decoy alone is NOT real defense cover (assert before nearby 防衛).
     assert not state.protected_by_defense(di, dj)
     assert (di, dj) not in state.defense_positions()
 
+    # Defense unlocks missile base (建築抽屜硬鎖).
     assert state.place_building(fi, fj, "defense") == "ok"
     assert state.protected_by_defense(fi, fj)
-    # Decy still never appears in defense_positions (even if a nearby
-    # real 防衛 happens to cover the same cell).
+    assert state.place_building(bi, bj, "missile_base") == "ok"
+    # Decy still never appears in defense_positions (even if covered).
     assert (di, dj) not in state.defense_positions()
 
     # Tourism camouflage: missile→forest, decoy→defense, true defense unchanged.
@@ -2907,12 +2923,61 @@ def test_dialog_import_offscreen():
     assert dlg.tool_buttons["farm"].isEnabled()
     assert dlg.tool_buttons["factory"].isEnabled()
     assert dlg.tool_buttons["defense"].isEnabled()
-    assert dlg.tool_buttons["missile_base"].isEnabled()
+    # 飛彈基地硬鎖 until 防衛 exists on the island.
+    assert not dlg.tool_buttons["missile_base"].isEnabled()
+    assert not dlg.tool_buttons["shipyard"].isEnabled()
     assert not dlg.tool_buttons["remove"].isEnabled()
     assert "農場" in dlg.tool_buttons["farm"].text()
     assert str(COST_FARM) in dlg.tool_buttons["farm"].text()
     assert "防衛" in dlg.tool_buttons["defense"].text()
     assert "飛彈基地" in dlg.tool_buttons["missile_base"].text()
+    # Building tree drawer: formal categories + detail pane (no thumbnails).
+    assert dlg.hud.build_tree.topLevelItemCount() >= 5
+    cat_names = [
+        dlg.hud.build_tree.topLevelItem(i).text(0)
+        for i in range(dlg.hud.build_tree.topLevelItemCount())
+    ]
+    assert "生産" in cat_names and "港湾" in cat_names and "軍事" in cat_names
+    assert "shipyard" in dlg._tree_items
+    assert "🔒" in dlg._tree_items["shipyard"].text(0)
+    assert "🔒" in dlg._tree_items["missile_base"].text(0)
+    assert "🔒" not in dlg._tree_items["farm"].text(0)
+    # Selecting a locked row browses detail but Place stays off.
+    dlg.hud.build_tree.setCurrentItem(dlg._tree_items["shipyard"])
+    assert "造船" in dlg.hud.build_detail_title.text()
+    assert not dlg.hud.build_place_btn.isEnabled()
+    # Unlock defense → missile_base row clears lock (top up for 防衛＋飛彈費用).
+    dlg.state.funds = max(dlg.state.funds, COST_DEFENSE + COST_MISSILE_BASE + 50)
+    assert dlg.state.place_building(*grass, "defense") == "ok"
+    # Pick another empty grass for the unlocked 飛彈基地.
+    other_grass = next(
+        (
+            (i, j)
+            for i, j in land
+            if (i, j) != grass
+            and dlg.state.cell(i, j).terrain == "grass"
+            and dlg.state.cell(i, j).building is None
+        ),
+        None,
+    )
+    if other_grass is None:
+        dirt = next(
+            (
+                (i, j)
+                for i, j in land
+                if dlg.state.cell(i, j).terrain == "dirt"
+                and dlg.state.cell(i, j).building is None
+            ),
+            None,
+        )
+        assert dirt is not None
+        dlg.state.funds = max(dlg.state.funds, COST_LEVEL)
+        dlg.state.level_land(*dirt)
+        other_grass = dirt
+    dlg._on_cell_clicked(*other_grass)
+    dlg._refresh_toolbar()
+    assert "🔒" not in dlg._tree_items["missile_base"].text(0)
+    assert dlg.tool_buttons["missile_base"].isEnabled()
 
     # Map pan/zoom API.
     old_cell = dlg.map.cell

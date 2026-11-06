@@ -15,7 +15,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from PySide6.QtCore import Qt, QEvent, QTimer
-from PySide6.QtGui import QKeySequence, QShortcut, QResizeEvent, QShowEvent
+from PySide6.QtGui import (
+    QBrush,
+    QColor,
+    QKeySequence,
+    QResizeEvent,
+    QShortcut,
+    QShowEvent,
+)
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
@@ -29,13 +36,24 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QScrollArea,
     QSizePolicy,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
 
 from .alert_marquee import AlertMarquee
-
+from .build_tree import (
+    build_tree_categories,
+    cost_for_kind,
+    display_label,
+    effect_lines,
+    placement_blurb,
+    settlement_keys_for_tree,
+    unlock_met,
+    unlock_prereq,
+)
 from .hud_icons import HakoniwaIconBar
 
 from .demos import island_summary, local_demo_islands
@@ -154,9 +172,7 @@ QFrame#hakoniwaHudGuestbookFrame {{
     border-radius: 4px;
 }}
 QFrame#hakoniwaToolsDrawer,
-
 QFrame#hakoniwaSettingsDrawer {{
-
     background-color: rgba(24, 36, 28, 230);
     border: 1px solid rgba(180, 120, 50, 200);
     border-radius: 4px;
@@ -173,6 +189,57 @@ QLineEdit#hakoniwaHudInput {{
     border: 1px solid rgba(120, 160, 120, 160);
     border-radius: 3px;
     padding: 2px 4px;
+}}
+/* Building tree drawer — text tree + detail; match existing HUD greens/amber. */
+QTreeWidget#hakoniwaBuildTree {{
+    background: transparent;
+    color: #d8ecd8;
+    border: none;
+    outline: none;
+    font-size: 10pt;
+    show-decoration-selected: 1;
+}}
+QTreeWidget#hakoniwaBuildTree::item {{
+    padding: 2px 4px;
+    border-radius: 2px;
+}}
+QTreeWidget#hakoniwaBuildTree::item:selected {{
+    background-color: rgba(180, 120, 50, 200);
+    color: #fff8e8;
+}}
+QTreeWidget#hakoniwaBuildTree::item:disabled {{
+    color: rgba(160, 180, 160, 120);
+}}
+QTreeWidget#hakoniwaBuildTree::branch {{
+    background: transparent;
+}}
+QLabel#hakoniwaBuildDetailTitle {{
+    color: #f0f8f0;
+    font-size: 13pt;
+    font-weight: bold;
+    background: transparent;
+    border: none;
+}}
+QLabel#hakoniwaBuildDetailBody {{
+    color: #c8e0c8;
+    background: transparent;
+    border: none;
+}}
+QPushButton#hakoniwaBuildPlace {{
+    background-color: rgba(180, 120, 50, 220);
+    color: #fff8e8;
+    border: 1px solid rgba(220, 160, 70, 200);
+    border-radius: 3px;
+    min-height: 28px;
+    font-weight: bold;
+}}
+QPushButton#hakoniwaBuildPlace:disabled {{
+    background-color: rgba(60, 70, 60, 180);
+    color: rgba(180, 190, 180, 140);
+    border: 1px solid rgba(100, 110, 100, 120);
+}}
+QPushButton#hakoniwaBuildPlace:hover:!disabled {{
+    background-color: rgba(200, 140, 60, 240);
 }}
 """
 
@@ -234,19 +301,78 @@ class HakoniwaMapHud(QWidget):
         drawer_outer = QVBoxLayout(self.tools_drawer)
         drawer_outer.setContentsMargins(6, 6, 6, 6)
         drawer_outer.setSpacing(4)
+
+        # Content browse/build: left text tree + right detail (no thumbnails).
+        browse_row = QHBoxLayout()
+        browse_row.setContentsMargins(0, 0, 0, 0)
+        browse_row.setSpacing(6)
+
+        self.build_tree = QTreeWidget()
+        self.build_tree.setObjectName("hakoniwaBuildTree")
+        self.build_tree.setHeaderHidden(True)
+        self.build_tree.setRootIsDecorated(True)
+        self.build_tree.setAnimated(True)
+        self.build_tree.setIndentation(14)
+        self.build_tree.setUniformRowHeights(True)
+        self.build_tree.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        browse_row.addWidget(self.build_tree, stretch=2)
+
+        detail = QWidget()
+        detail_lay = QVBoxLayout(detail)
+        detail_lay.setContentsMargins(2, 0, 2, 0)
+        detail_lay.setSpacing(4)
+        self.build_detail_title = QLabel("選擇建築／指令")
+        self.build_detail_title.setObjectName("hakoniwaBuildDetailTitle")
+        self.build_detail_title.setWordWrap(True)
+        detail_lay.addWidget(self.build_detail_title)
+        self.build_detail_cost = QLabel("")
+        self.build_detail_cost.setObjectName("hakoniwaBuildDetailBody")
+        self.build_detail_cost.setWordWrap(True)
+        detail_lay.addWidget(self.build_detail_cost)
+        self.build_detail_status = QLabel("")
+        self.build_detail_status.setObjectName("hakoniwaBuildDetailBody")
+        self.build_detail_status.setWordWrap(True)
+        detail_lay.addWidget(self.build_detail_status)
+        self.build_detail_place = QLabel("")
+        self.build_detail_place.setObjectName("hakoniwaBuildDetailBody")
+        self.build_detail_place.setWordWrap(True)
+        detail_lay.addWidget(self.build_detail_place)
+        self.build_detail_effects = QLabel("")
+        self.build_detail_effects.setObjectName("hakoniwaBuildDetailBody")
+        self.build_detail_effects.setWordWrap(True)
+        self.build_detail_effects.setAlignment(
+            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
+        )
+        detail_lay.addWidget(self.build_detail_effects, stretch=1)
+        self.build_place_btn = QPushButton("放置")
+        self.build_place_btn.setObjectName("hakoniwaBuildPlace")
+        self.build_place_btn.setEnabled(False)
+        detail_lay.addWidget(self.build_place_btn)
+        browse_row.addWidget(detail, stretch=3)
+        drawer_outer.addLayout(browse_row, stretch=1)
+
+        # Session utilities under the browse pane (下回合／存檔…).
         drawer_scroll = QScrollArea()
         drawer_scroll.setWidgetResizable(True)
         drawer_scroll.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
         drawer_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        drawer_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        drawer_scroll.setStyleSheet(
+            "QScrollArea { background: transparent; border: none; }"
+        )
+        drawer_scroll.setMaximumHeight(120)
         self.tools_body = QWidget()
         self.tools_layout = QVBoxLayout(self.tools_body)
         self.tools_layout.setContentsMargins(2, 2, 2, 2)
         self.tools_layout.setSpacing(4)
         drawer_scroll.setWidget(self.tools_body)
-        drawer_outer.addWidget(drawer_scroll, stretch=1)
+        drawer_outer.addWidget(drawer_scroll, stretch=0)
+
+        # Selected tree key (tool / building); None when category or empty.
+        self._build_tree_key: Optional[str] = None
 
         # Settings live in their own drawer (opened by 設定 icon).
         self.settings_drawer = QFrame(self)
@@ -492,16 +618,21 @@ class HakoniwaMapHud(QWidget):
             btn_h = 0
             btn_y = h - margin
 
-        # Drawers — above the icon bar, left side
-        drawer_w = min(280, max(200, w // 3))
-        drawer_h = min(h - 2 * margin - btn_h - 8, max(220, int(h * 0.62)))
+        # Drawers — left side. Build drawer is full height (prefs 建築抽屜樹);
+        # settings stays compact above the icon bar.
+        build_w = min(460, max(320, w // 2))
+        settings_w = min(280, max(200, w // 3))
+        gap_above_bar = 6
+        full_h = max(220, btn_y - gap_above_bar - margin)
 
-        for drawer in (self.tools_drawer, self.settings_drawer):
-            if not drawer.isHidden():
-
-                dh = drawer_h if drawer is self.tools_drawer else min(drawer_h, 160)
-                self_y = max(margin, btn_y - 6 - dh)
-                drawer.setGeometry(margin, self_y, drawer_w, dh)
+        if not self.tools_drawer.isHidden():
+            self.tools_drawer.setGeometry(margin, margin, build_w, full_h)
+        if not self.settings_drawer.isHidden():
+            settings_h = min(160, full_h)
+            self.settings_drawer.setGeometry(
+                margin, max(margin, btn_y - gap_above_bar - settings_h),
+                settings_w, settings_h,
+            )
 
         # Action log — bottom-right (~70% transparent frame)
         log_w = min(260, max(160, w // 3))
@@ -653,6 +784,9 @@ def tool_enabled(
         return True, ""
 
     if kind in PLACEABLE_BUILDINGS:
+        unlocked, lock_reason = state.building_unlock_met(kind)
+        if not unlocked:
+            return False, lock_reason
         cost = int(BUILDINGS[kind]["cost"])
         if state.monster_at(i, j) is not None:
             return False, "此格有怪獸"
@@ -809,13 +943,16 @@ class HakoniwaIslandDialog(QDialog):
         self.guestbook_view = self.hud.guestbook_view
         root.addWidget(self.hud, stretch=1)
 
-        # --- Build tools drawer (建築 icon) ---
-        tools_lay = self.hud.tools_layout
-        tools_cap = QLabel("工具")
-        tools_cap.setObjectName("hakoniwaHudCaption")
-        tools_lay.addWidget(tools_cap)
-
+        # --- Build tools drawer (建築 icon): tree browse + hidden tool buttons ---
+        self._tool_spec_by_key: Dict[str, Tuple[str, Optional[int], str]] = {
+            key: (name, cost, digit) for key, name, cost, digit in TOOL_SPECS
+        }
         self.tool_buttons: Dict[str, QPushButton] = {}
+        # Hidden buttons keep shortcut / smoke enable-state API.
+        self._hidden_tools = QWidget(self.hud.tools_drawer)
+        self._hidden_tools.setVisible(False)
+        hidden_lay = QVBoxLayout(self._hidden_tools)
+        hidden_lay.setContentsMargins(0, 0, 0, 0)
         for key, name, cost, digit in TOOL_SPECS:
             if cost is None:
                 text = f"{digit}. {name}"
@@ -825,10 +962,19 @@ class HakoniwaIslandDialog(QDialog):
             btn.setObjectName("calcAction")
             btn.setProperty("toolKey", key)
             btn.clicked.connect(lambda checked=False, k=key: self._do_action(k))
-            tools_lay.addWidget(btn)
+            btn.setVisible(False)
+            hidden_lay.addWidget(btn)
             self.tool_buttons[key] = btn
 
-        tools_lay.addSpacing(4)
+        self._populate_build_tree()
+        self.hud.build_tree.itemSelectionChanged.connect(self._on_build_tree_sel)
+        self.hud.build_tree.itemDoubleClicked.connect(self._on_build_tree_activate)
+        self.hud.build_place_btn.clicked.connect(self._on_build_place_clicked)
+
+        tools_lay = self.hud.tools_layout
+        tools_cap = QLabel("回合／存檔")
+        tools_cap.setObjectName("hakoniwaHudCaption")
+        tools_lay.addWidget(tools_cap)
 
         self.turn_btn = QPushButton("T. 下回合")
         self.turn_btn.setObjectName("calcAction")
@@ -1000,6 +1146,160 @@ class HakoniwaIslandDialog(QDialog):
         if self._typing_in_field():
             return
         self.map.zoom_by(factor)
+
+    def _populate_build_tree(self) -> None:
+        """Fill the formal catalog category tree (text rows, no thumbnails)."""
+        tree = self.hud.build_tree
+        tree.clear()
+        self._tree_items: Dict[str, QTreeWidgetItem] = {}
+        for cat_name, keys in build_tree_categories():
+            cat_item = QTreeWidgetItem([cat_name])
+            cat_item.setFlags(
+                Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+            )
+            cat_item.setData(0, Qt.ItemDataRole.UserRole, None)
+            for key in keys:
+                # Settlements (if buildings) + all TOOL_SPECS keys in categories.
+                if key in settlement_keys_for_tree():
+                    label = display_label(key)
+                    digit = ""
+                    name = label
+                elif key in self._tool_spec_by_key:
+                    name, _cost, digit = self._tool_spec_by_key[key]
+                    label = display_label(key, name)
+                else:
+                    continue
+                child = QTreeWidgetItem([label])
+                child.setData(0, Qt.ItemDataRole.UserRole, key)
+                child.setToolTip(0, f"{label}" + (f" · 快捷鍵 {digit}" if digit else ""))
+                cat_item.addChild(child)
+                self._tree_items[key] = child
+            if cat_item.childCount() > 0:
+                tree.addTopLevelItem(cat_item)
+                cat_item.setExpanded(True)
+
+    def _on_build_tree_sel(self) -> None:
+        items = self.hud.build_tree.selectedItems()
+        key = None
+        if items:
+            key = items[0].data(0, Qt.ItemDataRole.UserRole)
+        self.hud._build_tree_key = key if isinstance(key, str) else None
+        self._refresh_build_detail()
+
+    def _on_build_tree_activate(self, item: QTreeWidgetItem, _column: int) -> None:
+        key = item.data(0, Qt.ItemDataRole.UserRole)
+        if not isinstance(key, str):
+            return
+        met, _ = unlock_met(self.state, key)
+        if not met:
+            return
+        btn = self.tool_buttons.get(key)
+        if btn is not None and btn.isEnabled():
+            self._do_action(key)
+
+    def _on_build_place_clicked(self) -> None:
+        key = self.hud._build_tree_key
+        if not key:
+            return
+        met, _ = unlock_met(self.state, key)
+        if not met:
+            return
+        btn = self.tool_buttons.get(key)
+        if btn is not None and btn.isEnabled():
+            self._do_action(key)
+
+    def _refresh_build_tree_locks(self) -> None:
+        """Hard-lock tree rows whose island unlock prerequisites are unmet."""
+        lock = " 🔒"
+        for key, item in getattr(self, "_tree_items", {}).items():
+            met, reason = unlock_met(self.state, key)
+            base = display_label(
+                key,
+                self._tool_spec_by_key[key][0]
+                if key in self._tool_spec_by_key
+                else None,
+            )
+            # Keep Enabled so rows stay browsable for detail; Place / double-click
+            # stay hard-blocked via unlock_met (prefs 前置不滿足不可點).
+            item.setFlags(
+                Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+            )
+            if met:
+                item.setText(0, base)
+                item.setForeground(0, QBrush())
+                item.setData(0, Qt.ItemDataRole.UserRole + 1, False)
+                item.setToolTip(0, base)
+            else:
+                item.setText(0, base + lock)
+                item.setForeground(0, QBrush(QColor(140, 160, 140, 160)))
+                item.setData(0, Qt.ItemDataRole.UserRole + 1, True)
+                tip = f"{base}\n鎖定：{reason}" if reason else f"{base}\n鎖定"
+                item.setToolTip(0, tip)
+
+    def _refresh_build_detail(self) -> None:
+        key = self.hud._build_tree_key
+        title = self.hud.build_detail_title
+        cost_lab = self.hud.build_detail_cost
+        status_lab = self.hud.build_detail_status
+        place_lab = self.hud.build_detail_place
+        effects_lab = self.hud.build_detail_effects
+        place_btn = self.hud.build_place_btn
+        if not key:
+            title.setText("選擇建築／指令")
+            cost_lab.setText("")
+            status_lab.setText("")
+            place_lab.setText("")
+            effects_lab.setText("")
+            place_btn.setEnabled(False)
+            place_btn.setText("放置")
+            return
+
+        tool_name = (
+            self._tool_spec_by_key[key][0] if key in self._tool_spec_by_key else None
+        )
+        tool_cost = (
+            self._tool_spec_by_key[key][1] if key in self._tool_spec_by_key else None
+        )
+        label = display_label(key, tool_name)
+        title.setText(label)
+
+        shown_cost = cost_for_kind(self.state, key, tool_cost)
+        if shown_cost is None:
+            cost_lab.setText("費用: 免費／依指令")
+        elif shown_cost == 0 and key in settlement_keys_for_tree():
+            cost_lab.setText("費用: 0（非點選建造）")
+        else:
+            cost_lab.setText(f"資金: {shown_cost}")
+
+        met, lock_reason = unlock_met(self.state, key)
+        prereq = unlock_prereq(key)
+        if key in settlement_keys_for_tree():
+            status_lab.setText("狀態: 瀏覽用（人口演進）\n前提: 不可點選建造")
+        elif met:
+            prereq_txt = "無" if prereq is None else display_label(prereq[0].split("|")[0])
+            if prereq and "|" in prereq[0]:
+                prereq_txt = " 或 ".join(
+                    display_label(p) for p in prereq[0].split("|")
+                )
+            status_lab.setText(f"已解鎖\n前提: {prereq_txt}")
+        else:
+            status_lab.setText(f"未解鎖 🔒\n前提: {lock_reason}")
+
+        place_lab.setText(f"配置條件: {placement_blurb(key)}")
+        lines = effect_lines(key)
+        effects_lab.setText("\n".join(f"· {ln}" for ln in lines) if lines else "")
+
+        # Action label: 放置 for buildings, otherwise keep tool verb.
+        if key in PLACEABLE_BUILDINGS:
+            place_btn.setText("放置")
+        elif key in settlement_keys_for_tree():
+            place_btn.setText("不可建造")
+        else:
+            place_btn.setText("執行")
+
+        btn = self.tool_buttons.get(key)
+        can_run = bool(met and btn is not None and btn.isEnabled())
+        place_btn.setEnabled(can_run)
 
     def _clear_selection(self) -> None:
         self.selected = None
@@ -1206,7 +1506,7 @@ class HakoniwaIslandDialog(QDialog):
                 tip += "\n再點建設＝自爆清周圍怪獸（同額費用）"
             elif key == "missile_base":
                 tip += "\n有基地時飛彈更便宜；觀光者眼中偽裝成森"
-
+                tip += "\n解鎖前提：島上需有防衛設施"
             elif key == "undersea_base":
                 tip += (
                     "\n深海色塊（不可淺灘／油田）：同飛彈基地優惠；"
@@ -1227,6 +1527,7 @@ class HakoniwaIslandDialog(QDialog):
                 tip += "\n臨海平地→港灣色塊（可解鎖貿易輸出）"
             elif key == "shipyard":
                 tip += "\n臨海平地→造船所色塊（可解鎖貿易輸出）"
+                tip += "\n解鎖前提：島上需有港灣"
             elif key == "export":
                 tip += (
                     f"\n糧食→資金：{FOOD_EXPORT_LOT} 噸≈"
@@ -1328,6 +1629,8 @@ class HakoniwaIslandDialog(QDialog):
                 tip += f"\n選格 {self.selected[0]},{self.selected[1]}"
             tip += f"\n快捷鍵 {digit}"
             btn.setToolTip(tip)
+        self._refresh_build_tree_locks()
+        self._refresh_build_detail()
 
     def _refresh_selection_label(self) -> None:
         if self.selected is None:

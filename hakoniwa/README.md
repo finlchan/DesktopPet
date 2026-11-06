@@ -61,7 +61,7 @@ All numeric / function chrome sits **inside the map viewport** (`HakoniwaMapHud`
 
 | Guestbook | Bottom center | ~70% transparent; **closed by default**; open via 留言 icon |
 | Icon bar | Bottom-left | 通知／建築／資訊／留言／設定 — hover micro-animations |
-| Build drawer | Above icon bar | 建築 icon → build toolbar |
+| Build drawer | Full height, left | 建築 icon → **tree browse** (formal categories) + right detail／放置; unmet unlock prereqs hard-locked (🔒); no building thumbnails in the tree |
 | Settings drawer | Above icon bar | 設定 icon → server connection |
 
 
