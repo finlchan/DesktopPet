@@ -128,8 +128,18 @@ from .user_art import configure_user_art
 from .view import HakoniwaMapWidget
 
 # Overlay frames (action log / guestbook): 70% transparent ≈ 30% opaque.
-_OVERLAY_BG = "rgba(12, 28, 18, 77)"
-_OVERLAY_BORDER = "rgba(150, 200, 150, 130)"
+# Align with icon-bar teal glass (hud_icons._ICON_*), not olive/amber.
+_OVERLAY_BG = "rgba(14, 32, 36, 77)"
+_OVERLAY_BORDER = "rgba(90, 200, 190, 140)"
+
+# Drawer / icon-bar shared HUD chrome (deep teal glass · cyan border · orange).
+_DRAWER_BG = "rgba(18, 36, 40, 230)"
+_DRAWER_BORDER = "rgba(90, 200, 190, 210)"
+_ACCENT_BG = "rgba(176, 96, 36, 230)"
+_ACCENT_BG_HOVER = "rgba(196, 110, 42, 245)"
+_ACCENT_BORDER = "rgba(220, 140, 60, 230)"
+_HUD_TEXT = "#e6f8f5"
+_HUD_TEXT_DIM = "#a8d0c8"
 
 # In-map HUD styles (status / tile / log / guestbook / tools).
 # Status strip: fully frameless over the map (no green box); digit cells
@@ -151,95 +161,141 @@ QLabel#hakoniwaHudStatusPlain {{
     font-weight: bold;
 }}
 QLabel#hakoniwaHudTile {{
-    background-color: rgba(16, 40, 28, 170);
-    color: #d0ecd0;
-    border: 1px solid rgba(70, 170, 100, 170);
+    background-color: rgba(16, 40, 44, 170);
+    color: {_HUD_TEXT};
+    border: 1px solid {_DRAWER_BORDER};
     border-radius: 3px;
     padding: 4px 8px;
 }}
 QPlainTextEdit#hakoniwaHudLog,
 QPlainTextEdit#hakoniwaHudGuestbook {{
     background-color: {_OVERLAY_BG};
-    color: #e8f5e8;
+    color: {_HUD_TEXT};
     border: 1px solid {_OVERLAY_BORDER};
     border-radius: 4px;
     padding: 4px;
-    selection-background-color: #3d5a80;
+    selection-background-color: rgba(176, 96, 36, 180);
 }}
 QFrame#hakoniwaHudGuestbookFrame {{
     background-color: {_OVERLAY_BG};
     border: 1px solid {_OVERLAY_BORDER};
     border-radius: 4px;
 }}
+/* Tools／settings drawers: same deep-teal glass + cyan as icon bar. */
 QFrame#hakoniwaToolsDrawer,
 QFrame#hakoniwaSettingsDrawer {{
-    background-color: rgba(24, 36, 28, 230);
-    border: 1px solid rgba(180, 120, 50, 200);
+    background-color: {_DRAWER_BG};
+    border: 1px solid {_DRAWER_BORDER};
     border-radius: 4px;
 }}
 QLabel#hakoniwaHudCaption {{
-    color: #c8e0c8;
+    color: {_HUD_TEXT_DIM};
     background: transparent;
     border: none;
     padding: 0;
 }}
 QLineEdit#hakoniwaHudInput {{
-    background-color: rgba(30, 40, 30, 180);
-    color: #f0f0f0;
-    border: 1px solid rgba(120, 160, 120, 160);
+    background-color: rgba(14, 28, 32, 180);
+    color: {_HUD_TEXT};
+    border: 1px solid {_DRAWER_BORDER};
     border-radius: 3px;
     padding: 2px 4px;
 }}
-/* Building tree drawer — text tree + detail; match existing HUD greens/amber. */
+/* Building tree — text only; orange select like icon-bar active. */
 QTreeWidget#hakoniwaBuildTree {{
     background: transparent;
-    color: #d8ecd8;
+    color: {_HUD_TEXT};
     border: none;
     outline: none;
     font-size: 10pt;
     show-decoration-selected: 1;
 }}
 QTreeWidget#hakoniwaBuildTree::item {{
-    padding: 2px 4px;
+    padding: 3px 6px;
     border-radius: 2px;
 }}
 QTreeWidget#hakoniwaBuildTree::item:selected {{
-    background-color: rgba(180, 120, 50, 200);
-    color: #fff8e8;
+    background-color: {_ACCENT_BG};
+    color: #fff8f0;
+}}
+QTreeWidget#hakoniwaBuildTree::item:hover:!selected {{
+    background-color: rgba(28, 52, 56, 180);
 }}
 QTreeWidget#hakoniwaBuildTree::item:disabled {{
-    color: rgba(160, 180, 160, 120);
+    color: rgba(140, 170, 168, 140);
 }}
 QTreeWidget#hakoniwaBuildTree::branch {{
     background: transparent;
+    border-image: none;
+}}
+QTreeWidget#hakoniwaBuildTree::branch:has-children:!has-siblings:closed,
+QTreeWidget#hakoniwaBuildTree::branch:closed:has-children:has-siblings {{
+    border-image: none;
+    image: none;
+}}
+QTreeWidget#hakoniwaBuildTree::branch:open:has-children:!has-siblings,
+QTreeWidget#hakoniwaBuildTree::branch:open:has-children:has-siblings {{
+    border-image: none;
+    image: none;
+}}
+QScrollBar:vertical {{
+    background: transparent;
+    width: 8px;
+    margin: 2px;
+}}
+QScrollBar::handle:vertical {{
+    background: rgba(90, 200, 190, 120);
+    border-radius: 3px;
+    min-height: 24px;
+}}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+    height: 0;
+}}
+QFrame#hakoniwaBuildDetailPane {{
+    background-color: rgba(14, 28, 32, 120);
+    border: none;
+    border-left: 1px solid {_DRAWER_BORDER};
 }}
 QLabel#hakoniwaBuildDetailTitle {{
-    color: #f0f8f0;
+    color: {_HUD_TEXT};
     font-size: 13pt;
     font-weight: bold;
     background: transparent;
     border: none;
 }}
 QLabel#hakoniwaBuildDetailBody {{
-    color: #c8e0c8;
+    color: {_HUD_TEXT_DIM};
     background: transparent;
     border: none;
 }}
 QPushButton#hakoniwaBuildPlace {{
-    background-color: rgba(180, 120, 50, 220);
-    color: #fff8e8;
-    border: 1px solid rgba(220, 160, 70, 200);
+    background-color: {_ACCENT_BG};
+    color: #fff8f0;
+    border: 1px solid {_ACCENT_BORDER};
     border-radius: 3px;
-    min-height: 28px;
+    min-height: 30px;
     font-weight: bold;
 }}
 QPushButton#hakoniwaBuildPlace:disabled {{
-    background-color: rgba(60, 70, 60, 180);
-    color: rgba(180, 190, 180, 140);
-    border: 1px solid rgba(100, 110, 100, 120);
+    background-color: rgba(28, 44, 48, 180);
+    color: rgba(168, 190, 188, 140);
+    border: 1px solid rgba(70, 110, 108, 120);
 }}
 QPushButton#hakoniwaBuildPlace:hover:!disabled {{
-    background-color: rgba(200, 140, 60, 240);
+    background-color: {_ACCENT_BG_HOVER};
+}}
+/* Drawer footer actions — teal glass chips, not calcAction gray. */
+QPushButton#hakoniwaDrawerAction {{
+    background-color: rgba(18, 36, 40, 210);
+    color: {_HUD_TEXT};
+    border: 1px solid {_DRAWER_BORDER};
+    border-radius: 3px;
+    min-height: 22px;
+    padding: 2px 8px;
+    font-size: 9pt;
+}}
+QPushButton#hakoniwaDrawerAction:hover {{
+    background-color: rgba(28, 52, 56, 230);
 }}
 """
 
@@ -319,9 +375,10 @@ class HakoniwaMapHud(QWidget):
         )
         browse_row.addWidget(self.build_tree, stretch=2)
 
-        detail = QWidget()
+        detail = QFrame()
+        detail.setObjectName("hakoniwaBuildDetailPane")
         detail_lay = QVBoxLayout(detail)
-        detail_lay.setContentsMargins(2, 0, 2, 0)
+        detail_lay.setContentsMargins(8, 4, 4, 4)
         detail_lay.setSpacing(4)
         self.build_detail_title = QLabel("選擇建築／指令")
         self.build_detail_title.setObjectName("hakoniwaBuildDetailTitle")
@@ -363,11 +420,11 @@ class HakoniwaMapHud(QWidget):
         drawer_scroll.setStyleSheet(
             "QScrollArea { background: transparent; border: none; }"
         )
-        drawer_scroll.setMaximumHeight(120)
+        drawer_scroll.setMaximumHeight(48)
         self.tools_body = QWidget()
         self.tools_layout = QVBoxLayout(self.tools_body)
         self.tools_layout.setContentsMargins(2, 2, 2, 2)
-        self.tools_layout.setSpacing(4)
+        self.tools_layout.setSpacing(2)
         drawer_scroll.setWidget(self.tools_body)
         drawer_outer.addWidget(drawer_scroll, stretch=0)
 
@@ -972,38 +1029,42 @@ class HakoniwaIslandDialog(QDialog):
         self.hud.build_place_btn.clicked.connect(self._on_build_place_clicked)
 
         tools_lay = self.hud.tools_layout
-        tools_cap = QLabel("回合／存檔")
-        tools_cap.setObjectName("hakoniwaHudCaption")
-        tools_lay.addWidget(tools_cap)
+        # Compact horizontal chip row (teal glass) — avoids calcAction gray stack.
+        footer = QHBoxLayout()
+        footer.setContentsMargins(0, 0, 0, 0)
+        footer.setSpacing(4)
 
         self.turn_btn = QPushButton("T. 下回合")
-        self.turn_btn.setObjectName("calcAction")
+        self.turn_btn.setObjectName("hakoniwaDrawerAction")
         self.turn_btn.setToolTip("結算本回合產糧／產資（快捷鍵 T）")
         self.turn_btn.clicked.connect(self._next_turn)
-        tools_lay.addWidget(self.turn_btn)
+        footer.addWidget(self.turn_btn)
 
         tour_btn = QPushButton("觀光")
-        tour_btn.setObjectName("calcAction")
+        tour_btn.setObjectName("hakoniwaDrawerAction")
         tour_btn.setToolTip("瀏覽諸島地圖（唯讀）；留言板仍可用")
         tour_btn.clicked.connect(self._open_tourism)
-        tools_lay.addWidget(tour_btn)
+        footer.addWidget(tour_btn)
 
         save_btn = QPushButton("S. 存檔")
-        save_btn.setObjectName("calcAction")
+        save_btn.setObjectName("hakoniwaDrawerAction")
         save_btn.setToolTip("寫入本機 JSON（快捷鍵 S）")
         save_btn.clicked.connect(self._save)
-        tools_lay.addWidget(save_btn)
+        footer.addWidget(save_btn)
 
-        new_btn = QPushButton("新島（重置）")
-        new_btn.setObjectName("calcAction")
+        new_btn = QPushButton("新島")
+        new_btn.setObjectName("hakoniwaDrawerAction")
+        new_btn.setToolTip("新島（重置）")
         new_btn.clicked.connect(self._new_island)
-        tools_lay.addWidget(new_btn)
+        footer.addWidget(new_btn)
 
-        reset_view_btn = QPushButton("0. 重置視圖")
-        reset_view_btn.setObjectName("calcAction")
+        reset_view_btn = QPushButton("0. 視圖")
+        reset_view_btn.setObjectName("hakoniwaDrawerAction")
         reset_view_btn.setToolTip("縮放／平移回到預設（快捷鍵 0）")
         reset_view_btn.clicked.connect(self.map.reset_view)
-        tools_lay.addWidget(reset_view_btn)
+        footer.addWidget(reset_view_btn)
+        footer.addStretch(1)
+        tools_lay.addLayout(footer)
         tools_lay.addStretch(1)
 
         # Server connection lives in the 設定 drawer (was under 工具／設定).
@@ -1021,11 +1082,11 @@ class HakoniwaIslandDialog(QDialog):
         sync_row = QHBoxLayout()
         sync_row.setSpacing(4)
         connect_btn = QPushButton("連線")
-        connect_btn.setObjectName("calcAction")
+        connect_btn.setObjectName("hakoniwaDrawerAction")
         connect_btn.clicked.connect(self._connect_server)
         sync_row.addWidget(connect_btn)
         local_btn = QPushButton("本機")
-        local_btn.setObjectName("calcAction")
+        local_btn.setObjectName("hakoniwaDrawerAction")
         local_btn.clicked.connect(self._use_local)
         sync_row.addWidget(local_btn)
         settings_lay.addLayout(sync_row)
@@ -1231,7 +1292,7 @@ class HakoniwaIslandDialog(QDialog):
                 item.setToolTip(0, base)
             else:
                 item.setText(0, base + lock)
-                item.setForeground(0, QBrush(QColor(140, 160, 140, 160)))
+                item.setForeground(0, QBrush(QColor(140, 170, 168, 160)))
                 item.setData(0, Qt.ItemDataRole.UserRole + 1, True)
                 tip = f"{base}\n鎖定：{reason}" if reason else f"{base}\n鎖定"
                 item.setToolTip(0, tip)
