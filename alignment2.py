@@ -527,13 +527,62 @@ def build_design_points(
     return points
 
 
-def parse_alignment2_workbook(path: str | Path) -> Dict[str, Any]:
+AOUT_HEADERS = (
+    "CHAINAGE",
+    "EASTING",
+    "NORTHING",
+    "LHS_EASTING_OFFSET",
+    "LHS_NORTHING_OFFSET",
+    "RHS_EASTING_OFFSET",
+    "RHS_NORTHING_OFFSET",
+)
+
+
+def densify_aout_rows(
+    horiz: Sequence[HorizSeg], *, step: float = 1.0
+) -> List[Dict[str, float]]:
+    """OSCH2_AOut rows from horizontal geometry at the given sampling step."""
+    return densify_horizontal(horiz, step=step)
+
+
+def write_aout_workbook(path: str | Path, dens_rows: Sequence[Dict[str, float]]) -> None:
+    """Write densified design as a single-sheet OSCH2_AOut-style workbook."""
+    if not dens_rows:
+        raise ValueError("No densified points to export")
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "OSCH2_AOut"
+    ws.append(list(AOUT_HEADERS))
+    for pt in dens_rows:
+        ws.append(
+            [
+                float(pt["chainage"]),
+                float(pt["easting"]),
+                float(pt["northing"]),
+                float(pt["lhs_easting"]),
+                float(pt["lhs_northing"]),
+                float(pt["rhs_easting"]),
+                float(pt["rhs_northing"]),
+            ]
+        )
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    wb.save(Path(path))
+    wb.close()
+
+
+def parse_alignment2_workbook(
+    path: str | Path, *, step: float = 1.0
+) -> Dict[str, Any]:
     """
     Load OSCH design workbook.
 
-    Returns dict with keys: horizontal, vertical, crossfall, points
-    (densified AlignPoint list), meta.
+    Returns dict with keys: horizontal, vertical, crossfall, aout
+    (densified AOut rows), points (centreline+level), meta.
     """
+    if step <= 0:
+        raise ValueError("step must be > 0")
     sheets = _load_workbook_sheets(Path(path))
     h_rows = _find_sheet(sheets, "OSCH2_AIn", "OSCH2_Aln", "OSCH2_AIN")
     try:
@@ -548,16 +597,48 @@ def parse_alignment2_workbook(path: str | Path) -> Dict[str, Any]:
     horiz = parse_horizontal_rows(h_rows)
     verts = parse_vertical_rows(v_rows)
     cross = parse_crossfall_rows(c_rows) if c_rows else []
-    points = build_design_points(horiz, verts, step=1.0)
+    aout = densify_aout_rows(horiz, step=step)
+    points = build_design_points(horiz, verts, step=step)
     return {
         "horizontal": horiz,
         "vertical": verts,
         "crossfall": cross,
+        "aout": aout,
         "points": points,
         "meta": {
             "ch_start": points[0][0],
             "ch_end": points[-1][0],
             "count": len(points),
+            "aout_count": len(aout),
+            "step": float(step),
+        },
+    }
+
+
+def rebuild_design(
+    horiz: Sequence[HorizSeg],
+    verts: Sequence[VertSeg],
+    cross: Sequence[CrossSeg],
+    *,
+    step: float = 1.0,
+) -> Dict[str, Any]:
+    """Re-densify imported geometry at a new sampling interval."""
+    if step <= 0:
+        raise ValueError("step must be > 0")
+    aout = densify_aout_rows(horiz, step=step)
+    points = build_design_points(horiz, verts, step=step)
+    return {
+        "horizontal": list(horiz),
+        "vertical": list(verts),
+        "crossfall": list(cross),
+        "aout": aout,
+        "points": points,
+        "meta": {
+            "ch_start": points[0][0],
+            "ch_end": points[-1][0],
+            "count": len(points),
+            "aout_count": len(aout),
+            "step": float(step),
         },
     }
 
