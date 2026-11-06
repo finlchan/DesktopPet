@@ -59,7 +59,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261106.02"
+APP_VERSION = "261106.03"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -2213,6 +2213,152 @@ def alignment_deviation(points, easting, northing, level):
     }
 
 
+# Alignment(1) batch sheet (大量運算) — Input/Output column layout:
+#   Row1 groups: INPUT | OUTPUT | | | INPUT | | | OUTPUT
+#   Row2 fields: chainage | easting | northing | level | easting | northing | level | chainage
+# Left block:  Input chainage → Output E/N/Lv   (alignment_at_chainage)
+# Right block: Input E/N/Lv → Output chainage  (alignment_deviation)
+_ALIGN_BATCH_HEADERS = (
+    "chainage",
+    "easting",
+    "northing",
+    "level",
+    "easting",
+    "northing",
+    "level",
+    "chainage",
+)
+
+
+def _align_batch_cell_empty(value):
+    if value is None:
+        return True
+    if isinstance(value, str) and not value.strip():
+        return True
+    return False
+
+
+def _detect_alignment_batch_layout(ws):
+    """
+    Locate the Input/Output header pair for an Alignment(1) batch sheet.
+
+    Returns (header_row_1based, data_start_row_1based) or raises ValueError.
+    """
+    max_scan = min(getattr(ws, "max_row", 0) or 0, 30)
+    for r in range(1, max_scan + 1):
+        labels = [
+            str(ws.cell(r, c).value or "").strip().upper()
+            for c in range(1, 9)
+        ]
+        if labels[0] != "INPUT" or labels[1] != "OUTPUT":
+            continue
+        if labels[4] != "INPUT" or labels[7] != "OUTPUT":
+            continue
+        fields = [
+            str(ws.cell(r + 1, c).value or "").strip().lower()
+            for c in range(1, 9)
+        ]
+        if fields != list(_ALIGN_BATCH_HEADERS):
+            continue
+        return r, r + 2
+    raise ValueError(
+        "Batch sheet not recognized. Need row INPUT/OUTPUT groups and "
+        "headers: chainage|easting|northing|level|easting|northing|level|chainage"
+    )
+
+
+def load_alignment_batch_workbook(path):
+    """Load an Alignment(1) batch workbook; returns (workbook, sheet, data_start)."""
+    try:
+        import openpyxl
+    except ImportError as exc:
+        raise ImportError(
+            "openpyxl is required to read batch .xlsx (pip install openpyxl)"
+        ) from exc
+    path = Path(path)
+    if path.suffix.lower() not in (".xlsx", ".xlsm"):
+        raise ValueError("Batch import supports .xlsx / .xlsm only")
+    wb = openpyxl.load_workbook(path)
+    ws = wb[wb.sheetnames[0]]
+    _group_row, data_start = _detect_alignment_batch_layout(ws)
+    return wb, ws, data_start
+
+
+def fill_alignment_batch_sheet(ws, points, data_start=3):
+    """
+    Fill empty Output cells on an Alignment(1) batch sheet.
+
+    Left: A chainage → B/C/D easting/northing/level when those are empty.
+    Right: E/F/G easting/northing/level → H chainage when H is empty.
+    Existing Output values are left unchanged. Returns stats dict.
+    """
+    if not points or len(points) < 2:
+        raise ValueError("Import a design alignment first (need ≥2 points)")
+    filled_left = 0
+    filled_right = 0
+    skipped = 0
+    errors = 0
+    max_row = ws.max_row or data_start - 1
+    for r in range(data_start, max_row + 1):
+        ch_in = _align_cell_float(ws.cell(r, 1).value)
+        e_out = ws.cell(r, 2).value
+        n_out = ws.cell(r, 3).value
+        lv_out = ws.cell(r, 4).value
+        e_in = _align_cell_float(ws.cell(r, 5).value)
+        n_in = _align_cell_float(ws.cell(r, 6).value)
+        lv_in = _align_cell_float(ws.cell(r, 7).value)
+        ch_out = ws.cell(r, 8).value
+
+        row_used = False
+        if ch_in is not None and all(
+            _align_batch_cell_empty(v) for v in (e_out, n_out, lv_out)
+        ):
+            try:
+                e, n, lv, _note = alignment_at_chainage(points, ch_in)
+                ws.cell(r, 2).value = float(e)
+                ws.cell(r, 3).value = float(n)
+                ws.cell(r, 4).value = float(lv)
+                filled_left += 1
+                row_used = True
+            except ValueError:
+                errors += 1
+
+        if (
+            None not in (e_in, n_in, lv_in)
+            and _align_batch_cell_empty(ch_out)
+        ):
+            try:
+                out = alignment_deviation(points, e_in, n_in, lv_in)
+                ws.cell(r, 8).value = float(out["chainage"])
+                filled_right += 1
+                row_used = True
+            except ValueError:
+                errors += 1
+
+        if not row_used and (
+            ch_in is not None or None not in (e_in, n_in, lv_in)
+        ):
+            skipped += 1
+
+    return {
+        "filled_left": filled_left,
+        "filled_right": filled_right,
+        "skipped": skipped,
+        "errors": errors,
+        "rows": max(0, max_row - data_start + 1),
+    }
+
+
+def save_alignment_batch_workbook(wb, path):
+    """Save a filled batch workbook to path (.xlsx)."""
+    path = Path(path)
+    if path.suffix.lower() not in (".xlsx", ".xlsm"):
+        path = path.with_suffix(".xlsx")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    wb.save(path)
+    return path
+
+
 # ---------------------------------------------------------------------------
 # Free Station (resection) math — ported 1:1 from Free_Station_FAI.xls
 #
@@ -4243,27 +4389,32 @@ class SlopeCalcDialog(FramelessCalcDialog):
 
 
 class AlignmentCalcDialog(FramelessCalcDialog):
-    """Alignment(1) — import chainage/E/N/level; interpolate or deviation."""
+    """Alignment(1) — import design; query; batch Input→Output fill."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Alignment(1)")
-        self.setMinimumSize(560, 420)
-        self.resize(600, 460)
-        self._points = []  # session-only; not persisted to config
+        self.setMinimumSize(580, 520)
+        self.resize(640, 560)
+        self._points = []  # design polyline; session-only
+        self._batch_wb = None
+        self._batch_ws = None
+        self._batch_data_start = 3
+        self._batch_source_path = None
+        self._batch_filled = False
 
         root = install_ornate_calc_frame(self)
         root.setSpacing(6)
         root.addWidget(make_draggable_title(self, "Alignment(1)"))
 
-        # IMPORT row
+        # IMPORT row — design alignment polyline
         import_row = QHBoxLayout()
         import_row.setSpacing(6)
         import_btn = QPushButton("IMPORT")
         import_btn.setObjectName("calcAction")
         import_btn.setFixedHeight(24)
         import_btn.setToolTip(
-            "Import alignment points from Excel "
+            "Import design alignment points from Excel "
             "(chainage/chanage, Easting, Northing, level)"
         )
         import_btn.clicked.connect(self._import_from_excel)
@@ -4314,6 +4465,44 @@ class AlignmentCalcDialog(FramelessCalcDialog):
         box2_l.addWidget(self.result2)
         root.addWidget(box2)
 
+        # Box 3 — 大量運算 (batch Input→Output workbook)
+        box3, box3_l = self._section_frame("3", "大量運算 (batch)")
+        batch_row = QHBoxLayout()
+        batch_row.setSpacing(6)
+        batch_import_btn = QPushButton("Import batch")
+        batch_import_btn.setObjectName("calcAction")
+        batch_import_btn.setFixedHeight(24)
+        batch_import_btn.setToolTip(
+            "Import Alignment(1) batch sheet "
+            "(INPUT chainage → OUTPUT E/N/Lv | "
+            "INPUT E/N/Lv → OUTPUT chainage)"
+        )
+        batch_import_btn.clicked.connect(self._import_batch_excel)
+        batch_row.addWidget(batch_import_btn)
+        compute_btn = QPushButton("Compute")
+        compute_btn.setObjectName("calcAction")
+        compute_btn.setFixedHeight(24)
+        compute_btn.setToolTip(
+            "Fill empty Output cells from the loaded design alignment"
+        )
+        compute_btn.clicked.connect(self._compute_batch)
+        batch_row.addWidget(compute_btn)
+        batch_out_btn = QPushButton("Output")
+        batch_out_btn.setObjectName("calcAction")
+        batch_out_btn.setFixedHeight(24)
+        batch_out_btn.setToolTip(
+            "Save completed batch workbook as Excel "
+            "(computes first if needed)"
+        )
+        batch_out_btn.clicked.connect(self._output_batch_excel)
+        batch_row.addWidget(batch_out_btn)
+        box3_l.addLayout(batch_row)
+        self.batch_status = QLabel("No batch sheet loaded")
+        self.batch_status.setObjectName("calcFieldCaption")
+        self.batch_status.setWordWrap(True)
+        box3_l.addWidget(self.batch_status)
+        root.addWidget(box3)
+
         root.addStretch()
         close_row = QHBoxLayout()
         close_row.addStretch()
@@ -4353,6 +4542,7 @@ class AlignmentCalcDialog(FramelessCalcDialog):
             QMessageBox.warning(self, "Alignment(1)", f"Import failed:\n{exc}")
             return
         self._points = points
+        self._batch_filled = False
         ch0, ch1 = points[0][0], points[-1][0]
         self.status.setText(
             f"Loaded {len(points)} points  ·  chainage {ch0:g} → {ch1:g}"
@@ -4367,6 +4557,111 @@ class AlignmentCalcDialog(FramelessCalcDialog):
             self.lv_in.setValue(lv)
         except ValueError:
             pass
+
+    def _import_batch_excel(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import Alignment(1) batch sheet",
+            "",
+            "Excel workbooks (*.xlsx *.xlsm);;All files (*)",
+        )
+        if not path:
+            return
+        try:
+            wb, ws, data_start = load_alignment_batch_workbook(path)
+        except Exception as exc:
+            self.batch_status.setText(f"Batch import failed: {exc}")
+            QMessageBox.warning(
+                self, "Alignment(1)", f"Batch import failed:\n{exc}"
+            )
+            return
+        if self._batch_wb is not None:
+            try:
+                self._batch_wb.close()
+            except Exception:
+                pass
+        self._batch_wb = wb
+        self._batch_ws = ws
+        self._batch_data_start = data_start
+        self._batch_source_path = path
+        self._batch_filled = False
+        n_rows = max(0, (ws.max_row or 0) - data_start + 1)
+        self.batch_status.setText(
+            f"Batch loaded · {n_rows} data rows · Output empty until Compute"
+        )
+
+    def _reload_batch_from_source(self):
+        if not self._batch_source_path:
+            raise ValueError("Import a batch sheet first")
+        wb, ws, data_start = load_alignment_batch_workbook(
+            self._batch_source_path
+        )
+        if self._batch_wb is not None:
+            try:
+                self._batch_wb.close()
+            except Exception:
+                pass
+        self._batch_wb = wb
+        self._batch_ws = ws
+        self._batch_data_start = data_start
+        self._batch_filled = False
+
+    def _compute_batch(self):
+        try:
+            self._require_points()
+            if self._batch_source_path is None and self._batch_ws is None:
+                raise ValueError("Import a batch sheet first")
+            # Reload so recompute after a new design import re-fills cleanly.
+            if self._batch_source_path:
+                self._reload_batch_from_source()
+            stats = fill_alignment_batch_sheet(
+                self._batch_ws,
+                self._points,
+                data_start=self._batch_data_start,
+            )
+        except ValueError as exc:
+            self.batch_status.setText(str(exc))
+            QMessageBox.warning(self, "Alignment(1)", str(exc))
+            return
+        except Exception as exc:
+            self.batch_status.setText(f"Compute failed: {exc}")
+            QMessageBox.warning(
+                self, "Alignment(1)", f"Compute failed:\n{exc}"
+            )
+            return
+        self._batch_filled = True
+        self.batch_status.setText(
+            f"Computed · left filled {stats['filled_left']}  ·  "
+            f"right filled {stats['filled_right']}  ·  "
+            f"skipped {stats['skipped']}  ·  errors {stats['errors']}"
+        )
+
+    def _output_batch_excel(self):
+        if self._batch_wb is None or self._batch_ws is None:
+            QMessageBox.warning(
+                self,
+                "Alignment(1)",
+                "Import a batch sheet first, then Output.",
+            )
+            return
+        if not self._batch_filled:
+            self._compute_batch()
+            if not self._batch_filled:
+                return
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Alignment(1) batch Output",
+            "Alignment_1_batch_out.xlsx",
+            "Excel workbooks (*.xlsx);;All files (*)",
+        )
+        if not path:
+            return
+        try:
+            saved = save_alignment_batch_workbook(self._batch_wb, path)
+        except Exception as exc:
+            QMessageBox.warning(self, "Alignment(1)", f"Output failed:\n{exc}")
+            return
+        self.batch_status.setText(f"Saved batch Output → {saved}")
 
     def _calc_from_chainage(self):
         try:
