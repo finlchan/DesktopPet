@@ -330,7 +330,7 @@ def test_catalog_costs():
     assert FUNDS_PER_FOOD_BUY == 8
     assert FUNDS_PER_QUARRY == 8
     assert FUNDS_PER_OILFIELD == 50
-    assert SAVE_VERSION == 16
+    assert SAVE_VERSION == 17
     assert 0 < OIL_DISCOVER_CHANCE <= 1
     assert 0 < OIL_DEPLETION_CHANCE < 1
     assert TSUNAMI_BASE_CHANCE > 0
@@ -2798,13 +2798,23 @@ def test_dialog_import_offscreen():
     # Settings live in their own drawer (設定 icon), not under tools.
     assert dlg.hud.settings_drawer.isHidden()
 
-    # 通知 chrome on by default: 格資訊 + 日誌 visible; marquee hidden (no alerts).
+    # Defaults: 方格資訊 + 日誌 on; 警報 enabled but marquee hidden (no alerts).
     assert dlg.hud.icon_bar.button("notify").isChecked()
-    assert dlg.hud._status_chrome_on is True
+    assert dlg.hud._log_visible is True
+    assert dlg.hud._marquee_enabled is True
+    assert dlg.hud._tile_info_visible is True
     assert not dlg.hud.sel_label.isHidden()
     assert not dlg.hud.log_view.isHidden()
     assert dlg.hud.alert_marquee.isHidden()
     assert not dlg.hud.alert_marquee.has_alerts()
+    # 資訊 starts closed — island profile, not tile toggle.
+    assert dlg.hud.icon_bar.button("info").isChecked() is False
+    assert dlg.hud.island_profile.isHidden()
+    assert dlg.state.player_name
+    assert dlg.state.created_at
+    dlg.hud.refresh_island_profile(dlg.state)
+    assert "玩家" in dlg.hud.island_profile_body.text()
+    assert "建島" in dlg.hud.island_profile_body.text()
 
     # No top instruction banner (「點選格子…」/ shortcut strip) on open.
     from PySide6.QtWidgets import QLabel
@@ -2902,21 +2912,47 @@ def test_dialog_import_offscreen():
     assert dlg.hud.guestbook_frame.isHidden()
 
 
-    # 通知 toggles 格資訊 + 日誌 + 走馬燈 in sync (marquee needs alerts).
+    # Independent flags: log / marquee / tile-info via 通知 menu.
     dlg.hud.set_sample_alerts()
     assert dlg.hud.alert_marquee.has_alerts()
     assert not dlg.hud.alert_marquee.isHidden()
-    dlg.hud.icon_bar.button("notify").setChecked(False)
-    assert dlg.hud.sel_label.isHidden()
+    # 歷史記錄框 off → log hides; tile info + marquee stay.
+    dlg.hud.set_log_visible(False)
     assert dlg.hud.log_view.isHidden()
+    assert not dlg.hud.sel_label.isHidden()
+    assert not dlg.hud.alert_marquee.isHidden()
+    dlg.hud.set_log_visible(True)
+    assert not dlg.hud.log_view.isHidden()
+    # 警報 off → marquee hides; tile info + log stay.
+    dlg.hud.set_marquee_enabled(False)
     assert dlg.hud.alert_marquee.isHidden()
-    dlg.hud.icon_bar.button("notify").setChecked(True)
     assert not dlg.hud.sel_label.isHidden()
     assert not dlg.hud.log_view.isHidden()
+    dlg.hud.set_marquee_enabled(True)
     assert not dlg.hud.alert_marquee.isHidden()
-    # Clear alerts → marquee hides even with chrome on.
+    # 方格資訊 off → tile hides; log／marquee stay. 資訊 icon unaffected.
+    dlg.hud.set_tile_info_visible(False)
+    assert dlg.hud.sel_label.isHidden()
+    assert not dlg.hud.log_view.isHidden()
+    assert not dlg.hud.alert_marquee.isHidden()
+    assert dlg.hud.icon_bar.button("info").isChecked() is False
+    dlg.hud.set_tile_info_visible(True)
+    assert not dlg.hud.sel_label.isHidden()
+    # 資訊 opens island profile — never toggles tile box.
+    dlg.hud.icon_bar.button("info").setChecked(True)
+    assert not dlg.hud.island_profile.isHidden()
+    assert not dlg.hud.sel_label.isHidden()
+    body = dlg.hud.island_profile_body.text()
+    assert "玩家" in body and "建島" in body
+    assert "回合" in body and str(dlg.state.size) in body
+    dlg.hud.icon_bar.button("info").setChecked(False)
+    assert dlg.hud.island_profile.isHidden()
+    # Restore notify options; clear alerts → marquee hides even with 警報 on.
+    dlg.hud.set_log_visible(True)
+    dlg.hud.set_marquee_enabled(True)
     dlg.hud.set_alerts([])
     assert dlg.hud.alert_marquee.isHidden()
+    assert not dlg.hud.log_view.isHidden()
 
 
     # Select a buildable grass cell → farm/factory enable.

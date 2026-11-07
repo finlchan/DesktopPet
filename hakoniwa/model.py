@@ -413,7 +413,7 @@ Coord = Tuple[int, int]
 LAND_TERRAINS = frozenset(k for k, v in TERRAIN.items() if v["land"])
 SETTLEMENT_TERRAINS = frozenset({"village", "town", "city"})
 BUILDABLE = frozenset({"grass"})  # 平地 only（村／町／都市請先整地；採掘場除外）
-SAVE_VERSION = 16
+SAVE_VERSION = 17
 
 
 def timber_funds(trees: int) -> int:
@@ -733,6 +733,8 @@ class IslandState:
     attract_pending: bool = False  # 誘致活動：下一次 next_turn 額外人口
     satellite_active: bool = False  # 觀測衛星在軌：減震／海嘯／噴火
     name: str = "箱庭島"
+    player_name: str = "島主"  # 本島玩家／島主顯示名
+    created_at: str = ""  # 建島時間（UTC ISO）；空則於 __post_init__ 填入
     cells: List[List[Cell]] = field(default_factory=list)
     log: List[str] = field(default_factory=list)
     comments: List[GuestbookEntry] = field(default_factory=list)
@@ -740,6 +742,10 @@ class IslandState:
     island_id: str = "home"  # multi-island catalog id (home | demo-* | …)
 
     def __post_init__(self) -> None:
+        if not str(self.created_at or "").strip():
+            self.created_at = _utc_now_iso()
+        if not str(self.player_name or "").strip():
+            self.player_name = "島主"
         if not self.cells:
             self.cells = self._new_map()
             self._log("島已生成：中央 7 格陸地（泥／草），沿岸淺灘，其餘為海。")
@@ -2180,6 +2186,8 @@ class IslandState:
             "version": SAVE_VERSION,
             "id": self.island_id,
             "name": self.name,
+            "player_name": self.player_name,
+            "created_at": self.created_at,
             "size": self.size,
             "turn": self.turn,
             "funds": self.funds,
@@ -2215,6 +2223,8 @@ class IslandState:
         raw_deposit = data.get("bank_deposit")
         raw_attract = data.get("attract_pending")
         raw_sat = data.get("satellite_active")
+        raw_player = data.get("player_name") or data.get("owner_name") or ""
+        raw_created = data.get("created_at") or data.get("created") or ""
         state = cls(
             size=size,
             turn=int(data.get("turn") or 1),
@@ -2229,6 +2239,8 @@ class IslandState:
             attract_pending=bool(raw_attract) if raw_attract is not None else False,
             satellite_active=bool(raw_sat) if raw_sat is not None else False,
             name=str(data.get("name") or "箱庭島"),
+            player_name=str(raw_player).strip() or "島主",
+            created_at=str(raw_created).strip(),
             cells=parsed if ok else [],
             log=[str(x) for x in (data.get("log") or [])][-80:],
             comments=_parse_comments(data.get("comments")),
