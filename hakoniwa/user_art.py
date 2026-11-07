@@ -34,6 +34,7 @@ DATA_USER_REL = Path("Data") / "hakoniwa" / "user"
 # ---------------------------------------------------------------------------
 
 # Terrain keys → optional override PNG (else bundled tiles / color wash).
+# 村／町／都市 are buildings (see USER_BUILDING_FILES), not terrain tops.
 USER_TERRAIN_FILES: Dict[str, str] = {
     "sea": "sea.png",
     "shallow": "shallow.png",
@@ -42,15 +43,13 @@ USER_TERRAIN_FILES: Dict[str, str] = {
     "grass": "grass.png",
     "forest": "forest.png",
     "mountain": "mountain.png",
-    "village": "village.png",
-    "town": "town.png",
-    "city": "city.png",
 }
 
 # Optional sea backdrop override (else bundled ocean-background.png / wash).
 USER_OCEAN_BACKGROUND = "ocean-background.png"
 
 # Building keys → optional art (else solid color diamond).
+# Includes village／town／city (settlement evolution; paint via building EW+S path).
 USER_BUILDING_FILES: Dict[str, str] = {
     key: f"{key}.png" for key in BUILDINGS if key is not None
 }

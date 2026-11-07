@@ -37,21 +37,16 @@ TERRAIN_TILE_FILES: Dict[str, str] = {
     "grass": "grass-01.png",
     "forest": "grass-01.png",
     "mountain": "dirt-01.png",  # reuse dirt top + wash（色塊；用戶後補山圖）
-    "village": "dirt-01.png",
-    "town": "dirt-01.png",
-    "city": "dirt-01.png",
 }
 
-# Optional colour wash after texture (settlements / forest stay readable).
+# Optional colour wash after texture (forest / mountain / oilfield stay readable).
 # Forest uses grass top + deeper green wash (flat top only; no skirts).
 # Shallow keeps un-tinted shallow-01.png; deep sea is baked into sea-01.png.
+# 村／町／都市 are buildings (USER_BUILDING_FILES) — no terrain tint.
 TERRAIN_TINT: Dict[str, tuple] = {
     "oilfield": (30, 28, 24, 150),  # 海底油田／石油平台色塊洗
     "forest": (12, 58, 24, 120),
     "mountain": (90, 85, 75, 110),
-    "village": (200, 170, 100, 55),
-    "town": (180, 120, 70, 70),
-    "city": (140, 100, 120, 80),
 }
 
 _BLACK_KEY_LUMA = 28  # near-black outside diamond → transparent

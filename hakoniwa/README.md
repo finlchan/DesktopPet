@@ -90,10 +90,10 @@ portrait subjects:
 
 | Category | Filenames |
 |---|---|
-| Terrain | `sea.png` `shallow.png` `oilfield.png` `dirt.png` `grass.png` `forest.png` `mountain.png` `village.png` `town.png` `city.png` |
+| Terrain | `sea.png` `shallow.png` `oilfield.png` `dirt.png` `grass.png` `forest.png` `mountain.png` |
 | Backdrop | `ocean-background.png` |
 
-| Buildings | `farm.png` `factory.png` `quarry.png` `defense.png` `missile_base.png` `undersea_base.png` `decoy.png` `harbor.png` `shipyard.png` `breakwater.png` `monument.png` `bank.png` `supermarket.png` `shrine.png` `park.png` `airport.png` `rocket_base.png` `hotel.png` `casino.png` `university.png` `research_lab.png` `aquafarm.png` `amusement_park.png` `power_plant.png` |
+| Buildings | `farm.png` `factory.png` `quarry.png` `village.png` `town.png` `city.png` `defense.png` `missile_base.png` `undersea_base.png` `decoy.png` `harbor.png` `shipyard.png` `breakwater.png` `monument.png` `bank.png` `supermarket.png` `shrine.png` `park.png` `airport.png` `rocket_base.png` `hotel.png` `casino.png` `university.png` `research_lab.png` `aquafarm.png` `amusement_park.png` `power_plant.png` |
 
 | Monsters | `inora.png` |
 
