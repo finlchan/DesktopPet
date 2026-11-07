@@ -59,7 +59,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261106.05"
+APP_VERSION = "261106.06"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -2735,6 +2735,17 @@ def _survey_cos(deg):
 
 
 def _survey_asn(x):
+    # Clamp tiny float overshoot; larger |x|>1 is a real domain failure.
+    if x > 1.0:
+        if x <= 1.0 + 1e-12:
+            x = 1.0
+        else:
+            raise ValueError("math domain error")
+    elif x < -1.0:
+        if x >= -1.0 - 1e-12:
+            x = -1.0
+        else:
+            raise ValueError("math domain error")
     d = math.sqrt(-x * x + 1)
     if d == 0:
         return x * 90
@@ -2742,6 +2753,16 @@ def _survey_asn(x):
 
 
 def _survey_acs(x):
+    if x > 1.0:
+        if x <= 1.0 + 1e-12:
+            x = 1.0
+        else:
+            raise ValueError("math domain error")
+    elif x < -1.0:
+        if x >= -1.0 - 1e-12:
+            x = -1.0
+        else:
+            raise ValueError("math domain error")
     d = math.sqrt(-x * x + 1)
     if d == 0:
         return (1 - x) * 180 / 2
@@ -2752,12 +2773,16 @@ def survey_polar(se, sn, e, n, kind):
     """VBA Polar(): kind 'D' → horizontal distance, 'B' → bearing (DD.MMSS)."""
     de = e - se
     dn = n - sn
+    hyp = math.sqrt(de * de + dn * dn)
     if kind == "D":
-        return math.sqrt(de * de + dn * dn)
+        return hyp
     if kind == "B":
+        if hyp < 1e-15:
+            raise ValueError("From and To stations coincide (zero baseline)")
+        ratio = dn / hyp
         if de >= 0:
-            return survey_dms(_survey_acs(dn / math.sqrt(de * de + dn * dn)))
-        return survey_dms(360 - _survey_acs(dn / math.sqrt(de * de + dn * dn)))
+            return survey_dms(_survey_acs(ratio))
+        return survey_dms(360 - _survey_acs(ratio))
     raise ValueError(f"Unknown polar kind: {kind}")
 
 
@@ -2775,26 +2800,43 @@ def free_station_branch(e1, n1, e2, n2, rl2, brg1, brg2, va2, sd2, sh2, hi, mirr
     (brg1, brg2) = observed mean bearings to From / To (DD.MMSS);
     (va2, sd2, sh2) = observed zenith angle, slope distance, prism height to To;
     hi = instrument height at the free station. Returns (E, N, RL) or None
-    when the branch is geometrically invalid (mirror condition not met).
+    when the branch is geometrically invalid (domain / mirror condition /
+    coincident stations). Soft-fails instead of raising for recoverable
+    geometry so the pair table can still list choices.
     """
-    brg1_deg = survey_deg(survey_polar(e2, n2, e1, n1, "B"))
-    hd1 = survey_polar(e2, n2, e1, n1, "D")
-    hd2 = _survey_sin(survey_deg(va2)) * sd2
-    if hd2 <= 0:
-        raise ValueError("Slope distance must give a positive horizontal distance")
-    raa = survey_test_deg(survey_deg(brg2) - survey_deg(brg1))
-    rab = _survey_asn(_survey_sin(raa) * hd2 / hd1)
-    if mirror:
-        # VBA FreeStation_Mirror: dead BRG_A line omitted; mirror branch is
-        # valid only when |RAB| > |RAA|, then RAB is flipped to 180 − RAB.
-        if not 180 - abs(_survey_asn(_survey_sin(rab))) + abs(_survey_asn(_survey_sin(raa))) < 180:
+    try:
+        hd1 = survey_polar(e2, n2, e1, n1, "D")
+        if hd1 <= 1e-12:
             return None
-        rab = 180 - rab
-    brg_out = brg1_deg - (180 - raa - rab)
-    easting = hd2 * _survey_sin(brg_out) + e2
-    northing = hd2 * _survey_cos(brg_out) + n2
-    rl = rl2 - _survey_cos(survey_deg(va2)) * sd2 + sh2 - hi
-    return easting, northing, rl
+        brg1_deg = survey_deg(survey_polar(e2, n2, e1, n1, "B"))
+        hd2 = _survey_sin(survey_deg(va2)) * sd2
+        if hd2 <= 0:
+            return None
+        raa = survey_test_deg(survey_deg(brg2) - survey_deg(brg1))
+        asin_arg = _survey_sin(raa) * hd2 / hd1
+        if abs(asin_arg) > 1.0:
+            # Impossible / ambiguous triangle for this included angle — Excel
+            # still lists the pair so the user can Reject / Use mirror.
+            return None
+        rab = _survey_asn(asin_arg)
+        if mirror:
+            # VBA FreeStation_Mirror: dead BRG_A line omitted; mirror branch is
+            # valid only when |RAB| > |RAA|, then RAB is flipped to 180 − RAB.
+            if not (
+                180
+                - abs(_survey_asn(_survey_sin(rab)))
+                + abs(_survey_asn(_survey_sin(raa)))
+                < 180
+            ):
+                return None
+            rab = 180 - rab
+        brg_out = brg1_deg - (180 - raa - rab)
+        easting = hd2 * _survey_sin(brg_out) + e2
+        northing = hd2 * _survey_cos(brg_out) + n2
+        rl = rl2 - _survey_cos(survey_deg(va2)) * sd2 + sh2 - hi
+        return easting, northing, rl
+    except (ValueError, ZeroDivisionError):
+        return None
 
 
 def mean_bearing_faces(brg_f1, brg_f2):
@@ -5593,7 +5635,7 @@ class FreeStationDialog(FramelessCalcDialog):
         return rows
 
     def _solve_pair(self, src, dst, hi):
-        """Solve one From→To pair; returns dict with prelim/mirror branches."""
+        """Solve one From→To pair; returns (prelim, mirror) — either may be None."""
         prelim = free_station_branch(
             src["e"], src["n"], dst["e"], dst["n"], dst["rl"] or 0.0,
             src["brg"], dst["brg"], dst["va"], dst["sd"], dst["sh"],
@@ -5609,14 +5651,21 @@ class FreeStationDialog(FramelessCalcDialog):
     def _pair_residual(self, easting, northing, src):
         if src["va"] is None or src["sd"] is None:
             return None
-        return (
-            survey_polar(easting, northing, src["e"], src["n"], "D")
-            - survey_sd_to_hd(src["sd"], src["va"])
-        )
+        try:
+            return (
+                survey_polar(easting, northing, src["e"], src["n"], "D")
+                - survey_sd_to_hd(src["sd"], src["va"])
+            )
+        except (ValueError, ZeroDivisionError):
+            return None
 
     def _select_branch(self, prelim, mirror, resid_prelim):
         """Sheet branch rule (H33/I33) — keep preliminary when its distance
         check is < 0.05 m, otherwise the mirror branch when it exists."""
+        if prelim is None and mirror is None:
+            return None, "no solution"
+        if prelim is None:
+            return mirror, "mirror"
         if resid_prelim is not None and abs(resid_prelim) < 0.05:
             return prelim, "direct"
         if mirror is not None:
@@ -5637,16 +5686,22 @@ class FreeStationDialog(FramelessCalcDialog):
             for dst in rows:
                 if src is dst or dst["va"] is None or dst["sd"] is None:
                     continue
+                # Never abort the whole Calculate for one bad pair — Excel
+                # still lists From/To with Prelim / Mirror / Reject / Use mirror.
                 try:
                     prelim, mirror = self._solve_pair(src, dst, hi)
-                except ValueError as exc:
-                    self.result.setText(f"Input error: {exc}")
-                    return
+                except Exception:
+                    prelim, mirror = None, None
                 key = (src["tag"], dst["tag"])
+                resid_prelim = (
+                    None
+                    if prelim is None
+                    else self._pair_residual(prelim[0], prelim[1], src)
+                )
                 solutions[key] = {
                     "src": src, "dst": dst,
                     "prelim": prelim, "mirror": mirror,
-                    "resid_prelim": self._pair_residual(prelim[0], prelim[1], src),
+                    "resid_prelim": resid_prelim,
                 }
         self._rebuild_pair_table(solutions)
         self._update_summary(station, solutions)
@@ -5658,9 +5713,24 @@ class FreeStationDialog(FramelessCalcDialog):
             row = self.pair_table.rowCount()
             self.pair_table.insertRow(row)
             choice = self._pair_choices.get((src_tag, dst_tag), "")
+            # Auto-clear stale "use mirror" when that branch is gone.
+            if choice == "mirror" and sol["mirror"] is None:
+                choice = ""
+                self._pair_choices[(src_tag, dst_tag)] = ""
             prelim, mirror = sol["prelim"], sol["mirror"]
-            chosen, branch = self._chosen_for(sol, choice)
-            resid = self._pair_residual(chosen[0], chosen[1], sol["src"]) if chosen else None
+            chosen, _branch = self._chosen_for(sol, choice)
+            resid = (
+                self._pair_residual(chosen[0], chosen[1], sol["src"])
+                if chosen
+                else None
+            )
+            rl_text = ""
+            if chosen is None:
+                rl_text = ""
+            elif sol["dst"]["rl"] is None:
+                rl_text = "n/a"
+            else:
+                rl_text = f"{chosen[2]:.3f}"
             cells = [
                 sol["src"]["name"], sol["dst"]["name"],
                 "" if prelim is None else f"{prelim[0]:.4f}",
@@ -5669,7 +5739,7 @@ class FreeStationDialog(FramelessCalcDialog):
                 "" if mirror is None else f"{mirror[1]:.4f}",
                 "" if chosen is None else f"{chosen[0]:.4f}",
                 "" if chosen is None else f"{chosen[1]:.4f}",
-                "n/a" if sol["dst"]["rl"] is None else f"{chosen[2]:.3f}",
+                rl_text,
                 "" if resid is None else f"{resid:+.3f}",
             ]
             for col, value in enumerate(cells):
@@ -5677,6 +5747,9 @@ class FreeStationDialog(FramelessCalcDialog):
             for col, checked in ((10, choice == "reject"), (11, choice == "mirror")):
                 box = QCheckBox()
                 box.setStyleSheet("QCheckBox { background-color: transparent; }")
+                if col == 11 and mirror is None:
+                    box.setEnabled(False)
+                    box.setToolTip("Mirror branch not available for this pair")
                 if checked:
                     box.setChecked(True)
                 box.toggled.connect(
@@ -5696,10 +5769,16 @@ class FreeStationDialog(FramelessCalcDialog):
     def _on_pair_choice(self, row, key, col, box):
         if col == 10:
             choice = "reject" if box.isChecked() else ""
-            sibling = self.pair_table.cellWidget(row, 11).findChild(QCheckBox)
+            sibling_wrap = self.pair_table.cellWidget(row, 11)
+            sibling = (
+                sibling_wrap.findChild(QCheckBox) if sibling_wrap else None
+            )
         else:
             choice = "mirror" if box.isChecked() else ""
-            sibling = self.pair_table.cellWidget(row, 10).findChild(QCheckBox)
+            sibling_wrap = self.pair_table.cellWidget(row, 10)
+            sibling = (
+                sibling_wrap.findChild(QCheckBox) if sibling_wrap else None
+            )
         if choice and sibling is not None and sibling.isChecked():
             sibling.blockSignals(True)
             sibling.setChecked(False)
@@ -5719,18 +5798,30 @@ class FreeStationDialog(FramelessCalcDialog):
         if choice == "mirror":
             if mirror is not None:
                 return mirror, "mirror (Y)"
-            return prelim, "mirror n/a"
-        return self._select_branch(prelim, mirror, sol["resid_prelim"])
+            if prelim is not None:
+                return prelim, "mirror n/a"
+            return None, "no solution"
+        return self._select_branch(prelim, mirror, sol.get("resid_prelim"))
 
     def _refresh_pair_row(self, row, key):
         sol = self._current_solutions[key]
         choice = self._pair_choices.get(key, "")
-        chosen, branch = self._chosen_for(sol, choice)
-        resid = self._pair_residual(chosen[0], chosen[1], sol["src"]) if chosen else None
+        chosen, _branch = self._chosen_for(sol, choice)
+        resid = (
+            self._pair_residual(chosen[0], chosen[1], sol["src"])
+            if chosen
+            else None
+        )
+        if chosen is None:
+            rl_text = ""
+        elif sol["dst"]["rl"] is None:
+            rl_text = "n/a"
+        else:
+            rl_text = f"{chosen[2]:.3f}"
         values = {
             6: "" if chosen is None else f"{chosen[0]:.4f}",
             7: "" if chosen is None else f"{chosen[1]:.4f}",
-            8: "" if chosen is None else f"{chosen[2]:.3f}",
+            8: rl_text,
             9: "" if resid is None else f"{resid:+.3f}",
         }
         for col, value in values.items():
@@ -5743,12 +5834,31 @@ class FreeStationDialog(FramelessCalcDialog):
             hi = getattr(self, "_last_hi", 0.0)
         lines = [f"◆ Free station {station}   inst. ht {hi:.3f} m"]
         kept = 0
+        unresolved = 0
         accepted = []  # (e, n, rl_or_None) for Average line
         for (src_tag, dst_tag), sol in solutions.items():
             choice = self._pair_choices.get((src_tag, dst_tag), "")
             chosen, branch = self._chosen_for(sol, choice)
             if chosen is None:
-                lines.append(f"  {sol['src']['name']} → {sol['dst']['name']} : rejected")
+                if choice == "reject":
+                    lines.append(
+                        f"  {sol['src']['name']} → {sol['dst']['name']} : rejected"
+                    )
+                else:
+                    unresolved += 1
+                    avail = []
+                    if sol["prelim"] is not None:
+                        avail.append("prelim")
+                    if sol["mirror"] is not None:
+                        avail.append("mirror")
+                    avail_text = (
+                        ", ".join(avail) if avail else "no prelim/mirror"
+                    )
+                    lines.append(
+                        f"  {sol['src']['name']} → {sol['dst']['name']} : "
+                        f"no usable solution ({avail_text}) — "
+                        f"Reject both or Use mirror"
+                    )
                 continue
             resid = self._pair_residual(chosen[0], chosen[1], sol["src"])
             resid_text = f"{resid:+.3f}" if resid is not None else "n/a"
@@ -5767,7 +5877,11 @@ class FreeStationDialog(FramelessCalcDialog):
             )
             return
         if kept == 0:
-            lines.append("  (all pairs rejected — nothing to report)")
+            lines.append(
+                "  Soft warning: no usable pair solutions remain — "
+                "review Dist. check / Use mirror / Reject both, "
+                "or check included angles and distances."
+            )
         else:
             avg_e = sum(e for e, _n, _rl in accepted) / kept
             avg_n = sum(n for _e, n, _rl in accepted) / kept
@@ -5780,7 +5894,14 @@ class FreeStationDialog(FramelessCalcDialog):
                 f"  Average :  E {avg_e:.4f}  N {avg_n:.4f}  RL {avg_rl_text}  "
                 f"({kept} pair{'s' if kept != 1 else ''})"
             )
-            lines.append("  ΔHD = distance check residual (m); direct/mirror = branch used")
+            if unresolved:
+                lines.append(
+                    f"  ({unresolved} pair{'s' if unresolved != 1 else ''} "
+                    f"need Reject both / Use mirror)"
+                )
+            lines.append(
+                "  ΔHD = distance check residual (m); direct/mirror = branch used"
+            )
         self.result.setText("\n".join(lines))
 
     def _copy_result(self):
