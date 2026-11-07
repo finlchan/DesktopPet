@@ -2880,6 +2880,16 @@ def test_dialog_import_offscreen():
     dlg.hud.tools_btn.setChecked(True)
     assert not dlg.hud.tools_drawer.isHidden()
     assert dlg.hud.settings_drawer.isHidden()
+    # No session-action footer under 放置 (下回合／觀光／存檔／新島／視圖).
+    from PySide6.QtWidgets import QPushButton
+
+    assert not hasattr(dlg.hud, "tools_layout")
+    assert not hasattr(dlg, "turn_btn")
+    footer_labels = ("下回合", "觀光", "存檔", "新島", "視圖")
+    for btn in dlg.hud.tools_drawer.findChildren(QPushButton):
+        label = btn.text() or ""
+        assert not any(bit in label for bit in footer_labels), label
+    assert dlg.hud.build_place_btn.text() == "放置"
     dlg.hud.tools_btn.setChecked(False)
     assert dlg.hud.tools_drawer.isHidden()
     dlg.hud.icon_bar.button("settings").setChecked(True)

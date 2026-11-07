@@ -387,24 +387,6 @@ class HakoniwaMapHud(QWidget):
         browse_row.addWidget(detail, stretch=3)
         drawer_outer.addLayout(browse_row, stretch=1)
 
-        # Session utilities under the browse pane (下回合／存檔…).
-        drawer_scroll = QScrollArea()
-        drawer_scroll.setWidgetResizable(True)
-        drawer_scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        drawer_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        drawer_scroll.setStyleSheet(
-            "QScrollArea { background: transparent; border: none; }"
-        )
-        drawer_scroll.setMaximumHeight(48)
-        self.tools_body = QWidget()
-        self.tools_layout = QVBoxLayout(self.tools_body)
-        self.tools_layout.setContentsMargins(2, 2, 2, 2)
-        self.tools_layout.setSpacing(2)
-        drawer_scroll.setWidget(self.tools_body)
-        drawer_outer.addWidget(drawer_scroll, stretch=0)
-
         # Selected tree key (tool / building); None when category or empty.
         self._build_tree_key: Optional[str] = None
 
@@ -1002,45 +984,6 @@ class HakoniwaIslandDialog(QDialog):
 
         self._populate_build_tree()
         self.hud.build_place_btn.clicked.connect(self._on_build_place_clicked)
-
-        tools_lay = self.hud.tools_layout
-        # Compact horizontal chip row (teal glass) — avoids calcAction gray stack.
-        footer = QHBoxLayout()
-        footer.setContentsMargins(0, 0, 0, 0)
-        footer.setSpacing(4)
-
-        self.turn_btn = QPushButton("T. 下回合")
-        self.turn_btn.setObjectName("hakoniwaDrawerAction")
-        self.turn_btn.setToolTip("結算本回合產糧／產資（快捷鍵 T）")
-        self.turn_btn.clicked.connect(self._next_turn)
-        footer.addWidget(self.turn_btn)
-
-        tour_btn = QPushButton("觀光")
-        tour_btn.setObjectName("hakoniwaDrawerAction")
-        tour_btn.setToolTip("瀏覽諸島地圖（唯讀）；留言板仍可用")
-        tour_btn.clicked.connect(self._open_tourism)
-        footer.addWidget(tour_btn)
-
-        save_btn = QPushButton("S. 存檔")
-        save_btn.setObjectName("hakoniwaDrawerAction")
-        save_btn.setToolTip("寫入本機 JSON（快捷鍵 S）")
-        save_btn.clicked.connect(self._save)
-        footer.addWidget(save_btn)
-
-        new_btn = QPushButton("新島")
-        new_btn.setObjectName("hakoniwaDrawerAction")
-        new_btn.setToolTip("新島（重置）")
-        new_btn.clicked.connect(self._new_island)
-        footer.addWidget(new_btn)
-
-        reset_view_btn = QPushButton("0. 視圖")
-        reset_view_btn.setObjectName("hakoniwaDrawerAction")
-        reset_view_btn.setToolTip("縮放／平移回到預設（快捷鍵 0）")
-        reset_view_btn.clicked.connect(self.map.reset_view)
-        footer.addWidget(reset_view_btn)
-        footer.addStretch(1)
-        tools_lay.addLayout(footer)
-        tools_lay.addStretch(1)
 
         # Server connection lives in the 設定 drawer (was under 工具／設定).
         settings_lay = self.hud.settings_layout
