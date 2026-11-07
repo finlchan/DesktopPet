@@ -14,8 +14,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from PySide6.QtCore import Qt, QEvent, QTimer
-from PySide6.QtGui import QKeySequence, QShortcut, QResizeEvent, QShowEvent
+from PySide6.QtCore import QPoint, Qt, QEvent, QTimer
+from PySide6.QtGui import QAction, QKeySequence, QShortcut, QResizeEvent, QShowEvent
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QMessageBox,
     QPushButton,
     QPlainTextEdit,
@@ -182,16 +183,15 @@ class HakoniwaMapHud(QWidget):
 
     Layout (user-locked annotation):
       - status bar → top center
-
-      - alert marquee → under status (警報走馬燈; via 通知; hidden without alerts)
-      - tile info → top-left (below status／marquee; 資訊 or 通知 chrome)
+      - alert marquee → under status (警報走馬燈; 通知→警報; hidden without alerts)
+      - tile info → top-left (below status／marquee; **資訊** only)
       - icon bar → bottom-left (通知／建築／資訊／留言／設定)
       - guestbook → bottom center (~70% transparent; **closed by default**)
-      - action log → bottom-right (~70% transparent; 通知 chrome)
+      - action log → bottom-right (~70% transparent; 通知→歷史記錄框)
       - tools / settings drawers → above icon bar when open
 
-    「通知」toggles status chrome in sync: 格資訊 + 行動日誌 + 警報走馬燈.
-
+    「通知」opens a small menu: 歷史記錄框 / 警報 (independent).
+    「資訊」toggles only the tile/info panel — never notify chrome.
     """
 
     def __init__(self, map_widget: HakoniwaMapWidget, parent=None):
@@ -210,7 +210,7 @@ class HakoniwaMapHud(QWidget):
         )
         self.stats.setTextFormat(Qt.TextFormat.PlainText)
 
-        # Alert marquee under status — hidden until alerts exist + 通知 chrome on.
+        # Alert marquee under status — hidden until alerts exist + 警報 on.
         self.alert_marquee = AlertMarquee(self)
         self.alert_marquee.hide()
 
@@ -261,8 +261,6 @@ class HakoniwaMapHud(QWidget):
         self.settings_layout.setSpacing(4)
         settings_outer.addWidget(self.settings_body)
 
-
-
         # Guestbook cluster (view + form) — closed by default; open via 留言.
         self.guestbook_frame = QFrame(self)
         self.guestbook_frame.setObjectName("hakoniwaHudGuestbookFrame")
@@ -283,55 +281,91 @@ class HakoniwaMapHud(QWidget):
         self.guestbook_form.setSpacing(4)
         gb_col.addLayout(self.guestbook_form)
 
-
-        # Status chrome (格資訊 + 日誌 + 走馬燈) starts on — panels as today.
-        self._status_chrome_on = True
+        # Independent panel flags (decoupled from #73 sync chrome).
+        self._log_visible = True
+        self._marquee_enabled = True
+        self._tile_info_visible = True
 
         # Wire icons after drawers exist (setChecked emits and may layout).
         self.icon_bar.iconToggled.connect(self._on_icon_toggled)
-        # 通知 = chrome master (checked). 資訊 = tile panel (checked). Drawers closed.
+        self.icon_bar.iconClicked.connect(self._on_icon_clicked)
+        # 通知 = menu launcher (checked when log or 警報 on). 資訊 = tile only.
         notify_btn = self.icon_bar.button("notify")
         if notify_btn is not None:
-            notify_btn.setToolTip("通知：格資訊／日誌／警報走馬燈")
-            notify_btn.setChecked(True)
+            notify_btn.setToolTip("通知：歷史記錄框／警報")
 
         info_btn = self.icon_bar.button("info")
         if info_btn is not None:
             info_btn.setChecked(True)
+
+        self._apply_panel_visibility()
+        self._sync_notify_button()
 
         self.setMinimumSize(480, 480)
         self.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
 
-
-    def _apply_status_chrome(self) -> None:
-        """Show/hide 格資訊 + 日誌 + 走馬燈 together from ``_status_chrome_on``."""
-        on = self._status_chrome_on
-        self.log_view.setVisible(on)
-        # Tile info follows chrome; 資訊 icon stays in sync when chrome flips.
-        info_btn = self.icon_bar.button("info")
-        if on:
-            if info_btn is not None and not info_btn.isChecked():
-                info_btn.setChecked(True)
-            else:
-                self.sel_label.setVisible(True)
-        else:
-            self.sel_label.setVisible(False)
-            if info_btn is not None and info_btn.isChecked():
-                # Block re-entry into notify via info toggled handler.
-                info_btn.blockSignals(True)
-                info_btn.setChecked(False)
-                info_btn.blockSignals(False)
-        # Marquee only when chrome on AND alerts are queued.
+    def _apply_panel_visibility(self) -> None:
+        """Apply independent log / tile-info / marquee flags to widgets."""
+        self.log_view.setVisible(self._log_visible)
+        self.sel_label.setVisible(self._tile_info_visible)
         self._sync_marquee_visibility()
 
     def _sync_marquee_visibility(self) -> None:
-        show = self._status_chrome_on and self.alert_marquee.has_alerts()
+        show = self._marquee_enabled and self.alert_marquee.has_alerts()
         self.alert_marquee.setVisible(show)
 
+    def _sync_notify_button(self) -> None:
+        """Bell looks active when either notify-menu option is on."""
+        btn = self.icon_bar.button("notify")
+        if btn is None:
+            return
+        want = self._log_visible or self._marquee_enabled
+        if btn.isChecked() != want:
+            btn.blockSignals(True)
+            btn.setChecked(want)
+            btn.blockSignals(False)
+
+    def set_log_visible(self, on: bool) -> None:
+        """Toggle 歷史記錄框 (action log) independently."""
+        on = bool(on)
+        if self._log_visible == on:
+            return
+        self._log_visible = on
+        self.log_view.setVisible(on)
+        self._sync_notify_button()
+        self._layout_overlays()
+        self._raise_overlays()
+
+    def set_marquee_enabled(self, on: bool) -> None:
+        """Toggle 警報 preference; marquee still needs queued alerts to show."""
+        on = bool(on)
+        if self._marquee_enabled == on:
+            return
+        self._marquee_enabled = on
+        self._sync_marquee_visibility()
+        self._sync_notify_button()
+        self._layout_overlays()
+        self._raise_overlays()
+
+    def set_tile_info_visible(self, on: bool) -> None:
+        """Toggle 格資訊 only — does not touch log／marquee／notify."""
+        on = bool(on)
+        if self._tile_info_visible == on:
+            return
+        self._tile_info_visible = on
+        self.sel_label.setVisible(on)
+        info_btn = self.icon_bar.button("info")
+        if info_btn is not None and info_btn.isChecked() != on:
+            info_btn.blockSignals(True)
+            info_btn.setChecked(on)
+            info_btn.blockSignals(False)
+        self._layout_overlays()
+        self._raise_overlays()
+
     def set_alerts(self, texts) -> None:
-        """Replace alert marquee lines; visibility follows 通知 chrome."""
+        """Replace alert marquee lines; visibility follows 警報 flag + queue."""
         self.alert_marquee.set_alerts(texts)
         self._sync_marquee_visibility()
         self._layout_overlays()
@@ -341,10 +375,56 @@ class HakoniwaMapHud(QWidget):
         self._sync_marquee_visibility()
         self._layout_overlays()
 
+    def _show_notify_menu(self) -> None:
+        """Popup: checkable 歷史記錄框 / 警報 under the bell."""
+        btn = self.icon_bar.button("notify")
+        menu = QMenu(self)
+        menu.setObjectName("hakoniwaNotifyMenu")
+        menu.setStyleSheet(
+            "QMenu#hakoniwaNotifyMenu {"
+            "  background: rgba(18, 36, 40, 235);"
+            "  color: rgb(230, 248, 245);"
+            "  border: 1px solid rgba(90, 200, 190, 210);"
+            "  padding: 4px;"
+            "}"
+            "QMenu#hakoniwaNotifyMenu::item {"
+            "  padding: 6px 28px 6px 28px;"
+            "  border-radius: 3px;"
+            "}"
+            "QMenu#hakoniwaNotifyMenu::item:selected {"
+            "  background: rgba(28, 52, 56, 240);"
+            "}"
+            "QMenu#hakoniwaNotifyMenu::indicator {"
+            "  width: 14px; height: 14px;"
+            "}"
+        )
+        act_log = QAction("歷史記錄框", menu)
+        act_log.setCheckable(True)
+        act_log.setChecked(self._log_visible)
+        act_log.toggled.connect(self.set_log_visible)
+        menu.addAction(act_log)
+
+        act_alert = QAction("警報", menu)
+        act_alert.setCheckable(True)
+        act_alert.setChecked(self._marquee_enabled)
+        act_alert.toggled.connect(self.set_marquee_enabled)
+        menu.addAction(act_alert)
+
+        if btn is not None:
+            # Open above the icon bar so the menu stays on-screen.
+            global_tl = btn.mapToGlobal(QPoint(0, 0))
+            hint = menu.sizeHint()
+            menu.exec(QPoint(global_tl.x(), global_tl.y() - hint.height() - 4))
+        else:
+            menu.exec(self.cursor().pos())
+
+    def _on_icon_clicked(self, kind: str) -> None:
+        if kind == "notify":
+            self._show_notify_menu()
+
     def _on_icon_toggled(self, kind: str, checked: bool) -> None:
         """Wire icon checks to panels; build／guestbook／settings exclusive."""
-        # 通知 is a chrome toggle, not a drawer — keep it out of exclusive set
-        # so tools／guestbook／settings can stay open while chrome is on.
+        # 通知 is a menu launcher (not a drawer / not a master chrome toggle).
         exclusive = ("build", "guestbook", "settings")
         if kind in exclusive and checked:
             for other in exclusive:
@@ -354,30 +434,20 @@ class HakoniwaMapHud(QWidget):
                         btn.setChecked(False)
 
         if kind == "notify":
-            self._status_chrome_on = checked
-            self._apply_status_chrome()
-        elif kind == "build":
+            # Cosmetic checked state only (synced from menu options).
+            return
+        if kind == "build":
             self.tools_drawer.setVisible(checked)
         elif kind == "info":
-            # Fine-grained tile panel; ignored while chrome is off.
-            if self._status_chrome_on:
-                self.sel_label.setVisible(checked)
-            elif checked:
-                # Turning info on while chrome off also re-enables chrome.
-                self._status_chrome_on = True
-                notify_btn = self.icon_bar.button("notify")
-                if notify_btn is not None and not notify_btn.isChecked():
-                    notify_btn.blockSignals(True)
-                    notify_btn.setChecked(True)
-                    notify_btn.blockSignals(False)
-                self._apply_status_chrome()
+            # Tile/info panel only — never forces log／marquee／notify open.
+            self._tile_info_visible = checked
+            self.sel_label.setVisible(checked)
         elif kind == "guestbook":
             self.guestbook_frame.setVisible(checked)
         elif kind == "settings":
             self.settings_drawer.setVisible(checked)
 
         self._layout_overlays()
-
         self._raise_overlays()
 
     def toggle_tools(self) -> None:
@@ -391,10 +461,8 @@ class HakoniwaMapHud(QWidget):
             btn.setChecked(False)
 
     def close_bottom_panels(self) -> None:
-
-        """Close build / guestbook / settings drawers (chrome／info stay)."""
+        """Close build / guestbook / settings drawers (notify／info stay)."""
         for kind in ("build", "guestbook", "settings"):
-
             btn = self.icon_bar.button(kind)
             if btn is not None and btn.isChecked():
                 btn.setChecked(False)

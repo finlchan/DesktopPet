@@ -55,9 +55,9 @@ All numeric / function chrome sits **inside the map viewport** (`HakoniwaMapHud`
 |---|---|---|
 | Status | Top center | **Single line**; order 狀態→資金→糧食→人口→回合→格數→分數; no connection mode |
 
-| Alert marquee | Under status | 警報走馬燈; shown when 通知 chrome on **and** alerts queued |
-| Tile info | Top-left | Below status／marquee; 資訊 icon or 通知 chrome (open by default) |
-| Action log | Bottom-right | ~70% transparent; part of 通知 chrome |
+| Alert marquee | Under status | 警報走馬燈; shown when **警報** on **and** alerts queued |
+| Tile info | Top-left | Below status／marquee; **資訊** icon only (open by default) |
+| Action log | Bottom-right | ~70% transparent; **歷史記錄框** via 通知 menu |
 
 | Guestbook | Bottom center | ~70% transparent; **closed by default**; open via 留言 icon |
 | Icon bar | Bottom-left | 通知／建築／資訊／留言／設定 — hover micro-animations |
@@ -65,7 +65,7 @@ All numeric / function chrome sits **inside the map viewport** (`HakoniwaMapHud`
 | Settings drawer | Above icon bar | 設定 icon → server connection |
 
 
-「通知」toggles status chrome in sync: 格資訊 + 行動日誌 + 警報走馬燈（無警報時走馬燈保持隱藏）。
+「通知」opens a small menu with two checkable options: **歷史記錄框** (action log) and **警報** (marquee; still hidden when no alerts). 「資訊」toggles **only** the tile/info panel — it does not open or sync notify chrome.
 
 
 No permanent right-side build column. Server URL / 本機·連線 live under 設定.

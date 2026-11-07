@@ -2782,9 +2782,11 @@ def test_dialog_import_offscreen():
     # Settings live in their own drawer (設定 icon), not under tools.
     assert dlg.hud.settings_drawer.isHidden()
 
-    # 通知 chrome on by default: 格資訊 + 日誌 visible; marquee hidden (no alerts).
+    # Defaults: 格資訊 + 日誌 on; 警報 enabled but marquee hidden (no alerts).
     assert dlg.hud.icon_bar.button("notify").isChecked()
-    assert dlg.hud._status_chrome_on is True
+    assert dlg.hud._log_visible is True
+    assert dlg.hud._marquee_enabled is True
+    assert dlg.hud._tile_info_visible is True
     assert not dlg.hud.sel_label.isHidden()
     assert not dlg.hud.log_view.isHidden()
     assert dlg.hud.alert_marquee.isHidden()
@@ -2876,21 +2878,43 @@ def test_dialog_import_offscreen():
     assert dlg.hud.guestbook_frame.isHidden()
 
 
-    # 通知 toggles 格資訊 + 日誌 + 走馬燈 in sync (marquee needs alerts).
+    # Independent flags: log / marquee / tile-info (decoupled from #73 sync).
     dlg.hud.set_sample_alerts()
     assert dlg.hud.alert_marquee.has_alerts()
     assert not dlg.hud.alert_marquee.isHidden()
-    dlg.hud.icon_bar.button("notify").setChecked(False)
+    # 歷史記錄框 off → log hides; tile info + marquee stay.
+    dlg.hud.set_log_visible(False)
+    assert dlg.hud.log_view.isHidden()
+    assert not dlg.hud.sel_label.isHidden()
+    assert not dlg.hud.alert_marquee.isHidden()
+    dlg.hud.set_log_visible(True)
+    assert not dlg.hud.log_view.isHidden()
+    # 警報 off → marquee hides; tile info + log stay.
+    dlg.hud.set_marquee_enabled(False)
+    assert dlg.hud.alert_marquee.isHidden()
+    assert not dlg.hud.sel_label.isHidden()
+    assert not dlg.hud.log_view.isHidden()
+    dlg.hud.set_marquee_enabled(True)
+    assert not dlg.hud.alert_marquee.isHidden()
+    # 資訊 toggles only tile panel — never forces notify panels.
+    dlg.hud.set_log_visible(False)
+    dlg.hud.set_marquee_enabled(False)
+    dlg.hud.icon_bar.button("info").setChecked(False)
     assert dlg.hud.sel_label.isHidden()
     assert dlg.hud.log_view.isHidden()
     assert dlg.hud.alert_marquee.isHidden()
-    dlg.hud.icon_bar.button("notify").setChecked(True)
+    dlg.hud.icon_bar.button("info").setChecked(True)
     assert not dlg.hud.sel_label.isHidden()
-    assert not dlg.hud.log_view.isHidden()
-    assert not dlg.hud.alert_marquee.isHidden()
-    # Clear alerts → marquee hides even with chrome on.
+    assert dlg.hud.log_view.isHidden()
+    assert dlg.hud.alert_marquee.isHidden()
+    assert dlg.hud._log_visible is False
+    assert dlg.hud._marquee_enabled is False
+    # Restore notify options; clear alerts → marquee hides even with 警報 on.
+    dlg.hud.set_log_visible(True)
+    dlg.hud.set_marquee_enabled(True)
     dlg.hud.set_alerts([])
     assert dlg.hud.alert_marquee.isHidden()
+    assert not dlg.hud.log_view.isHidden()
 
 
     # Select a buildable grass cell → farm/factory enable.
