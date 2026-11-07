@@ -46,11 +46,9 @@ ICON_GAP = 6
 ICON_ANIM_MS = 720
 ICON_KEYS = ("notify", "build", "info", "guestbook", "settings")
 ICON_TIPS = {
-
-    "notify": "通知：格資訊／日誌／警報走馬燈",
-
+    "notify": "通知：歷史記錄框／警報／方格資訊",
     "build": "建築／工具",
-    "info": "格子資訊",
+    "info": "本島基本資料",
     "guestbook": "訪客留言板",
     "settings": "設定",
 }
@@ -70,12 +68,21 @@ class HakoniwaIconButton(QWidget):
     toggled = Signal(bool)
     clicked = Signal()
 
-    def __init__(self, kind: str, tip: str = "", parent=None):
+    def __init__(
+        self,
+        kind: str,
+        tip: str = "",
+        parent=None,
+        *,
+        toggle_on_click: bool = True,
+    ):
         super().__init__(parent)
         self.kind = kind
         self._checked = False
         self._hover = False
         self._anim_t = 0.0
+        # 通知 opens a menu instead of flipping checked on click.
+        self._toggle_on_click = bool(toggle_on_click)
         self.setFixedSize(ICON_SIZE, ICON_SIZE)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip(tip or ICON_TIPS.get(kind, kind))
@@ -147,7 +154,8 @@ class HakoniwaIconButton(QWidget):
         if event.button() == Qt.MouseButton.LeftButton and self.rect().contains(
             event.position().toPoint()
         ):
-            self.toggle()
+            if self._toggle_on_click:
+                self.toggle()
             self.clicked.emit()
             event.accept()
             return
@@ -432,6 +440,7 @@ class HakoniwaIconBar(QWidget):
     """Horizontal row of the five HUD icon buttons."""
 
     iconToggled = Signal(str, bool)  # kind, checked
+    iconClicked = Signal(str)  # kind — for menu launchers (通知)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -443,8 +452,15 @@ class HakoniwaIconBar(QWidget):
 
         self.buttons: Dict[str, HakoniwaIconButton] = {}
         for key in ICON_KEYS:
-            btn = HakoniwaIconButton(key, ICON_TIPS[key], self)
+            # 通知: click opens a popup menu; checked is synced from options.
+            btn = HakoniwaIconButton(
+                key,
+                ICON_TIPS[key],
+                self,
+                toggle_on_click=(key != "notify"),
+            )
             btn.toggled.connect(lambda checked, k=key: self._on_toggled(k, checked))
+            btn.clicked.connect(lambda k=key: self.iconClicked.emit(k))
             lay.addWidget(btn)
             self.buttons[key] = btn
 
@@ -480,10 +496,9 @@ class HakoniwaIconBar(QWidget):
     def exclusive_open(self, kind: Optional[str]) -> None:
         """Check only ``kind`` among mutually exclusive bottom drawers.
 
-
-        ``notify`` (status chrome) and ``info`` (tile panel) stay independent.
+        ``notify`` (menu: log／marquee／tile) stays independent of drawers.
         """
-        exclusive = ("build", "guestbook", "settings")
+        exclusive = ("build", "info", "guestbook", "settings")
 
         for key in exclusive:
             self.set_checked(key, key == kind)

@@ -14,8 +14,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from PySide6.QtCore import Qt, QEvent, QTimer
-from PySide6.QtGui import QKeySequence, QShortcut, QResizeEvent, QShowEvent
+from PySide6.QtCore import QEvent, QPoint, Qt, QTimer
+from PySide6.QtGui import (
+    QAction,
+    QKeySequence,
+    QResizeEvent,
+    QShortcut,
+    QShowEvent,
+)
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
@@ -24,6 +30,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QMessageBox,
     QPushButton,
     QPlainTextEdit,
@@ -35,8 +42,19 @@ from PySide6.QtWidgets import (
 
 
 from .alert_marquee import AlertMarquee
-
+from .build_tree import (
+    build_tree_categories,
+    cost_for_kind,
+    display_label,
+    effect_lines,
+    placement_blurb,
+    settlement_keys_for_tree,
+    unlock_met,
+    unlock_prereq,
+)
 from .hud_icons import HakoniwaIconBar
+from .list_row_fill import HakoniwaListRowFillItem
+from .timeline_draw import TimelineDrawPanel, TimelineNodeData
 
 from .demos import island_summary, local_demo_islands
 from .model import (
@@ -110,8 +128,18 @@ from .user_art import configure_user_art
 from .view import HakoniwaMapWidget
 
 # Overlay frames (action log / guestbook): 70% transparent ≈ 30% opaque.
-_OVERLAY_BG = "rgba(12, 28, 18, 77)"
-_OVERLAY_BORDER = "rgba(150, 200, 150, 130)"
+# Align with icon-bar teal glass (hud_icons._ICON_*), not olive/amber.
+_OVERLAY_BG = "rgba(14, 32, 36, 77)"
+_OVERLAY_BORDER = "rgba(90, 200, 190, 140)"
+
+# Drawer / icon-bar shared HUD chrome (deep teal glass · cyan border · orange).
+_DRAWER_BG = "rgba(18, 36, 40, 230)"
+_DRAWER_BORDER = "rgba(90, 200, 190, 210)"
+_ACCENT_BG = "rgba(176, 96, 36, 230)"
+_ACCENT_BG_HOVER = "rgba(196, 110, 42, 245)"
+_ACCENT_BORDER = "rgba(220, 140, 60, 230)"
+_HUD_TEXT = "#e6f8f5"
+_HUD_TEXT_DIM = "#a8d0c8"
 
 # In-map HUD styles (status / tile / log / guestbook / tools).
 # Status strip: fully frameless over the map (no green box); digit cells
@@ -133,46 +161,125 @@ QLabel#hakoniwaHudStatusPlain {{
     font-weight: bold;
 }}
 QLabel#hakoniwaHudTile {{
-    background-color: rgba(16, 40, 28, 170);
-    color: #d0ecd0;
-    border: 1px solid rgba(70, 170, 100, 170);
+    background-color: rgba(16, 40, 44, 170);
+    color: {_HUD_TEXT};
+    border: 1px solid {_DRAWER_BORDER};
     border-radius: 3px;
     padding: 4px 8px;
 }}
 QPlainTextEdit#hakoniwaHudLog,
 QPlainTextEdit#hakoniwaHudGuestbook {{
     background-color: {_OVERLAY_BG};
-    color: #e8f5e8;
+    color: {_HUD_TEXT};
     border: 1px solid {_OVERLAY_BORDER};
     border-radius: 4px;
     padding: 4px;
-    selection-background-color: #3d5a80;
+    selection-background-color: rgba(176, 96, 36, 180);
 }}
 QFrame#hakoniwaHudGuestbookFrame {{
     background-color: {_OVERLAY_BG};
     border: 1px solid {_OVERLAY_BORDER};
     border-radius: 4px;
 }}
+/* Tools／settings／island-profile drawers: same deep-teal glass + cyan as icon bar. */
 QFrame#hakoniwaToolsDrawer,
-
-QFrame#hakoniwaSettingsDrawer {{
-
-    background-color: rgba(24, 36, 28, 230);
-    border: 1px solid rgba(180, 120, 50, 200);
+QFrame#hakoniwaSettingsDrawer,
+QFrame#hakoniwaIslandProfile {{
+    background-color: {_DRAWER_BG};
+    border: 1px solid {_DRAWER_BORDER};
     border-radius: 4px;
 }}
 QLabel#hakoniwaHudCaption {{
-    color: #c8e0c8;
+    color: {_HUD_TEXT_DIM};
     background: transparent;
     border: none;
     padding: 0;
 }}
+QLabel#hakoniwaIslandProfileTitle {{
+    color: {_HUD_TEXT};
+    font-size: 12pt;
+    font-weight: bold;
+    background: transparent;
+    border: none;
+}}
+QLabel#hakoniwaIslandProfileBody {{
+    color: {_HUD_TEXT_DIM};
+    background: transparent;
+    border: none;
+}}
 QLineEdit#hakoniwaHudInput {{
-    background-color: rgba(30, 40, 30, 180);
-    color: #f0f0f0;
-    border: 1px solid rgba(120, 160, 120, 160);
+    background-color: rgba(14, 28, 32, 180);
+    color: {_HUD_TEXT};
+    border: 1px solid {_DRAWER_BORDER};
     border-radius: 3px;
     padding: 2px 4px;
+}}
+/* Building nav — category List Row Fill + Timeline Draw children. */
+QScrollArea#hakoniwaBuildNav {{
+    background: transparent;
+    border: none;
+}}
+QWidget#hakoniwaBuildNavBody {{
+    background: transparent;
+}}
+QScrollBar:vertical {{
+    background: transparent;
+    width: 8px;
+    margin: 2px;
+}}
+QScrollBar::handle:vertical {{
+    background: rgba(90, 200, 190, 120);
+    border-radius: 3px;
+    min-height: 24px;
+}}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+    height: 0;
+}}
+QFrame#hakoniwaBuildDetailPane {{
+    background-color: rgba(14, 28, 32, 120);
+    border: none;
+    border-left: 1px solid {_DRAWER_BORDER};
+}}
+QLabel#hakoniwaBuildDetailTitle {{
+    color: {_HUD_TEXT};
+    font-size: 13pt;
+    font-weight: bold;
+    background: transparent;
+    border: none;
+}}
+QLabel#hakoniwaBuildDetailBody {{
+    color: {_HUD_TEXT_DIM};
+    background: transparent;
+    border: none;
+}}
+QPushButton#hakoniwaBuildPlace {{
+    background-color: {_ACCENT_BG};
+    color: #fff8f0;
+    border: 1px solid {_ACCENT_BORDER};
+    border-radius: 3px;
+    min-height: 30px;
+    font-weight: bold;
+}}
+QPushButton#hakoniwaBuildPlace:disabled {{
+    background-color: rgba(28, 44, 48, 180);
+    color: rgba(168, 190, 188, 140);
+    border: 1px solid rgba(70, 110, 108, 120);
+}}
+QPushButton#hakoniwaBuildPlace:hover:!disabled {{
+    background-color: {_ACCENT_BG_HOVER};
+}}
+/* Drawer footer actions — teal glass chips, not calcAction gray. */
+QPushButton#hakoniwaDrawerAction {{
+    background-color: rgba(18, 36, 40, 210);
+    color: {_HUD_TEXT};
+    border: 1px solid {_DRAWER_BORDER};
+    border-radius: 3px;
+    min-height: 22px;
+    padding: 2px 8px;
+    font-size: 9pt;
+}}
+QPushButton#hakoniwaDrawerAction:hover {{
+    background-color: rgba(28, 52, 56, 230);
 }}
 """
 
@@ -182,16 +289,15 @@ class HakoniwaMapHud(QWidget):
 
     Layout (user-locked annotation):
       - status bar → top center
-
-      - alert marquee → under status (警報走馬燈; via 通知; hidden without alerts)
-      - tile info → top-left (below status／marquee; 資訊 or 通知 chrome)
+      - alert marquee → under status (警報走馬燈; 通知→警報; hidden without alerts)
+      - tile info → top-left (below status／marquee; 通知→方格資訊)
       - icon bar → bottom-left (通知／建築／資訊／留言／設定)
       - guestbook → bottom center (~70% transparent; **closed by default**)
-      - action log → bottom-right (~70% transparent; 通知 chrome)
-      - tools / settings drawers → above icon bar when open
+      - action log → bottom-right (~70% transparent; 通知→歷史記錄框)
+      - tools / settings / island-profile drawers → above icon bar when open
 
-    「通知」toggles status chrome in sync: 格資訊 + 行動日誌 + 警報走馬燈.
-
+    「通知」opens a small menu: 歷史記錄框 / 警報 / 方格資訊 (independent).
+    「資訊」shows 本島基本資料 (player／created／name／turn／size…) — not tile info.
     """
 
     def __init__(self, map_widget: HakoniwaMapWidget, parent=None):
@@ -234,19 +340,69 @@ class HakoniwaMapHud(QWidget):
         drawer_outer = QVBoxLayout(self.tools_drawer)
         drawer_outer.setContentsMargins(6, 6, 6, 6)
         drawer_outer.setSpacing(4)
-        drawer_scroll = QScrollArea()
-        drawer_scroll.setWidgetResizable(True)
-        drawer_scroll.setHorizontalScrollBarPolicy(
+
+        # Content browse/build: left category List Row Fill nav + right detail.
+        # (Custom scroll list — not QTreeWidget setItemWidget — so number / → /
+        # separators always paint.)
+        browse_row = QHBoxLayout()
+        browse_row.setContentsMargins(0, 0, 0, 0)
+        browse_row.setSpacing(6)
+
+        self.build_nav = QScrollArea()
+        self.build_nav.setObjectName("hakoniwaBuildNav")
+        self.build_nav.setWidgetResizable(True)
+        self.build_nav.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
-        drawer_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        drawer_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
-        self.tools_body = QWidget()
-        self.tools_layout = QVBoxLayout(self.tools_body)
-        self.tools_layout.setContentsMargins(2, 2, 2, 2)
-        self.tools_layout.setSpacing(4)
-        drawer_scroll.setWidget(self.tools_body)
-        drawer_outer.addWidget(drawer_scroll, stretch=1)
+        self.build_nav.setFrameShape(QFrame.Shape.NoFrame)
+        self.build_nav_body = QWidget()
+        self.build_nav_body.setObjectName("hakoniwaBuildNavBody")
+        self.build_nav_layout = QVBoxLayout(self.build_nav_body)
+        self.build_nav_layout.setContentsMargins(0, 0, 0, 0)
+        self.build_nav_layout.setSpacing(0)
+        self.build_nav_layout.addStretch(1)
+        self.build_nav.setWidget(self.build_nav_body)
+        # Compat alias used by older tests / call sites.
+        self.build_tree = self.build_nav
+        browse_row.addWidget(self.build_nav, stretch=2)
+
+        detail = QFrame()
+        detail.setObjectName("hakoniwaBuildDetailPane")
+        detail_lay = QVBoxLayout(detail)
+        detail_lay.setContentsMargins(8, 4, 4, 4)
+        detail_lay.setSpacing(4)
+        self.build_detail_title = QLabel("選擇建築／指令")
+        self.build_detail_title.setObjectName("hakoniwaBuildDetailTitle")
+        self.build_detail_title.setWordWrap(True)
+        detail_lay.addWidget(self.build_detail_title)
+        self.build_detail_cost = QLabel("")
+        self.build_detail_cost.setObjectName("hakoniwaBuildDetailBody")
+        self.build_detail_cost.setWordWrap(True)
+        detail_lay.addWidget(self.build_detail_cost)
+        self.build_detail_status = QLabel("")
+        self.build_detail_status.setObjectName("hakoniwaBuildDetailBody")
+        self.build_detail_status.setWordWrap(True)
+        detail_lay.addWidget(self.build_detail_status)
+        self.build_detail_place = QLabel("")
+        self.build_detail_place.setObjectName("hakoniwaBuildDetailBody")
+        self.build_detail_place.setWordWrap(True)
+        detail_lay.addWidget(self.build_detail_place)
+        self.build_detail_effects = QLabel("")
+        self.build_detail_effects.setObjectName("hakoniwaBuildDetailBody")
+        self.build_detail_effects.setWordWrap(True)
+        self.build_detail_effects.setAlignment(
+            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
+        )
+        detail_lay.addWidget(self.build_detail_effects, stretch=1)
+        self.build_place_btn = QPushButton("放置")
+        self.build_place_btn.setObjectName("hakoniwaBuildPlace")
+        self.build_place_btn.setEnabled(False)
+        detail_lay.addWidget(self.build_place_btn)
+        browse_row.addWidget(detail, stretch=3)
+        drawer_outer.addLayout(browse_row, stretch=1)
+
+        # Selected tree key (tool / building); None when category or empty.
+        self._build_tree_key: Optional[str] = None
 
         # Settings live in their own drawer (opened by 設定 icon).
         self.settings_drawer = QFrame(self)
@@ -261,7 +417,23 @@ class HakoniwaMapHud(QWidget):
         self.settings_layout.setSpacing(4)
         settings_outer.addWidget(self.settings_body)
 
-
+        # 資訊 → 本島基本資料 (not tile info).
+        self.island_profile = QFrame(self)
+        self.island_profile.setObjectName("hakoniwaIslandProfile")
+        self.island_profile.setVisible(False)
+        profile_lay = QVBoxLayout(self.island_profile)
+        profile_lay.setContentsMargins(8, 6, 8, 6)
+        profile_lay.setSpacing(4)
+        self.island_profile_title = QLabel("本島基本資料")
+        self.island_profile_title.setObjectName("hakoniwaIslandProfileTitle")
+        profile_lay.addWidget(self.island_profile_title)
+        self.island_profile_body = QLabel("")
+        self.island_profile_body.setObjectName("hakoniwaIslandProfileBody")
+        self.island_profile_body.setWordWrap(True)
+        self.island_profile_body.setAlignment(
+            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
+        )
+        profile_lay.addWidget(self.island_profile_body, stretch=1)
 
         # Guestbook cluster (view + form) — closed by default; open via 留言.
         self.guestbook_frame = QFrame(self)
@@ -283,55 +455,87 @@ class HakoniwaMapHud(QWidget):
         self.guestbook_form.setSpacing(4)
         gb_col.addLayout(self.guestbook_form)
 
-
-        # Status chrome (格資訊 + 日誌 + 走馬燈) starts on — panels as today.
-        self._status_chrome_on = True
+        # Independent panel flags (通知 menu + defaults).
+        self._log_visible = True
+        self._marquee_enabled = True
+        self._tile_info_visible = True
 
         # Wire icons after drawers exist (setChecked emits and may layout).
         self.icon_bar.iconToggled.connect(self._on_icon_toggled)
-        # 通知 = chrome master (checked). 資訊 = tile panel (checked). Drawers closed.
+        self.icon_bar.iconClicked.connect(self._on_icon_clicked)
+        # 通知 = menu launcher. 資訊 = island profile drawer (starts closed).
         notify_btn = self.icon_bar.button("notify")
         if notify_btn is not None:
-            notify_btn.setToolTip("通知：格資訊／日誌／警報走馬燈")
-            notify_btn.setChecked(True)
+            notify_btn.setToolTip("通知：歷史記錄框／警報／方格資訊")
 
-        info_btn = self.icon_bar.button("info")
-        if info_btn is not None:
-            info_btn.setChecked(True)
+        self._apply_panel_visibility()
+        self._sync_notify_button()
 
         self.setMinimumSize(480, 480)
         self.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
 
-
-    def _apply_status_chrome(self) -> None:
-        """Show/hide 格資訊 + 日誌 + 走馬燈 together from ``_status_chrome_on``."""
-        on = self._status_chrome_on
-        self.log_view.setVisible(on)
-        # Tile info follows chrome; 資訊 icon stays in sync when chrome flips.
-        info_btn = self.icon_bar.button("info")
-        if on:
-            if info_btn is not None and not info_btn.isChecked():
-                info_btn.setChecked(True)
-            else:
-                self.sel_label.setVisible(True)
-        else:
-            self.sel_label.setVisible(False)
-            if info_btn is not None and info_btn.isChecked():
-                # Block re-entry into notify via info toggled handler.
-                info_btn.blockSignals(True)
-                info_btn.setChecked(False)
-                info_btn.blockSignals(False)
-        # Marquee only when chrome on AND alerts are queued.
+    def _apply_panel_visibility(self) -> None:
+        """Apply independent log / tile-info / marquee flags to widgets."""
+        self.log_view.setVisible(self._log_visible)
+        self.sel_label.setVisible(self._tile_info_visible)
         self._sync_marquee_visibility()
 
     def _sync_marquee_visibility(self) -> None:
-        show = self._status_chrome_on and self.alert_marquee.has_alerts()
+        show = self._marquee_enabled and self.alert_marquee.has_alerts()
         self.alert_marquee.setVisible(show)
 
+    def _sync_notify_button(self) -> None:
+        """Bell looks active when any notify-menu option is on."""
+        btn = self.icon_bar.button("notify")
+        if btn is None:
+            return
+        want = (
+            self._log_visible
+            or self._marquee_enabled
+            or self._tile_info_visible
+        )
+        if btn.isChecked() != want:
+            btn.blockSignals(True)
+            btn.setChecked(want)
+            btn.blockSignals(False)
+
+    def set_log_visible(self, on: bool) -> None:
+        """Toggle 歷史記錄框 (action log) independently."""
+        on = bool(on)
+        if self._log_visible == on:
+            return
+        self._log_visible = on
+        self.log_view.setVisible(on)
+        self._sync_notify_button()
+        self._layout_overlays()
+        self._raise_overlays()
+
+    def set_marquee_enabled(self, on: bool) -> None:
+        """Toggle 警報 preference; marquee still needs queued alerts to show."""
+        on = bool(on)
+        if self._marquee_enabled == on:
+            return
+        self._marquee_enabled = on
+        self._sync_marquee_visibility()
+        self._sync_notify_button()
+        self._layout_overlays()
+        self._raise_overlays()
+
+    def set_tile_info_visible(self, on: bool) -> None:
+        """Toggle 方格資訊 only — does not touch log／marquee／資訊 profile."""
+        on = bool(on)
+        if self._tile_info_visible == on:
+            return
+        self._tile_info_visible = on
+        self.sel_label.setVisible(on)
+        self._sync_notify_button()
+        self._layout_overlays()
+        self._raise_overlays()
+
     def set_alerts(self, texts) -> None:
-        """Replace alert marquee lines; visibility follows 通知 chrome."""
+        """Replace alert marquee lines; visibility follows 警報 flag + queue."""
         self.alert_marquee.set_alerts(texts)
         self._sync_marquee_visibility()
         self._layout_overlays()
@@ -341,11 +545,81 @@ class HakoniwaMapHud(QWidget):
         self._sync_marquee_visibility()
         self._layout_overlays()
 
+    def refresh_island_profile(self, state: IslandState) -> None:
+        """Fill 資訊 panel from island model fields."""
+        created = str(getattr(state, "created_at", "") or "").strip() or "—"
+        player = str(getattr(state, "player_name", "") or "").strip() or "—"
+        lines = [
+            f"島名：{state.name}",
+            f"玩家：{player}",
+            f"建島：{created}",
+            f"編號：{state.island_id}",
+            f"回合：{state.turn}",
+            f"格寬：{state.size}×{state.size}",
+            f"陸地：{state.land_count()} 格",
+            f"人口：{state.population}",
+            f"資金：{state.funds}",
+            f"糧食：{state.food}",
+        ]
+        self.island_profile_title.setText(state.name or "本島基本資料")
+        self.island_profile_body.setText("\n".join(lines))
+
+    def _show_notify_menu(self) -> None:
+        """Popup: checkable 歷史記錄框 / 警報 / 方格資訊 under the bell."""
+        btn = self.icon_bar.button("notify")
+        menu = QMenu(self)
+        menu.setObjectName("hakoniwaNotifyMenu")
+        menu.setStyleSheet(
+            "QMenu#hakoniwaNotifyMenu {"
+            "  background: rgba(18, 36, 40, 235);"
+            "  color: rgb(230, 248, 245);"
+            "  border: 1px solid rgba(90, 200, 190, 210);"
+            "  padding: 4px;"
+            "}"
+            "QMenu#hakoniwaNotifyMenu::item {"
+            "  padding: 6px 28px 6px 28px;"
+            "  border-radius: 3px;"
+            "}"
+            "QMenu#hakoniwaNotifyMenu::item:selected {"
+            "  background: rgba(28, 52, 56, 240);"
+            "}"
+            "QMenu#hakoniwaNotifyMenu::indicator {"
+            "  width: 14px; height: 14px;"
+            "}"
+        )
+        act_log = QAction("歷史記錄框", menu)
+        act_log.setCheckable(True)
+        act_log.setChecked(self._log_visible)
+        act_log.toggled.connect(self.set_log_visible)
+        menu.addAction(act_log)
+
+        act_alert = QAction("警報", menu)
+        act_alert.setCheckable(True)
+        act_alert.setChecked(self._marquee_enabled)
+        act_alert.toggled.connect(self.set_marquee_enabled)
+        menu.addAction(act_alert)
+
+        act_tile = QAction("方格資訊", menu)
+        act_tile.setCheckable(True)
+        act_tile.setChecked(self._tile_info_visible)
+        act_tile.toggled.connect(self.set_tile_info_visible)
+        menu.addAction(act_tile)
+
+        if btn is not None:
+            global_tl = btn.mapToGlobal(QPoint(0, 0))
+            hint = menu.sizeHint()
+            menu.exec(QPoint(global_tl.x(), global_tl.y() - hint.height() - 4))
+        else:
+            menu.exec(self.cursor().pos())
+
+    def _on_icon_clicked(self, kind: str) -> None:
+        if kind == "notify":
+            self._show_notify_menu()
+
     def _on_icon_toggled(self, kind: str, checked: bool) -> None:
-        """Wire icon checks to panels; build／guestbook／settings exclusive."""
-        # 通知 is a chrome toggle, not a drawer — keep it out of exclusive set
-        # so tools／guestbook／settings can stay open while chrome is on.
-        exclusive = ("build", "guestbook", "settings")
+        """Wire icon checks to panels; build／info／guestbook／settings exclusive."""
+        # 通知 is a menu launcher (not a drawer / not a master chrome toggle).
+        exclusive = ("build", "info", "guestbook", "settings")
         if kind in exclusive and checked:
             for other in exclusive:
                 if other != kind:
@@ -354,30 +628,18 @@ class HakoniwaMapHud(QWidget):
                         btn.setChecked(False)
 
         if kind == "notify":
-            self._status_chrome_on = checked
-            self._apply_status_chrome()
-        elif kind == "build":
+            # Cosmetic checked state only (synced from menu options).
+            return
+        if kind == "build":
             self.tools_drawer.setVisible(checked)
         elif kind == "info":
-            # Fine-grained tile panel; ignored while chrome is off.
-            if self._status_chrome_on:
-                self.sel_label.setVisible(checked)
-            elif checked:
-                # Turning info on while chrome off also re-enables chrome.
-                self._status_chrome_on = True
-                notify_btn = self.icon_bar.button("notify")
-                if notify_btn is not None and not notify_btn.isChecked():
-                    notify_btn.blockSignals(True)
-                    notify_btn.setChecked(True)
-                    notify_btn.blockSignals(False)
-                self._apply_status_chrome()
+            self.island_profile.setVisible(checked)
         elif kind == "guestbook":
             self.guestbook_frame.setVisible(checked)
         elif kind == "settings":
             self.settings_drawer.setVisible(checked)
 
         self._layout_overlays()
-
         self._raise_overlays()
 
     def toggle_tools(self) -> None:
@@ -391,10 +653,8 @@ class HakoniwaMapHud(QWidget):
             btn.setChecked(False)
 
     def close_bottom_panels(self) -> None:
-
-        """Close build / guestbook / settings drawers (chrome／info stay)."""
-        for kind in ("build", "guestbook", "settings"):
-
+        """Close build / info / guestbook / settings drawers (notify stays)."""
+        for kind in ("build", "info", "guestbook", "settings"):
             btn = self.icon_bar.button(kind)
             if btn is not None and btn.isChecked():
                 btn.setChecked(False)
@@ -408,6 +668,10 @@ class HakoniwaMapHud(QWidget):
         if gb is not None and gb.isChecked():
             gb.setChecked(False)
         self.guestbook_frame.hide()
+        info = self.icon_bar.button("info")
+        if info is not None and info.isChecked():
+            info.setChecked(False)
+        self.island_profile.hide()
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
         super().resizeEvent(event)
@@ -434,8 +698,7 @@ class HakoniwaMapHud(QWidget):
             self.guestbook_frame,
             self.tools_drawer,
             self.settings_drawer,
-
-
+            self.island_profile,
             self.icon_bar,
         ):
             # isHidden() = explicit hide; isVisible() is false before ancestors show.
@@ -492,16 +755,28 @@ class HakoniwaMapHud(QWidget):
             btn_h = 0
             btn_y = h - margin
 
-        # Drawers — above the icon bar, left side
-        drawer_w = min(280, max(200, w // 3))
-        drawer_h = min(h - 2 * margin - btn_h - 8, max(220, int(h * 0.62)))
+        # Drawers — left side. Build drawer is full height (prefs 建築抽屜樹);
+        # settings／island profile stay compact above the icon bar.
+        build_w = min(460, max(320, w // 2))
+        settings_w = min(280, max(200, w // 3))
+        profile_w = min(260, max(200, w // 3))
+        gap_above_bar = 6
+        full_h = max(220, btn_y - gap_above_bar - margin)
 
-        for drawer in (self.tools_drawer, self.settings_drawer):
-            if not drawer.isHidden():
-
-                dh = drawer_h if drawer is self.tools_drawer else min(drawer_h, 160)
-                self_y = max(margin, btn_y - 6 - dh)
-                drawer.setGeometry(margin, self_y, drawer_w, dh)
+        if not self.tools_drawer.isHidden():
+            self.tools_drawer.setGeometry(margin, margin, build_w, full_h)
+        if not self.settings_drawer.isHidden():
+            settings_h = min(160, full_h)
+            self.settings_drawer.setGeometry(
+                margin, max(margin, btn_y - gap_above_bar - settings_h),
+                settings_w, settings_h,
+            )
+        if not self.island_profile.isHidden():
+            profile_h = min(220, full_h)
+            self.island_profile.setGeometry(
+                margin, max(margin, btn_y - gap_above_bar - profile_h),
+                profile_w, profile_h,
+            )
 
         # Action log — bottom-right (~70% transparent frame)
         log_w = min(260, max(160, w // 3))
@@ -653,6 +928,9 @@ def tool_enabled(
         return True, ""
 
     if kind in PLACEABLE_BUILDINGS:
+        unlocked, lock_reason = state.building_unlock_met(kind)
+        if not unlocked:
+            return False, lock_reason
         cost = int(BUILDINGS[kind]["cost"])
         if state.monster_at(i, j) is not None:
             return False, "此格有怪獸"
@@ -809,13 +1087,16 @@ class HakoniwaIslandDialog(QDialog):
         self.guestbook_view = self.hud.guestbook_view
         root.addWidget(self.hud, stretch=1)
 
-        # --- Build tools drawer (建築 icon) ---
-        tools_lay = self.hud.tools_layout
-        tools_cap = QLabel("工具")
-        tools_cap.setObjectName("hakoniwaHudCaption")
-        tools_lay.addWidget(tools_cap)
-
+        # --- Build tools drawer (建築 icon): tree browse + hidden tool buttons ---
+        self._tool_spec_by_key: Dict[str, Tuple[str, Optional[int], str]] = {
+            key: (name, cost, digit) for key, name, cost, digit in TOOL_SPECS
+        }
         self.tool_buttons: Dict[str, QPushButton] = {}
+        # Hidden buttons keep shortcut / smoke enable-state API.
+        self._hidden_tools = QWidget(self.hud.tools_drawer)
+        self._hidden_tools.setVisible(False)
+        hidden_lay = QVBoxLayout(self._hidden_tools)
+        hidden_lay.setContentsMargins(0, 0, 0, 0)
         for key, name, cost, digit in TOOL_SPECS:
             if cost is None:
                 text = f"{digit}. {name}"
@@ -825,40 +1106,12 @@ class HakoniwaIslandDialog(QDialog):
             btn.setObjectName("calcAction")
             btn.setProperty("toolKey", key)
             btn.clicked.connect(lambda checked=False, k=key: self._do_action(k))
-            tools_lay.addWidget(btn)
+            btn.setVisible(False)
+            hidden_lay.addWidget(btn)
             self.tool_buttons[key] = btn
 
-        tools_lay.addSpacing(4)
-
-        self.turn_btn = QPushButton("T. 下回合")
-        self.turn_btn.setObjectName("calcAction")
-        self.turn_btn.setToolTip("結算本回合產糧／產資（快捷鍵 T）")
-        self.turn_btn.clicked.connect(self._next_turn)
-        tools_lay.addWidget(self.turn_btn)
-
-        tour_btn = QPushButton("觀光")
-        tour_btn.setObjectName("calcAction")
-        tour_btn.setToolTip("瀏覽諸島地圖（唯讀）；留言板仍可用")
-        tour_btn.clicked.connect(self._open_tourism)
-        tools_lay.addWidget(tour_btn)
-
-        save_btn = QPushButton("S. 存檔")
-        save_btn.setObjectName("calcAction")
-        save_btn.setToolTip("寫入本機 JSON（快捷鍵 S）")
-        save_btn.clicked.connect(self._save)
-        tools_lay.addWidget(save_btn)
-
-        new_btn = QPushButton("新島（重置）")
-        new_btn.setObjectName("calcAction")
-        new_btn.clicked.connect(self._new_island)
-        tools_lay.addWidget(new_btn)
-
-        reset_view_btn = QPushButton("0. 重置視圖")
-        reset_view_btn.setObjectName("calcAction")
-        reset_view_btn.setToolTip("縮放／平移回到預設（快捷鍵 0）")
-        reset_view_btn.clicked.connect(self.map.reset_view)
-        tools_lay.addWidget(reset_view_btn)
-        tools_lay.addStretch(1)
+        self._populate_build_tree()
+        self.hud.build_place_btn.clicked.connect(self._on_build_place_clicked)
 
         # Server connection lives in the 設定 drawer (was under 工具／設定).
         settings_lay = self.hud.settings_layout
@@ -875,11 +1128,11 @@ class HakoniwaIslandDialog(QDialog):
         sync_row = QHBoxLayout()
         sync_row.setSpacing(4)
         connect_btn = QPushButton("連線")
-        connect_btn.setObjectName("calcAction")
+        connect_btn.setObjectName("hakoniwaDrawerAction")
         connect_btn.clicked.connect(self._connect_server)
         sync_row.addWidget(connect_btn)
         local_btn = QPushButton("本機")
-        local_btn.setObjectName("calcAction")
+        local_btn.setObjectName("hakoniwaDrawerAction")
         local_btn.clicked.connect(self._use_local)
         sync_row.addWidget(local_btn)
         settings_lay.addLayout(sync_row)
@@ -1000,6 +1253,207 @@ class HakoniwaIslandDialog(QDialog):
         if self._typing_in_field():
             return
         self.map.zoom_by(factor)
+
+    def _populate_build_tree(self) -> None:
+        """Fill catalog categories with List Row Fill headers + Timeline children.
+
+        Category rows always show number · name · (→ on hover) and thin
+        separators above/below. Children start collapsed; expand plays
+        Timeline Draw (~2.4s).
+        """
+        lay = self.hud.build_nav_layout
+        # Clear previous widgets (keep trailing stretch).
+        while lay.count() > 1:
+            item = lay.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+
+        self._tree_items: Dict[str, TimelineNodeData] = {}
+        self._child_base_labels: Dict[str, str] = {}
+        self._child_details: Dict[str, str] = {}
+        self._category_rows: Dict[str, HakoniwaListRowFillItem] = {}
+        self._category_panels: Dict[str, TimelineDrawPanel] = {}
+        self._category_expanded: Dict[str, bool] = {}
+        self._category_names: List[str] = []
+        self._key_to_category: Dict[str, str] = {}
+
+        cat_index = 0
+        for cat_name, keys in build_tree_categories():
+            child_specs: List[Tuple[str, str, str, str]] = []
+            for key in keys:
+                if key in settlement_keys_for_tree():
+                    label = display_label(key)
+                    digit = ""
+                    cost = None
+                elif key in self._tool_spec_by_key:
+                    name, cost, digit = self._tool_spec_by_key[key]
+                    label = display_label(key, name)
+                else:
+                    continue
+                if cost is None:
+                    detail = f"⌨{digit}" if digit else ""
+                else:
+                    detail = str(cost)
+                child_specs.append((key, label, digit, detail))
+            if not child_specs:
+                continue
+            cat_index += 1
+
+            row = HakoniwaListRowFillItem(cat_index, cat_name, self.hud.build_nav_body)
+            row.clicked.connect(
+                lambda checked=False, n=cat_name: self._toggle_build_category(n)
+            )
+            lay.insertWidget(lay.count() - 1, row)
+            self._category_rows[cat_name] = row
+            self._category_names.append(cat_name)
+            self._category_expanded[cat_name] = False
+
+            panel = TimelineDrawPanel(self.hud.build_nav_body)
+            nodes: List[TimelineNodeData] = []
+            for key, label, digit, detail in child_specs:
+                node = TimelineNodeData(key=key, title=label, detail=detail)
+                nodes.append(node)
+                self._tree_items[key] = node
+                self._child_base_labels[key] = label
+                self._child_details[key] = detail
+                self._key_to_category[key] = cat_name
+            panel.set_nodes(nodes)
+            panel.nodeClicked.connect(self._on_build_child_clicked)
+            panel.nodeActivated.connect(self._on_build_child_activate)
+            panel.setVisible(False)  # children default collapsed
+            lay.insertWidget(lay.count() - 1, panel)
+            self._category_panels[cat_name] = panel
+
+    def _toggle_build_category(self, cat_name: str) -> None:
+        """Expand／collapse children; expand plays Timeline Draw."""
+        panel = self._category_panels.get(cat_name)
+        if panel is None:
+            return
+        nxt = not self._category_expanded.get(cat_name, False)
+        self._category_expanded[cat_name] = nxt
+        if nxt:
+            panel.setVisible(True)
+            panel.play_expand()
+        else:
+            panel.reset_collapsed()
+            panel.setVisible(False)
+
+    def is_category_expanded(self, cat_name: str) -> bool:
+        return bool(self._category_expanded.get(cat_name, False))
+
+    def _select_build_child(self, key: str) -> None:
+        """Mark ``key`` selected in the nav and refresh the detail pane."""
+        self.hud._build_tree_key = key
+        for panel in self._category_panels.values():
+            panel.set_selected_key(key)
+        self._refresh_build_detail()
+
+    def _on_build_child_clicked(self, key: str) -> None:
+        self._select_build_child(key)
+
+    def _on_build_child_activate(self, key: str) -> None:
+        self._select_build_child(key)
+        met, _ = unlock_met(self.state, key)
+        if not met:
+            return
+        btn = self.tool_buttons.get(key)
+        if btn is not None and btn.isEnabled():
+            self._do_action(key)
+
+    def _on_build_place_clicked(self) -> None:
+        key = self.hud._build_tree_key
+        if not key:
+            return
+        met, _ = unlock_met(self.state, key)
+        if not met:
+            return
+        btn = self.tool_buttons.get(key)
+        if btn is not None and btn.isEnabled():
+            self._do_action(key)
+
+    def _refresh_build_tree_locks(self) -> None:
+        """Hard-lock child rows whose island unlock prerequisites are unmet."""
+        lock = " 🔒"
+        for key, node in getattr(self, "_tree_items", {}).items():
+            met, reason = unlock_met(self.state, key)
+            base = self._child_base_labels.get(key, display_label(key))
+            title = base if met else base + lock
+            node.title = title
+            node.locked = not met
+            cat = self._key_to_category.get(key)
+            panel = self._category_panels.get(cat) if cat else None
+            if panel is not None:
+                panel.set_node_locked(key, not met, title)
+                tip = base if met else (
+                    f"{base}\n鎖定：{reason}" if reason else f"{base}\n鎖定"
+                )
+                panel.setToolTip(tip if key == (self.hud._build_tree_key or "") else panel.toolTip())
+
+    def _refresh_build_detail(self) -> None:
+        key = self.hud._build_tree_key
+        title = self.hud.build_detail_title
+        cost_lab = self.hud.build_detail_cost
+        status_lab = self.hud.build_detail_status
+        place_lab = self.hud.build_detail_place
+        effects_lab = self.hud.build_detail_effects
+        place_btn = self.hud.build_place_btn
+        if not key:
+            title.setText("選擇建築／指令")
+            cost_lab.setText("")
+            status_lab.setText("")
+            place_lab.setText("")
+            effects_lab.setText("")
+            place_btn.setEnabled(False)
+            place_btn.setText("放置")
+            return
+
+        tool_name = (
+            self._tool_spec_by_key[key][0] if key in self._tool_spec_by_key else None
+        )
+        tool_cost = (
+            self._tool_spec_by_key[key][1] if key in self._tool_spec_by_key else None
+        )
+        label = display_label(key, tool_name)
+        title.setText(label)
+
+        shown_cost = cost_for_kind(self.state, key, tool_cost)
+        if shown_cost is None:
+            cost_lab.setText("費用: 免費／依指令")
+        elif shown_cost == 0 and key in settlement_keys_for_tree():
+            cost_lab.setText("費用: 0（非點選建造）")
+        else:
+            cost_lab.setText(f"資金: {shown_cost}")
+
+        met, lock_reason = unlock_met(self.state, key)
+        prereq = unlock_prereq(key)
+        if key in settlement_keys_for_tree():
+            status_lab.setText("狀態: 瀏覽用（人口演進）\n前提: 不可點選建造")
+        elif met:
+            prereq_txt = "無" if prereq is None else display_label(prereq[0].split("|")[0])
+            if prereq and "|" in prereq[0]:
+                prereq_txt = " 或 ".join(
+                    display_label(p) for p in prereq[0].split("|")
+                )
+            status_lab.setText(f"已解鎖\n前提: {prereq_txt}")
+        else:
+            status_lab.setText(f"未解鎖 🔒\n前提: {lock_reason}")
+
+        place_lab.setText(f"配置條件: {placement_blurb(key)}")
+        lines = effect_lines(key)
+        effects_lab.setText("\n".join(f"· {ln}" for ln in lines) if lines else "")
+
+        # Action label: 放置 for buildings, otherwise keep tool verb.
+        if key in PLACEABLE_BUILDINGS:
+            place_btn.setText("放置")
+        elif key in settlement_keys_for_tree():
+            place_btn.setText("不可建造")
+        else:
+            place_btn.setText("執行")
+
+        btn = self.tool_buttons.get(key)
+        can_run = bool(met and btn is not None and btn.isEnabled())
+        place_btn.setEnabled(can_run)
 
     def _clear_selection(self) -> None:
         self.selected = None
@@ -1177,6 +1631,7 @@ class HakoniwaIslandDialog(QDialog):
         self._refresh_toolbar()
         self._show_guestbook(s.list_comments())
         if hasattr(self, "hud"):
+            self.hud.refresh_island_profile(s)
             self.hud._layout_overlays()
 
     def _refresh_toolbar(self) -> None:
@@ -1206,7 +1661,7 @@ class HakoniwaIslandDialog(QDialog):
                 tip += "\n再點建設＝自爆清周圍怪獸（同額費用）"
             elif key == "missile_base":
                 tip += "\n有基地時飛彈更便宜；觀光者眼中偽裝成森"
-
+                tip += "\n解鎖前提：島上需有防衛設施"
             elif key == "undersea_base":
                 tip += (
                     "\n深海色塊（不可淺灘／油田）：同飛彈基地優惠；"
@@ -1227,6 +1682,7 @@ class HakoniwaIslandDialog(QDialog):
                 tip += "\n臨海平地→港灣色塊（可解鎖貿易輸出）"
             elif key == "shipyard":
                 tip += "\n臨海平地→造船所色塊（可解鎖貿易輸出）"
+                tip += "\n解鎖前提：島上需有港灣"
             elif key == "export":
                 tip += (
                     f"\n糧食→資金：{FOOD_EXPORT_LOT} 噸≈"
@@ -1328,6 +1784,8 @@ class HakoniwaIslandDialog(QDialog):
                 tip += f"\n選格 {self.selected[0]},{self.selected[1]}"
             tip += f"\n快捷鍵 {digit}"
             btn.setToolTip(tip)
+        self._refresh_build_tree_locks()
+        self._refresh_build_detail()
 
     def _refresh_selection_label(self) -> None:
         if self.selected is None:
@@ -1766,6 +2224,7 @@ class TourismIslandDialog(QDialog):
         self.guestbook_view = self.hud.guestbook_view
         # Tourism: hide 建築 icon／drawer; guestbook opens via 留言 icon.
         self.hud.set_tourism_chrome()
+        self.hud.refresh_island_profile(island)
         mode = "連線" if remote is not None else "本機示範"
         self.stats.setText(
             f"[{mode}觀光] {island.name}（{self._island_id}） | "
