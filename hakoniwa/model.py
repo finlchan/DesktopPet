@@ -154,8 +154,12 @@ PLACEABLE_BUILDINGS = frozenset(
     }
 )
 COASTAL_BUILDINGS = frozenset({"harbor", "shipyard", "breakwater"})
-# Catalog: 採掘場僅能整備在山上.
+# Catalog: 採掘場僅能整備在山上（含溫泉山）.
 MOUNTAIN_ONLY_BUILDINGS = frozenset({"quarry"})
+# 山與溫泉山同一族：採掘場、島分數、整地→荒地.
+MOUNTAIN_FAMILY = frozenset({"mountain", "onsen_mountain"})
+# 建築目錄可見，但永遠不可點選建造.
+HARD_LOCKED_BUILDINGS = frozenset({"onsen_village"})
 # Catalog（變體）: 養殖場只能建在淺灘.
 SHALLOW_ONLY_BUILDINGS = frozenset({"aquafarm"})
 # Catalog: 海底基地只能建在深海（非淺灘／油田）.
@@ -279,6 +283,9 @@ FIRE_BASE_CHANCE = 0.08
 TYPHOON_BASE_CHANCE = 0.06
 QUAKE_BASE_CHANCE = 0.05
 VOLCANO_BASE_CHANCE = 0.04  # 噴火：隨機陸格→山（可整備採掘場）
+# 溫泉山異變：普通山每回合小機率變成溫泉山。不改火災／地震／海嘯／飛彈；
+# 衛星與研究所的減災係數不套用在這條。
+ONSEN_MOUNTAIN_CHANCE = 0.02
 TSUNAMI_BASE_CHANCE = 0.04  # 海嘯：臨海設施→荒地
 TSUNAMI_PER_SEA_NEIGHBOR = 0.03  # 鄰海域越多越危險
 FOREST_FIRE_FACTOR = 0.25     # any adjacent 森 → fire chance × this
@@ -296,6 +303,8 @@ TERRAIN = {
     "grass": {"label": "平地", "color": (74, 143, 60), "land": True},
     "forest": {"label": "森", "color": (36, 96, 48), "land": True},
     "mountain": {"label": "山", "color": (110, 100, 88), "land": True},
+    # 山系異變（地面仍是山格；可見高度是 sprites/onsen_mountain.png）.
+    "onsen_mountain": {"label": "溫泉山", "color": (118, 104, 90), "land": True},
     # 居住地形（泥地貼圖＋色洗；建築仍色塊）
     "village": {"label": "村", "color": (186, 150, 96), "land": True},
     "town": {"label": "町", "color": (168, 118, 72), "land": True},
@@ -387,6 +396,14 @@ BUILDINGS = {
         "label": "發電廠",
         "color": (110, 190, 230),
         "cost": COST_POWER_PLANT,
+    },
+    # 溫泉村：不可直接建設（費用 0）。溫泉山旁的平地自然出現；與村同族
+    # （島分數、以及鄰格可再長出村）。貼圖走建築路徑。
+    "onsen_village": {
+        "label": "溫泉村",
+        "color": (186, 140, 108),
+        "cost": 0,
+        "tall": True,
     },
 }
 
@@ -933,7 +950,10 @@ class IslandState:
             farms=self.building_count("farm"),
             factories=self.building_count("factory"),
             quarries=self.building_count("quarry"),
-            mountains=self.terrain_count("mountain"),
+            mountains=(
+                self.terrain_count("mountain")
+                + self.terrain_count("onsen_mountain")
+            ),
             harbors=self.building_count("harbor"),
             shipyards=self.building_count("shipyard"),
             breakwaters=self.building_count("breakwater"),
@@ -941,7 +961,10 @@ class IslandState:
             defenses=self.building_count("defense"),
             missile_bases=self.building_count("missile_base"),
             undersea_bases=self.undersea_base_count(),
-            villages=self.terrain_count("village"),
+            villages=(
+                self.terrain_count("village")
+                + self.building_count("onsen_village")
+            ),
             towns=self.terrain_count("town"),
             cities=self.terrain_count("city"),
             banks=self.building_count("bank"),
@@ -1027,7 +1050,11 @@ class IslandState:
             return False
         if c.building is not None:
             return True
-        if c.terrain in ("dirt", "forest", "mountain") or c.terrain in SETTLEMENT_TERRAINS:
+        if (
+            c.terrain in ("dirt", "forest")
+            or c.terrain in MOUNTAIN_FAMILY
+            or c.terrain in SETTLEMENT_TERRAINS
+        ):
             return True
         return False  # empty 平地 — nothing to do
 
@@ -1062,7 +1089,7 @@ class IslandState:
         if c.building is not None:
             return False
         if kind in MOUNTAIN_ONLY_BUILDINGS:
-            return c.terrain == "mountain"
+            return c.terrain in MOUNTAIN_FAMILY
         if kind in SHALLOW_ONLY_BUILDINGS:
             return c.terrain == "shallow"
         if kind in SEA_ONLY_BUILDINGS:
@@ -1074,6 +1101,9 @@ class IslandState:
         return True
 
     def place_building(self, i: int, j: int, kind: str) -> str:
+        if kind in HARD_LOCKED_BUILDINGS:
+            label = BUILDINGS[kind]["label"]
+            return f"{label}不可直接建設（溫泉山旁的平地才會自然出現）"
         if kind not in PLACEABLE_BUILDINGS:
             return "未知建築"
         if self.monster_at(i, j) is not None:
@@ -1085,7 +1115,7 @@ class IslandState:
         if c.building is not None:
             return "此格已有建築（請先移除或整地）"
         if kind in MOUNTAIN_ONLY_BUILDINGS:
-            if c.terrain != "mountain":
+            if c.terrain not in MOUNTAIN_FAMILY:
                 return "採掘場只能建在山上（請先造山或等噴火）"
         elif kind in SHALLOW_ONLY_BUILDINGS:
             if c.terrain != "shallow":
@@ -1377,8 +1407,8 @@ class IslandState:
         c.building = None
         prev = c.terrain
         prev_trees = c.trees
-        if prev == "mountain":
-            # Catalog 掘削-lite：山→荒地（再整地→平地）.
+        if prev in MOUNTAIN_FAMILY:
+            # Catalog 掘削-lite：山／溫泉山→荒地（再整地→平地）.
             c.terrain = "dirt"
             c.trees = 0
         elif prev in ("dirt", "forest") or prev in SETTLEMENT_TERRAINS:
@@ -1389,8 +1419,8 @@ class IslandState:
         if prev != c.terrain:
             if prev == "forest" and prev_trees:
                 parts.append(f"森（{prev_trees}本）→平地")
-            elif prev == "mountain":
-                parts.append("山→荒地")
+            elif prev in MOUNTAIN_FAMILY:
+                parts.append(f"{TERRAIN[prev]['label']}→荒地")
             else:
                 parts.append(f"{TERRAIN[prev]['label']}→平地")
         if cleared:
@@ -1673,14 +1703,21 @@ class IslandState:
         )
 
     def _near_farm_or_settlement(self, i: int, j: int) -> bool:
-        """Empty 平地 near 農場／公園 or 村／町／都市 can grow a village."""
+        """Empty 平地 near 農場／公園 or 村／町／都市／溫泉村 can grow a village."""
         for ni, nj in neighbors(i, j, self.size):
             c = self.cell(ni, nj)
-            if c.building in ("farm", "park"):
+            if c.building in ("farm", "park", "onsen_village"):
                 return True
             if c.terrain in SETTLEMENT_TERRAINS:
                 return True
         return False
+
+    def _near_onsen_mountain(self, i: int, j: int) -> bool:
+        """Empty 平地 next to 溫泉山 can grow a 溫泉村 (building, not terrain)."""
+        return any(
+            self.cell(ni, nj).terrain == "onsen_mountain"
+            for ni, nj in neighbors(i, j, self.size)
+        )
 
     def _near_park(self, i: int, j: int) -> bool:
         """True if any neighbor has a 公園 (都市計畫生村加成)."""
@@ -1690,10 +1727,15 @@ class IslandState:
         )
 
     def _evolve_settlements(self) -> List[str]:
-        """村／町／都市 terrain evolution on plain land near farms/parks (simplified)."""
+        """村／町／都市 terrain evolution on plain land near farms/parks (simplified).
+
+        Grass beside 溫泉山 grows 溫泉村 (a building on grass) instead of 村 terrain.
+        """
         notes: List[str] = []
         # Spawn: empty 平地 adjacent to farm/park/settlement → 村 (~20%/turn；近公園更高).
+        # Grass beside 溫泉山 uses the same chance to place 溫泉村 and stays 平地.
         spawn_sites: List[Coord] = []
+        onsen_sites: List[Coord] = []
         for i in range(self.size):
             for j in range(self.size):
                 if self.monster_at(i, j) is not None:
@@ -1701,8 +1743,18 @@ class IslandState:
                 c = self.cell(i, j)
                 if c.terrain != "grass" or c.building is not None:
                     continue
-                if self._near_farm_or_settlement(i, j):
+                if self._near_onsen_mountain(i, j):
+                    onsen_sites.append((i, j))
+                elif self._near_farm_or_settlement(i, j):
                     spawn_sites.append((i, j))
+        for i, j in onsen_sites:
+            chance = SETTLEMENT_SPAWN_CHANCE
+            if self._near_park(i, j):
+                chance = min(1.0, chance + PARK_SETTLEMENT_SPAWN_BONUS)
+            if random.random() >= chance:
+                continue
+            self.cell(i, j).building = "onsen_village"
+            notes.append(f"溫泉山旁出現溫泉村 ({i},{j})")
         for i, j in spawn_sites:
             chance = SETTLEMENT_SPAWN_CHANCE
             if self._near_park(i, j):
@@ -1867,12 +1919,14 @@ class IslandState:
                     notes.append(f"海嘯！{label}→荒地 ({i},{j})")
 
         # Volcano: one random land cell may become 山 (center stub; clears building).
+        # 溫泉山 stays in the mountain family — it is not a fresh eruption target.
         land_cells = [
             (i, j)
             for i in range(self.size)
             for j in range(self.size)
-            if self.is_land(i, j) and self.cell(i, j).terrain != "mountain"
+            if self.is_land(i, j) and self.cell(i, j).terrain not in MOUNTAIN_FAMILY
         ]
+        erupted: set = set()
         if land_cells and random.random() < VOLCANO_BASE_CHANCE * sat:
             vi, vj = random.choice(land_cells)
             c = self.cell(vi, vj)
@@ -1881,10 +1935,26 @@ class IslandState:
             c.terrain = "mountain"
             c.building = None
             c.trees = 0
+            erupted.add((vi, vj))
             detail = TERRAIN[prev]["label"]
             if cleared:
                 detail += f"／{BUILDINGS[cleared]['label']}"
             notes.append(f"噴火！{detail}→山 ({vi},{vj})")
+
+        # 異變：火災／地震／海嘯／噴火都抽完之後，仍是普通山、且不是本回合新噴出的山。
+        # 隨機抽在那些災害之後，不改火災／地震／海嘯／飛彈的結果。
+        if ONSEN_MOUNTAIN_CHANCE > 0:
+            for i in range(self.size):
+                for j in range(self.size):
+                    if (i, j) in erupted:
+                        continue
+                    c = self.cell(i, j)
+                    if c.terrain != "mountain":
+                        continue
+                    if random.random() >= ONSEN_MOUNTAIN_CHANCE:
+                        continue
+                    c.terrain = "onsen_mountain"
+                    notes.append(f"異變！山→溫泉山 ({i},{j})")
 
         return notes
 

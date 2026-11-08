@@ -2681,6 +2681,8 @@ def test_tool_enabled_rules():
             assert "超市" in reason
         elif key == "rocket_launch":
             assert "ロケット" in reason or "基地" in reason
+        elif key == "onsen_village":
+            assert "鎖定" in reason
         else:
             assert "選格" in reason
     # Poor island → attract locked.
@@ -3477,7 +3479,7 @@ def test_mountain_sprite_building_placement():
         print(f"mountain sprite: skip ({exc})")
         return
 
-    assert ELEVATED_SPRITE_TERRAINS == frozenset({"mountain"})
+    assert ELEVATED_SPRITE_TERRAINS == frozenset({"mountain", "onsen_mountain"})
     bundled = SPRITES_DIR / "mountain.png"
     assert bundled.is_file(), bundled
 
@@ -3625,6 +3627,233 @@ def test_mountain_sprite_building_placement():
     print("mountain sprite: building placement, ground tile kept, flat terrains unchanged")
 
 
+def test_onsen_mountain_and_village():
+    """溫泉山 is a mountain anomaly; 溫泉村 is a hard-locked village-family building."""
+    import random
+
+    import hakoniwa.model as model_mod
+
+    from hakoniwa.model import (
+        BUILDINGS,
+        HARD_LOCKED_BUILDINGS,
+        MOUNTAIN_FAMILY,
+        ONSEN_MOUNTAIN_CHANCE,
+        PLACEABLE_BUILDINGS,
+        SAVE_VERSION,
+        SCORE_PER_MOUNTAIN,
+        SCORE_PER_VILLAGE,
+    )
+
+    assert SAVE_VERSION == 16
+    assert "onsen_mountain" in MOUNTAIN_FAMILY and "mountain" in MOUNTAIN_FAMILY
+    assert "onsen_village" in HARD_LOCKED_BUILDINGS
+    assert "onsen_village" not in PLACEABLE_BUILDINGS
+    assert BUILDINGS["onsen_village"]["cost"] == 0
+    assert BUILDINGS["onsen_village"]["label"] == "溫泉村"
+    assert ONSEN_MOUNTAIN_CHANCE > 0
+    assert ("onsen_village", "溫泉村", 0, "") in TOOL_SPECS
+
+    state = IslandState.new_game()
+    land = [(i, j) for i in range(20) for j in range(20) if state.is_land(i, j)]
+    host = next(ij for ij in land if state.cell(*ij).terrain == "grass")
+    hi, hj = host
+    before = state.island_score()
+    state.cell(hi, hj).terrain = "onsen_mountain"
+    assert state.island_score() == before + SCORE_PER_MOUNTAIN
+    assert state.can_place_building(hi, hj, "quarry")
+    assert state.place_building(hi, hj, "onsen_village") != "ok"
+    ok, reason = tool_enabled(state, "onsen_village", (hi, hj))
+    assert ok is False and "鎖定" in reason
+    ok, _ = tool_enabled(state, "quarry", (hi, hj))
+    assert ok is True
+
+    # Grass beside 溫泉山 grows 溫泉村 (building on grass, not 村 terrain).
+    oi, oj = next(ij for ij in neighbors(hi, hj) if state.is_land(*ij))
+    state.cell(oi, oj).terrain = "grass"
+    state.cell(oi, oj).building = None
+    old_spawn = model_mod.SETTLEMENT_SPAWN_CHANCE
+    model_mod.SETTLEMENT_SPAWN_CHANCE = 1.0
+    try:
+        notes = state._evolve_settlements()
+    finally:
+        model_mod.SETTLEMENT_SPAWN_CHANCE = old_spawn
+    assert state.cell(oi, oj).terrain == "grass"
+    assert state.cell(oi, oj).building == "onsen_village"
+    assert any("溫泉村" in n for n in notes)
+    scored = state.island_score()
+    state.cell(oi, oj).building = None
+    assert state.island_score() == scored - SCORE_PER_VILLAGE
+    state.cell(oi, oj).building = "onsen_village"
+    # Same family as 村: a neighbor of 溫泉村 can count toward the next village.
+    assert state._near_farm_or_settlement(hi, hj)
+
+    # Grass beside a farm, with no 溫泉山, still grows 村.
+    plain_island = IslandState.new_game()
+    p_land = [
+        (i, j)
+        for i in range(20)
+        for j in range(20)
+        if plain_island.is_land(i, j) and plain_island.cell(i, j).terrain == "grass"
+    ]
+    fi, fj = p_land[0]
+    assert plain_island.place_building(fi, fj, "farm") == "ok"
+    vi, vj = next(
+        (ni, nj)
+        for ni, nj in neighbors(fi, fj)
+        if plain_island.cell(ni, nj).terrain == "grass"
+        and plain_island.cell(ni, nj).building is None
+    )
+    model_mod.SETTLEMENT_SPAWN_CHANCE = 1.0
+    try:
+        plain_island._evolve_settlements()
+    finally:
+        model_mod.SETTLEMENT_SPAWN_CHANCE = old_spawn
+    assert plain_island.cell(vi, vj).terrain == "village"
+    assert plain_island.cell(vi, vj).building is None
+
+    # Ordinary mountain → 溫泉山. Chance 0 does not roll. Fresh eruptions stay 山.
+    plain = next(
+        ij for ij in land if state.cell(*ij).terrain in ("grass", "dirt") and state.cell(*ij).building is None
+    )
+    state.cell(*plain).terrain = "mountain"
+    state.cell(*plain).building = None
+    old_chance = model_mod.ONSEN_MOUNTAIN_CHANCE
+    old_fire = model_mod.FIRE_BASE_CHANCE
+    old_typhoon = model_mod.TYPHOON_BASE_CHANCE
+    old_quake = model_mod.QUAKE_BASE_CHANCE
+    old_volcano = model_mod.VOLCANO_BASE_CHANCE
+    old_tsunami = model_mod.TSUNAMI_BASE_CHANCE
+    model_mod.FIRE_BASE_CHANCE = 0.0
+    model_mod.TYPHOON_BASE_CHANCE = 0.0
+    model_mod.QUAKE_BASE_CHANCE = 0.0
+    model_mod.VOLCANO_BASE_CHANCE = 0.0
+    model_mod.TSUNAMI_BASE_CHANCE = 0.0
+    model_mod.ONSEN_MOUNTAIN_CHANCE = 0.0
+    try:
+        state._apply_disasters()
+        assert state.cell(*plain).terrain == "mountain"
+        model_mod.ONSEN_MOUNTAIN_CHANCE = 1.0
+        notes = state._apply_disasters()
+        assert state.cell(*plain).terrain == "onsen_mountain"
+        assert any("溫泉山" in n for n in notes)
+    finally:
+        model_mod.ONSEN_MOUNTAIN_CHANCE = old_chance
+        model_mod.FIRE_BASE_CHANCE = old_fire
+        model_mod.TYPHOON_BASE_CHANCE = old_typhoon
+        model_mod.QUAKE_BASE_CHANCE = old_quake
+        model_mod.VOLCANO_BASE_CHANCE = old_volcano
+        model_mod.TSUNAMI_BASE_CHANCE = old_tsunami
+
+    # 整地 溫泉山 → 荒地. Quarry on it is cleared with the cell.
+    state.cell(*plain).building = "quarry"
+    assert state.level_land(*plain) == "ok"
+    assert state.cell(*plain).terrain == "dirt"
+    assert state.cell(*plain).building is None
+
+    # Save stays on version 16; both keys round-trip. No migration bump.
+    blob = state.to_dict()
+    assert blob["version"] == SAVE_VERSION == 16
+    loaded = IslandState.from_dict(blob)
+    assert loaded.cell(hi, hj).terrain == "onsen_mountain"
+    assert loaded.cell(oi, oj).building == "onsen_village"
+    assert loaded.cell(oi, oj).terrain == "grass"
+    assert loaded.to_dict()["version"] == 16
+
+    # A volcano-made mountain is not flipped in the same roll.
+    fresh = IslandState.new_game()
+    model_mod.FIRE_BASE_CHANCE = 0.0
+    model_mod.TYPHOON_BASE_CHANCE = 0.0
+    model_mod.QUAKE_BASE_CHANCE = 0.0
+    model_mod.TSUNAMI_BASE_CHANCE = 0.0
+    model_mod.VOLCANO_BASE_CHANCE = 1.0
+    model_mod.ONSEN_MOUNTAIN_CHANCE = 1.0
+    orig_random = random.random
+    random.random = lambda: 0.0  # type: ignore[assignment]
+    try:
+        notes = fresh._apply_disasters()
+    finally:
+        random.random = orig_random  # type: ignore[assignment]
+        model_mod.FIRE_BASE_CHANCE = old_fire
+        model_mod.TYPHOON_BASE_CHANCE = old_typhoon
+        model_mod.QUAKE_BASE_CHANCE = old_quake
+        model_mod.VOLCANO_BASE_CHANCE = old_volcano
+        model_mod.TSUNAMI_BASE_CHANCE = old_tsunami
+        model_mod.ONSEN_MOUNTAIN_CHANCE = old_chance
+    assert any("噴火" in n for n in notes)
+    assert fresh.terrain_count("mountain") == 1
+    assert fresh.terrain_count("onsen_mountain") == 0
+
+    # Paint: 溫泉山 is an elevated ground tile; 溫泉村 uses building_pixmap only.
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    try:
+        from PySide6.QtWidgets import QApplication
+        from hakoniwa.tiles import ATLAS, ELEVATED_SPRITE_TERRAINS
+        from hakoniwa.view import HakoniwaMapWidget
+    except Exception as exc:  # pragma: no cover
+        print(f"onsen paint: skip ({exc})")
+        print("onsen: rules OK (no Qt)")
+        return
+
+    assert "onsen_mountain" in ELEVATED_SPRITE_TERRAINS
+    app = QApplication.instance() or QApplication([])
+    ground = ATLAS.pixmap_for("onsen_mountain")
+    dirt = ATLAS.pixmap_for("dirt")
+    assert ground is not None and dirt is not None
+    assert ground.cacheKey() == dirt.cacheKey()
+    sprite = ATLAS.elevated_sprite("onsen_mountain")
+    assert sprite is not None and not sprite.isNull()
+    village_pix = ATLAS.building_pixmap("onsen_village")
+    assert village_pix is not None and not village_pix.isNull()
+    assert ATLAS.elevated_sprite("onsen_village") is None
+
+    paint = IslandState.new_game()
+    gi, gj = next(
+        (i, j)
+        for i in range(20)
+        for j in range(20)
+        if paint.cell(i, j).terrain == "grass"
+    )
+    paint.cell(gi, gj).terrain = "onsen_mountain"
+    ni, nj = next(
+        (a, b)
+        for a, b in neighbors(gi, gj)
+        if paint.cell(a, b).terrain == "grass"
+    )
+    paint.cell(ni, nj).building = "onsen_village"
+    widget = HakoniwaMapWidget(paint)
+    seen_terrain: list = []
+    asked_building: list = []
+    orig_top = HakoniwaMapWidget._paint_terrain_top
+    orig_b = ATLAS.building_pixmap
+
+    def _spy_top(self, painter, terrain_key, cx, cy, poly):
+        seen_terrain.append(terrain_key)
+        return orig_top(self, painter, terrain_key, cx, cy, poly)
+
+    def _spy_b(kind):
+        asked_building.append(kind)
+        return orig_b(kind)
+
+    HakoniwaMapWidget._paint_terrain_top = _spy_top  # type: ignore[method-assign]
+    ATLAS.building_pixmap = _spy_b  # type: ignore[method-assign]
+    try:
+        widget.resize(960, 640)
+        widget.show()
+        app.processEvents()
+        grabbed = widget.grab()
+        assert not grabbed.isNull()
+    finally:
+        HakoniwaMapWidget._paint_terrain_top = orig_top  # type: ignore[method-assign]
+        ATLAS.building_pixmap = orig_b  # type: ignore[method-assign]
+    assert "onsen_mountain" in seen_terrain
+    assert "onsen_village" not in seen_terrain
+    assert "village" not in seen_terrain or paint.terrain_count("village") > 0
+    assert "onsen_village" in asked_building
+    print("onsen: mountain family + locked village + paint path OK")
+
+
 def test_oblique_preview_png_if_possible():
     """Write a small foreshortening proof PNG when Qt offscreen is available."""
     import json
@@ -3767,6 +3996,7 @@ def main():
     test_user_art_loader_hook()
     test_building_sprite_ew_south_align_offscreen()
     test_mountain_sprite_building_placement()
+    test_onsen_mountain_and_village()
     test_catalog_costs()
     test_new_island_and_loop()
     test_guestbook_local()

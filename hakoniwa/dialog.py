@@ -85,6 +85,8 @@ from .model import (
     GuestbookEntry,
     MAX_GUEST_NAME,
     MAX_GUEST_TEXT,
+    HARD_LOCKED_BUILDINGS,
+    MOUNTAIN_FAMILY,
     MOUNTAIN_ONLY_BUILDINGS,
     PLACEABLE_BUILDINGS,
     SEA_ONLY_BUILDINGS,
@@ -570,6 +572,8 @@ TOOL_SPECS: Tuple[Tuple[str, str, Optional[int], str], ...] = (
     ("amusement_park", "建設遊樂園", COST_AMUSEMENT_PARK, "Shift+V"),
     ("power_plant", "建設發電廠", COST_POWER_PLANT, "Shift+P"),
     ("undersea_base", "建設海底基地", COST_UNDERSEA_BASE, "Shift+S"),
+    # Hard-locked catalog row: visible, never placeable (no shortcut).
+    ("onsen_village", "溫泉村", 0, ""),
 )
 
 
@@ -581,6 +585,10 @@ def tool_enabled(
     Returns (enabled, reason). Reason is empty when enabled; otherwise a short
     tip for the button tooltip (can't afford / wrong terrain / no selection).
     """
+    # 溫泉村在目錄裡，但永遠不可點選建造.
+    if kind in HARD_LOCKED_BUILDINGS:
+        return False, "鎖定：只能在溫泉山旁的平地自然出現"
+
     # 觀望：島上有怪獸即可（不必選格）.
     if kind == "wait":
         if not state.has_monster():
@@ -664,7 +672,7 @@ def tool_enabled(
         if c.building is not None:
             return False, "此格已有建築"
         if kind in MOUNTAIN_ONLY_BUILDINGS:
-            if c.terrain != "mountain":
+            if c.terrain not in MOUNTAIN_FAMILY:
                 return False, "採掘場須建在山上"
         elif kind in SHALLOW_ONLY_BUILDINGS:
             if c.terrain != "shallow":
@@ -817,7 +825,9 @@ class HakoniwaIslandDialog(QDialog):
 
         self.tool_buttons: Dict[str, QPushButton] = {}
         for key, name, cost, digit in TOOL_SPECS:
-            if cost is None:
+            if key in HARD_LOCKED_BUILDINGS:
+                text = f"🔒 {name}（鎖定）"
+            elif cost is None:
                 text = f"{digit}. {name}"
             else:
                 text = f"{digit}. {name}（{cost}）"
@@ -938,6 +948,8 @@ class HakoniwaIslandDialog(QDialog):
         Ignored while typing in guestbook / server URL fields.
         """
         for key, _name, _cost, digit in TOOL_SPECS:
+            if not str(digit).strip():
+                continue
             sc = QShortcut(QKeySequence(digit), self)
             sc.setContext(Qt.ShortcutContext.WindowShortcut)
             sc.activated.connect(lambda k=key: self._shortcut_tool(k))
@@ -1185,7 +1197,9 @@ class HakoniwaIslandDialog(QDialog):
             btn = self.tool_buttons[key]
             # 飛彈費用隨飛彈基地動態變化。
             shown_cost = self.state.missile_cost() if key == "missile" else cost
-            if shown_cost is None:
+            if key in HARD_LOCKED_BUILDINGS:
+                label = f"🔒 {name}（鎖定）"
+            elif shown_cost is None:
                 label = f"{digit}. {name}"
             else:
                 label = f"{digit}. {name}（{shown_cost}）"
@@ -1197,6 +1211,8 @@ class HakoniwaIslandDialog(QDialog):
             )
             if key == "missile" and self.state.has_missile_base():
                 tip += "（飛彈／海底基地優惠）"
+            if key == "onsen_village":
+                tip += "\n鎖定：不可直接建設。溫泉山旁的平地才會自然出現（與村同族）"
             if reason:
                 tip += f"\n不可用：{reason}"
             elif key == "wait" and self.state.has_monster():
@@ -1429,6 +1445,15 @@ class HakoniwaIslandDialog(QDialog):
 
     def _do_action(self, kind: str) -> None:
         # 觀望／貿易／銀行存提／超市買糧／誘致／火箭發射不需選格；其餘指令要點選格子。
+        if kind in HARD_LOCKED_BUILDINGS:
+            label = BUILDINGS[kind]["label"]
+            QMessageBox.information(
+                self,
+                "箱庭島",
+                f"{label}不可直接建設（溫泉山旁的平地才會自然出現）",
+            )
+            return
+
         if kind in (
             "wait",
             "export",

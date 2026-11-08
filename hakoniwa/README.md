@@ -16,7 +16,9 @@ not a flat top-down square grid rotated 45°.
 | Building art | User PNGs align by **alpha content AABB** (ignore canvas padding): content left↔right = diamond W↔E (full cell `W`); content bottom = S tip; top may rise above N; **no** diamond clip. Flat art（防波堤 etc.）included. Terrain tops stay diamond-clipped. `mountain.png` uses this same unclipped placement on top of the mountain ground tile (not a diamond fill). `tall=True` marks portrait-friendly keys |
 | Cell size | `DEFAULT_CELL=120`; wheel zoom `MIN_CELL…MAX_CELL` (12…256); `OBLIQUE_Y_SCALE=0.65` |
 | Forest | 植林 50→森(100本)；每回合+100本(上限20000)；伐採免費瞬售 100本≈5資金 |
-| Mountain | 造山 100／噴火→山；整地山→荒地；地面仍是山格（泥面＋色洗），可見高度是 `sprites/mountain.png`（建築放置、不裁切）；採掘場 300（僅山上）產資 |
+| Mountain | 造山 100／噴火→山；整地山→荒地；地面仍是山格（泥面＋色洗），可見高度是 `sprites/mountain.png`（建築放置、不裁切）；採掘場 300（僅山上，含溫泉山）產資 |
+| Onsen mountain | 普通山每回合 2% 異變為溫泉山（`onsen_mountain`）；地面仍是山格，高度是 `sprites/onsen_mountain.png`（同一套不裁切放置）；分數與採掘場視同山 |
+| Onsen village | 溫泉村（`onsen_village`）是建築、費用 0、不可直接建設，目錄列硬鎖。平地鄰溫泉山時以生村機率出現；分數與鄰格生村視同村。貼圖走建築路徑（`sprites/onsen_village.png`） |
 | Labor | 回合勞動：農場優先，再工場、採掘場；產能依就業比例 |
 | Harbor | 港灣 800／造船所 500（臨海平地色塊）；有其一可貿易輸出 100噸≈5資金 |
 | Breakwater | 防波堤 200（臨海平地色塊）；鄰格減海嘯；自身不被海嘯摧毀 |
@@ -93,15 +95,17 @@ terrain (bundled dirt top + wash) so quarry and score rules still see a
 mountain tile; the PNG supplies the visible height. It uses the building
 placement above (alpha AABB, left=W, right=E, bottom=S, may exceed N, no
 diamond clip). Shipped at `hakoniwa/assets/sprites/mountain.png`; a user drop
-of the same name replaces that sprite only. `forest.png`, `oilfield.png`,
-`village.png`, `town.png`, and `city.png` stay flat terrain tops.
+of the same name replaces that sprite only. `onsen_mountain.png` uses that
+same placement on 溫泉山. `onsen_village.png` is building art (user drop or
+`assets/sprites/onsen_village.png`), not a terrain top. `forest.png`,
+`oilfield.png`, `village.png`, `town.png`, and `city.png` stay flat terrain tops.
 
 | Category | Filenames |
 |---|---|
-| Terrain | `sea.png` `shallow.png` `oilfield.png` `dirt.png` `grass.png` `forest.png` `mountain.png` `village.png` `town.png` `city.png` |
+| Terrain | `sea.png` `shallow.png` `oilfield.png` `dirt.png` `grass.png` `forest.png` `mountain.png` `onsen_mountain.png` `village.png` `town.png` `city.png` |
 | Backdrop | `ocean-background.png` |
 
-| Buildings | `farm.png` `factory.png` `quarry.png` `defense.png` `missile_base.png` `undersea_base.png` `decoy.png` `harbor.png` `shipyard.png` `breakwater.png` `monument.png` `bank.png` `supermarket.png` `shrine.png` `park.png` `airport.png` `rocket_base.png` `hotel.png` `casino.png` `university.png` `research_lab.png` `aquafarm.png` `amusement_park.png` `power_plant.png` |
+| Buildings | `farm.png` `factory.png` `quarry.png` `defense.png` `missile_base.png` `undersea_base.png` `decoy.png` `harbor.png` `shipyard.png` `breakwater.png` `monument.png` `bank.png` `supermarket.png` `shrine.png` `park.png` `airport.png` `rocket_base.png` `hotel.png` `casino.png` `university.png` `research_lab.png` `aquafarm.png` `amusement_park.png` `power_plant.png` `onsen_village.png` |
 
 | Monsters | `inora.png` |
 
@@ -119,6 +123,6 @@ Fallback when a file is absent: buildings／monsters → solid color; terrain �
 6. Confirm HUD overlays still sit on the map (not outside columns).
 7. Confirm dirt／grass／海／淺灘 cells show real textures (deep blue vs cyan shallow).
 8. Without user PNGs, buildings／monsters stay color blocks; with drops, those keys swap.
-9. Building user art spans W↔E tips, sits on the S tip, and may exceed the N tip (no diamond clip on sprites). Mountain cells draw `mountain.png` the same way, above the mountain ground tile.
+9. Building user art spans W↔E tips, sits on the S tip, and may exceed the N tip (no diamond clip on sprites). Mountain and 溫泉山 cells draw their sprites the same way, above the mountain ground tile. 溫泉村 uses the building path, not a terrain top.
 
 CI/local smoke fails if the projection regresses to orthographic-only.

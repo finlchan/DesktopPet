@@ -31,9 +31,14 @@ OCEAN_BACKGROUND = ASSETS_DIR / "ocean-background.png"
 # Terrain whose user/bundled PNG is a 2.5D prop (building placement), not a
 # diamond fill. Ground for these keys stays the bundled top below.
 # Forest, oilfield, village/town/city, and any crater stay flat tops.
-ELEVATED_SPRITE_TERRAINS = frozenset({"mountain"})
+ELEVATED_SPRITE_TERRAINS = frozenset({"mountain", "onsen_mountain"})
 ELEVATED_SPRITE_FILES: Dict[str, str] = {
     "mountain": "mountain.png",
+    "onsen_mountain": "onsen_mountain.png",
+}
+# Buildings that ship a bundled sprite. User drop still wins.
+BUNDLED_BUILDING_SPRITES: Dict[str, str] = {
+    "onsen_village": "onsen_village.png",
 }
 
 # Primary terrain → active top PNG (flat diamond on black; black keyed out).
@@ -46,6 +51,7 @@ TERRAIN_TILE_FILES: Dict[str, str] = {
     "grass": "grass-01.png",
     "forest": "grass-01.png",
     "mountain": "dirt-01.png",  # ground tile; height is sprites/mountain.png
+    "onsen_mountain": "dirt-01.png",  # ground tile; height is sprites/onsen_mountain.png
     "village": "dirt-01.png",
     "town": "dirt-01.png",
     "city": "dirt-01.png",
@@ -58,6 +64,7 @@ TERRAIN_TINT: Dict[str, tuple] = {
     "oilfield": (30, 28, 24, 150),  # 海底油田／石油平台色塊洗
     "forest": (12, 58, 24, 120),
     "mountain": (90, 85, 75, 110),
+    "onsen_mountain": (96, 88, 72, 110),
     "village": (200, 170, 100, 55),
     "town": (180, 120, 70, 70),
     "city": (140, 100, 120, 80),
@@ -130,6 +137,7 @@ class TileAtlas:
         self._pixmaps: Dict[str, QPixmap] = {}
         self._user_terrain: Dict[str, Optional[QPixmap]] = {}
         self._elevated: Dict[str, Optional[QPixmap]] = {}
+        self._bundled_buildings: Dict[str, Optional[QPixmap]] = {}
         self._bg: Optional[QPixmap] = None
         self._bg_tried = False
         self._user_bg_tried = False
@@ -139,6 +147,7 @@ class TileAtlas:
         """Clear user-override caches after :func:`configure_user_art`."""
         self._user_terrain.clear()
         self._elevated.clear()
+        self._bundled_buildings.clear()
         self._user_bg = None
         self._user_bg_tried = False
         self._bg = None
@@ -146,7 +155,7 @@ class TileAtlas:
         clear_content_bounds_cache()
 
     def pixmap_for(self, terrain: str) -> Optional[QPixmap]:
-        # 1) Optional user diamond fill. Elevated sprites (mountain) do not
+        # 1) Optional user diamond fill. Elevated sprites (mountain／溫泉山) do not
         # replace this top — their PNG is drawn unclipped by elevated_sprite.
         if terrain not in ELEVATED_SPRITE_TERRAINS:
             if terrain in self._user_terrain:
@@ -209,7 +218,7 @@ class TileAtlas:
     def elevated_sprite(self, terrain: str) -> Optional[QPixmap]:
         """2.5D prop for a terrain cell. None → ground tile only.
 
-        User ``mountain.png`` wins, else the bundled sprite. No black-key
+        User PNG wins, else the bundled sprite. No black-key
         (dark rock must stay opaque). Placement is the building AABB path.
         """
         if terrain not in ELEVATED_SPRITE_TERRAINS:
@@ -229,8 +238,25 @@ class TileAtlas:
         return stored if stored is not None and not stored.isNull() else None
 
     def building_pixmap(self, kind: str) -> Optional[QPixmap]:
-        """Optional user building art; None → view paints color diamond."""
-        return USER_ART.building_pixmap(kind)
+        """User building art, else a shipped sprite, else None (color diamond).
+
+        ``onsen_village`` ships at ``assets/sprites/``. A drop of the same
+        name in the user-art folders still replaces it.
+        """
+        user_pix = USER_ART.building_pixmap(kind)
+        if user_pix is not None and not user_pix.isNull():
+            return user_pix
+        if kind not in BUNDLED_BUILDING_SPRITES:
+            return None
+        if kind in self._bundled_buildings:
+            cached = self._bundled_buildings[kind]
+            return cached if cached is not None and not cached.isNull() else None
+        fname = BUNDLED_BUILDING_SPRITES[kind]
+        path = SPRITES_DIR / fname if fname else None
+        pix = QPixmap(str(path)) if path is not None and path.is_file() else QPixmap()
+        self._bundled_buildings[kind] = None if pix.isNull() else pix
+        stored = self._bundled_buildings[kind]
+        return stored if stored is not None and not stored.isNull() else None
 
     def monster_pixmap(self, kind: str) -> Optional[QPixmap]:
         """Optional user monster art; None → view paints color square."""

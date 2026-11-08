@@ -254,9 +254,10 @@ class HakoniwaMapWidget(QWidget):
 
             self._paint_terrain_top(painter, paint_terrain, cx, cy, poly)
 
-            # Mountain (only): bundled/user PNG as a building sprite on top of
-            # the mountain ground tile. Same AABB placement, no diamond clip.
+            # Mountain family (山／溫泉山): bundled/user PNG as a building sprite
+            # on top of the ground tile. Same AABB placement, no diamond clip.
             # Forest, oilfield, village/town/city stay on the terrain path.
+            # 溫泉村 is a building, so it uses the building paint below.
             spix = self._atlas.elevated_sprite(paint_terrain)
             if spix is not None and not spix.isNull():
                 self._paint_unclipped_sprite(painter, spix, cx, cy)
