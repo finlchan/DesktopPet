@@ -211,6 +211,25 @@ class HakoniwaMapWidget(QWidget):
         painter.setPen(QPen(edge, 1.0))
         painter.drawPolygon(poly)
 
+    def _paint_unclipped_sprite(self, painter: QPainter, pix, cx: float, cy: float) -> None:
+        """Place a PNG by alpha AABB: left=W, right=E, bottom=S, may exceed N.
+
+        No diamond clip. Shared by building art and the mountain prop so both
+        use one placement.
+        """
+        bw, bh = cell_screen_size(self.cell)
+        south_y = cy + bh / 2.0
+        content = alpha_content_rect(pix)
+        if not content.isValid() or content.isEmpty():
+            content = QRect(0, 0, pix.width(), pix.height())
+        cw = max(1.0, float(content.width()))
+        ch = max(1.0, float(content.height()))
+        scale = bw / cw
+        sprite_h = ch * scale
+        dest = QRectF(cx - bw / 2.0, south_y - sprite_h, bw, sprite_h)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawPixmap(dest, pix, QRectF(content))
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -235,6 +254,14 @@ class HakoniwaMapWidget(QWidget):
 
             self._paint_terrain_top(painter, paint_terrain, cx, cy, poly)
 
+            # Mountain family (山／溫泉山): bundled/user PNG as a building sprite
+            # on top of the ground tile. Same AABB placement, no diamond clip.
+            # Forest, oilfield, and crater stay on the terrain path.
+            # 村／町／都市／溫泉村 are buildings, so they use the building paint below.
+            spix = self._atlas.elevated_sprite(paint_terrain)
+            if spix is not None and not spix.isNull():
+                self._paint_unclipped_sprite(painter, spix, cx, cy)
+
             # Building: user PNG when dropped, else solid color diamond.
             # Align by **alpha content AABB** (not PNG canvas): content left↔right
             # = diamond W↔E (full cell W), content bottom = S tip; top may rise
@@ -245,18 +272,7 @@ class HakoniwaMapWidget(QWidget):
             if paint_building and paint_building in BUILDINGS:
                 bpix = self._atlas.building_pixmap(paint_building)
                 if bpix is not None and not bpix.isNull():
-                    bw, bh = cell_screen_size(self.cell)
-                    south_y = cy + bh / 2.0
-                    content = alpha_content_rect(bpix)
-                    if not content.isValid() or content.isEmpty():
-                        content = QRect(0, 0, bpix.width(), bpix.height())
-                    cw = max(1.0, float(content.width()))
-                    ch = max(1.0, float(content.height()))
-                    scale = bw / cw
-                    sprite_h = ch * scale
-                    dest = QRectF(cx - bw / 2.0, south_y - sprite_h, bw, sprite_h)
-                    painter.setPen(Qt.PenStyle.NoPen)
-                    painter.drawPixmap(dest, bpix, QRectF(content))
+                    self._paint_unclipped_sprite(painter, bpix, cx, cy)
                 else:
                     bcol = BUILDINGS[paint_building]["color"]
                     if bcol:

@@ -57,6 +57,7 @@ from hakoniwa.model import (
     COST_PARK,
     COST_POWER_PLANT,
     COST_UNDERSEA_BASE,
+    COST_CITY,
     COST_QUARRY,
     COST_RAISE,
     COST_RESEARCH_LAB,
@@ -65,7 +66,13 @@ from hakoniwa.model import (
     COST_SHIPYARD,
     COST_SHRINE,
     COST_SUPERMARKET,
+    COST_TOWN,
     COST_UNIVERSITY,
+    COST_VILLAGE,
+    BUILDINGS,
+    PLACEABLE_BUILDINGS,
+    SETTLEMENT_BUILDINGS,
+    TERRAIN,
     HOTEL_TOURISM_BASE,
     HOTEL_TOURISM_PER_100_POP,
     AMUSEMENT_TOURISM_BASE,
@@ -268,6 +275,15 @@ def test_catalog_costs():
     assert COST_AMUSEMENT_PARK == 1300
     assert COST_POWER_PLANT == 650
     assert COST_UNDERSEA_BASE == 8000
+    assert COST_VILLAGE == 0
+    assert COST_TOWN == 0
+    assert COST_CITY == 0
+    assert SETTLEMENT_BUILDINGS == frozenset({"village", "town", "city"})
+    for key in SETTLEMENT_BUILDINGS:
+        assert key in BUILDINGS
+        assert key not in TERRAIN
+        assert key not in PLACEABLE_BUILDINGS
+        assert BUILDINGS[key]["cost"] == 0
     assert SCORE_PER_MONUMENT == 2000
     assert SCORE_PER_QUARRY == 70
     assert SCORE_PER_BREAKWATER == 50
@@ -330,7 +346,7 @@ def test_catalog_costs():
     assert FUNDS_PER_FOOD_BUY == 8
     assert FUNDS_PER_QUARRY == 8
     assert FUNDS_PER_OILFIELD == 50
-    assert SAVE_VERSION == 16
+    assert SAVE_VERSION == 17
     assert 0 < OIL_DISCOVER_CHANCE <= 1
     assert 0 < OIL_DEPLETION_CHANCE < 1
     assert TSUNAMI_BASE_CHANCE > 0
@@ -626,9 +642,8 @@ def test_harbor_shipyard_trade():
     state.food = FOOD_EXPORT_LOT - 1
     assert state.export_food(1) != "ok"
 
-    # Shipyard alone also unlocks export (clear harbor, place shipyard elsewhere).
-    state.cell(ci, cj).building = None
-    assert state.has_harbor() is False
+    # Shipyard alone also unlocks export: need 港灣 first to build 造船所
+    # (建築抽屜硬鎖), then clear harbor so only shipyard remains.
     other = next(
         (
             (i, j)
@@ -641,14 +656,17 @@ def test_harbor_shipyard_trade():
         None,
     )
     if other is None:
-        # Reuse coastal after clearing.
         other = coastal
         state.cell(*other).building = None
         state.cell(*other).terrain = "grass"
     oi, oj = other
+    # Harbor still on (ci,cj) from earlier — unlocks shipyard placement.
+    assert state.has_harbor()
     state.funds = max(state.funds, COST_SHIPYARD)
     assert state.place_building(oi, oj, "shipyard") == "ok"
     assert state.has_shipyard()
+    state.cell(ci, cj).building = None
+    assert state.has_harbor() is False
     assert state.can_trade_export()
     state.food = FOOD_EXPORT_LOT * 2
     funds_before = state.funds
@@ -1426,7 +1444,7 @@ def test_park_and_attract():
         notes = state._evolve_settlements()
     finally:
         model_mod.SETTLEMENT_SPAWN_CHANCE = old_chance
-    assert state.cell(si, sj).terrain == "village" or any("村落" in n for n in notes)
+    assert state.cell(si, sj).building == "village" or any("村落" in n for n in notes)
 
     # Attract: too poor / then success / double-book blocked.
     state.funds = COST_ATTRACT - 1
@@ -2138,7 +2156,25 @@ def test_undersea_base_and_tourism_camo():
     assert terr == "sea" and bld is None
 
     mi, mj = grass[0]
-    state.funds = max(state.funds, COST_MISSILE_BASE)
+    di, dj = grass[1] if len(grass) > 1 else grass[0]
+    if (di, dj) == (mi, mj):
+        # Need a second grass cell for 防衛 → 飛彈基地 unlock chain.
+        extra = next(
+            (
+                (i, j)
+                for i, j in land
+                if (i, j) != (mi, mj)
+                and state.cell(i, j).terrain in ("grass", "dirt")
+                and state.cell(i, j).building is None
+            ),
+            None,
+        )
+        assert extra is not None
+        di, dj = extra
+        if state.cell(di, dj).terrain != "grass":
+            assert state.level_land(di, dj) == "ok"
+    state.funds = max(state.funds, COST_MISSILE_BASE + COST_DEFENSE)
+    assert state.place_building(di, dj, "defense") == "ok"
     assert state.place_building(mi, mj, "missile_base") == "ok"
     terr_m, bld_m = state.tourist_appearance(mi, mj)
     assert terr_m == "forest" and bld_m is None
@@ -2212,36 +2248,41 @@ def test_settlements_and_disasters():
         # Force spawn (random < 0.20).
         random.random = lambda: 0.0  # type: ignore[assignment]
         notes = state._evolve_settlements()
-        assert state.cell(si, sj).terrain == "village"
+        assert state.cell(si, sj).building == "village"
+        assert state.cell(si, sj).terrain == "grass"
         assert any("村落" in n for n in notes)
 
         state.population = VILLAGE_TO_TOWN_POP
         notes = state._evolve_settlements()
-        assert state.cell(si, sj).terrain == "town"
+        assert state.cell(si, sj).building == "town"
         assert any("村→町" in n for n in notes)
 
         state.population = TOWN_TO_CITY_POP
         notes = state._evolve_settlements()
-        assert state.cell(si, sj).terrain == "city"
+        assert state.cell(si, sj).building == "city"
         assert any("町→都市" in n for n in notes)
 
         assert state.can_level(si, sj)
         assert state.level_land(si, sj) == "ok"
         assert state.cell(si, sj).terrain == "grass"
+        assert state.cell(si, sj).building is None
 
         # Fire on town (no forest neighbor); silence typhoon/quake/volcano/tsunami.
         model_mod.TYPHOON_BASE_CHANCE = 0.0
         model_mod.QUAKE_BASE_CHANCE = 0.0
         model_mod.VOLCANO_BASE_CHANCE = 0.0
         model_mod.TSUNAMI_BASE_CHANCE = 0.0
-        state.cell(si, sj).terrain = "town"
+        state.cell(si, sj).terrain = "grass"
+        state.cell(si, sj).building = "town"
         assert not state._has_forest_neighbor(si, sj)
         notes = state._apply_disasters()
+        assert state.cell(si, sj).building is None
         assert state.cell(si, sj).terrain == "dirt"
         assert any("火災" in n for n in notes)
 
         # Forest neighbor mitigates fire: mid-roll between reduced and base → no burn.
-        state.cell(si, sj).terrain = "town"
+        state.cell(si, sj).terrain = "grass"
+        state.cell(si, sj).building = "town"
         forest_spot = next(
             (
                 (ni, nj)
@@ -2260,7 +2301,7 @@ def test_settlements_and_disasters():
         assert reduced < mid < FIRE_BASE_CHANCE
         random.random = lambda: mid  # type: ignore[assignment]
         notes = state._apply_disasters()
-        assert state.cell(si, sj).terrain == "town"
+        assert state.cell(si, sj).building == "town"
         assert not any("火災" in n and f"({si},{sj})" in n for n in notes)
 
         # Typhoon: farm → plain (silence fire/quake/tsunami).
@@ -2287,11 +2328,20 @@ def test_settlements_and_disasters():
         assert state.cell(gi, gj).terrain == "dirt"
         assert any("地震" in n for n in notes)
 
-        state.cell(si, sj).terrain = "village"
+        state.cell(si, sj).terrain = "grass"
+        state.cell(si, sj).building = "village"
         data = state.to_dict()
         assert data["version"] == SAVE_VERSION
         loaded = IslandState.from_dict(data)
-        assert loaded.cell(si, sj).terrain == "village"
+        assert loaded.cell(si, sj).building == "village"
+        assert loaded.cell(si, sj).terrain == "grass"
+
+        # Legacy save: terrain=village migrates to grass + building.
+        legacy = state.to_dict()
+        legacy["cells"][si][sj] = {"terrain": "village", "building": None}
+        migrated = IslandState.from_dict(legacy)
+        assert migrated.cell(si, sj).terrain == "grass"
+        assert migrated.cell(si, sj).building == "village"
     finally:
         random.random = orig_random  # type: ignore[assignment]
         model_mod.FIRE_BASE_CHANCE = old_fire
@@ -2299,6 +2349,82 @@ def test_settlements_and_disasters():
         model_mod.QUAKE_BASE_CHANCE = old_quake
         model_mod.VOLCANO_BASE_CHANCE = old_volcano
         model_mod.TSUNAMI_BASE_CHANCE = old_tsunami
+
+
+def test_settlements_use_building_paint_path():
+    """village/town/city must not go through ``_paint_terrain_top``.
+
+    Catalog: settlements are BUILDINGS + USER_BUILDING_FILES. Paint uses the
+    building EW+S branch (scale=bw/content_w, bottom=S, may exceed N, no clip).
+    """
+    import os
+
+    from hakoniwa.tiles import TERRAIN_TILE_FILES, TERRAIN_TINT
+    from hakoniwa.user_art import USER_BUILDING_FILES, USER_TERRAIN_FILES
+
+    for key in ("village", "town", "city"):
+        assert key not in TERRAIN
+        assert key not in TERRAIN_TILE_FILES
+        assert key not in TERRAIN_TINT
+        assert key not in USER_TERRAIN_FILES
+        assert key in BUILDINGS
+        assert key in USER_BUILDING_FILES
+        assert key in SETTLEMENT_BUILDINGS
+        assert key not in PLACEABLE_BUILDINGS
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    try:
+        from PySide6.QtWidgets import QApplication
+        from hakoniwa.tiles import ATLAS
+        from hakoniwa.view import HakoniwaMapWidget
+    except Exception as exc:  # pragma: no cover
+        print(f"settlement paint path: skip Qt spy ({exc})")
+        print("settlements: catalog is buildings (terrain paint keys cleared)")
+        return
+
+    app = QApplication.instance() or QApplication([])
+    del app
+
+    state = IslandState.new_game()
+    grass = [
+        (i, j)
+        for i in range(state.size)
+        for j in range(state.size)
+        if state.cell(i, j).terrain == "grass" and state.cell(i, j).building is None
+    ]
+    assert grass
+    gi, gj = grass[0]
+    state.cell(gi, gj).building = "village"
+
+    terrain_keys: list[str] = []
+    building_keys: list[str] = []
+    orig_terrain = HakoniwaMapWidget._paint_terrain_top
+    orig_building = ATLAS.building_pixmap
+
+    def spy_terrain(self, painter, terrain_key, cx, cy, poly):
+        terrain_keys.append(terrain_key)
+        return orig_terrain(self, painter, terrain_key, cx, cy, poly)
+
+    def spy_building(kind):
+        building_keys.append(kind)
+        return orig_building(kind)
+
+    HakoniwaMapWidget._paint_terrain_top = spy_terrain  # type: ignore[method-assign]
+    ATLAS.building_pixmap = spy_building  # type: ignore[method-assign]
+    try:
+        widget = HakoniwaMapWidget(state)
+        widget.resize(640, 480)
+        widget.grab()  # force paintEvent
+    finally:
+        HakoniwaMapWidget._paint_terrain_top = orig_terrain  # type: ignore[method-assign]
+        ATLAS.building_pixmap = orig_building  # type: ignore[method-assign]
+
+    assert terrain_keys, "expected terrain paints"
+    assert "village" not in terrain_keys
+    assert "town" not in terrain_keys
+    assert "city" not in terrain_keys
+    assert "village" in building_keys
+    print("settlements: building paint path (not _paint_terrain_top) OK")
 
 
 def test_monster_events():
@@ -2383,20 +2509,18 @@ def test_defense_and_missile_base():
     di, dj = grass[1]
     fi, fj = grass[2]
 
-    # Missile base → cheaper missiles.
-    state.funds = max(state.funds, COST_MISSILE_BASE + COST_DEFENSE + 50)
+    # Defense first (unlock), then missile base → cheaper missiles.
+    state.funds = max(state.funds, COST_MISSILE_BASE * 2 + COST_DEFENSE + 50)
     assert state.missile_cost() == COST_MISSILE
+    assert state.place_building(di, dj, "defense") == "ok"
+    assert state.cell(di, dj).building == "defense"
+    assert state.protected_by_defense(di, dj)
     assert state.place_building(bi, bj, "missile_base") == "ok"
     assert state.cell(bi, bj).building == "missile_base"
     assert state.has_missile_base()
     assert state.missile_cost() == COST_MISSILE_CHEAP
     ok, _ = tool_enabled(state, "missile_base", (fi, fj))
     assert ok is True
-
-    # Defense facility covers neighbors within radius.
-    assert state.place_building(di, dj, "defense") == "ok"
-    assert state.cell(di, dj).building == "defense"
-    assert state.protected_by_defense(di, dj)
     covered = state.cells_within(di, dj, DEFENSE_RADIUS)
     assert (di, dj) in covered
     assert len(covered) > 1
@@ -2555,22 +2679,20 @@ def test_decoy_and_tourism_camouflage():
     fi, fj = grass[2]
     gi, gj = grass[3]
 
-    # Place missile base + decoy first, then real defense.
     state.funds = max(
         state.funds, COST_MISSILE_BASE + COST_DEFENSE + COST_DECOY + 50
     )
-    assert state.place_building(bi, bj, "missile_base") == "ok"
+    # Place decoy *before* any real defense — proves 紙糊 grants no cover.
     assert state.place_building(di, dj, "decoy") == "ok"
     assert state.cell(di, dj).building == "decoy"
-
-    # Decoy alone is NOT real defense cover (assert before nearby 防衛).
     assert not state.protected_by_defense(di, dj)
     assert (di, dj) not in state.defense_positions()
 
+    # Defense unlocks missile base (建築抽屜硬鎖).
     assert state.place_building(fi, fj, "defense") == "ok"
     assert state.protected_by_defense(fi, fj)
-    # Decy still never appears in defense_positions (even if a nearby
-    # real 防衛 happens to cover the same cell).
+    assert state.place_building(bi, bj, "missile_base") == "ok"
+    # Decy still never appears in defense_positions (even if covered).
     assert (di, dj) not in state.defense_positions()
 
     # Tourism camouflage: missile→forest, decoy→defense, true defense unchanged.
@@ -2681,6 +2803,8 @@ def test_tool_enabled_rules():
             assert "超市" in reason
         elif key == "rocket_launch":
             assert "ロケット" in reason or "基地" in reason
+        elif key == "onsen_village":
+            assert "鎖定" in reason
         else:
             assert "選格" in reason
     # Poor island → attract locked.
@@ -2782,13 +2906,23 @@ def test_dialog_import_offscreen():
     # Settings live in their own drawer (設定 icon), not under tools.
     assert dlg.hud.settings_drawer.isHidden()
 
-    # 通知 chrome on by default: 格資訊 + 日誌 visible; marquee hidden (no alerts).
+    # Defaults: 方格資訊 + 日誌 on; 警報 enabled but marquee hidden (no alerts).
     assert dlg.hud.icon_bar.button("notify").isChecked()
-    assert dlg.hud._status_chrome_on is True
+    assert dlg.hud._log_visible is True
+    assert dlg.hud._marquee_enabled is True
+    assert dlg.hud._tile_info_visible is True
     assert not dlg.hud.sel_label.isHidden()
     assert not dlg.hud.log_view.isHidden()
     assert dlg.hud.alert_marquee.isHidden()
     assert not dlg.hud.alert_marquee.has_alerts()
+    # 資訊 starts closed — island profile, not tile toggle.
+    assert dlg.hud.icon_bar.button("info").isChecked() is False
+    assert dlg.hud.island_profile.isHidden()
+    assert dlg.state.player_name
+    assert dlg.state.created_at
+    dlg.hud.refresh_island_profile(dlg.state)
+    assert "玩家" in dlg.hud.island_profile_body.text()
+    assert "建島" in dlg.hud.island_profile_body.text()
 
     # No top instruction banner (「點選格子…」/ shortcut strip) on open.
     from PySide6.QtWidgets import QLabel
@@ -2864,6 +2998,16 @@ def test_dialog_import_offscreen():
     dlg.hud.tools_btn.setChecked(True)
     assert not dlg.hud.tools_drawer.isHidden()
     assert dlg.hud.settings_drawer.isHidden()
+    # No session-action footer under 放置 (下回合／觀光／存檔／新島／視圖).
+    from PySide6.QtWidgets import QPushButton
+
+    assert not hasattr(dlg.hud, "tools_layout")
+    assert not hasattr(dlg, "turn_btn")
+    footer_labels = ("下回合", "觀光", "存檔", "新島", "視圖")
+    for btn in dlg.hud.tools_drawer.findChildren(QPushButton):
+        label = btn.text() or ""
+        assert not any(bit in label for bit in footer_labels), label
+    assert dlg.hud.build_place_btn.text() == "放置"
     dlg.hud.tools_btn.setChecked(False)
     assert dlg.hud.tools_drawer.isHidden()
     dlg.hud.icon_bar.button("settings").setChecked(True)
@@ -2876,21 +3020,47 @@ def test_dialog_import_offscreen():
     assert dlg.hud.guestbook_frame.isHidden()
 
 
-    # 通知 toggles 格資訊 + 日誌 + 走馬燈 in sync (marquee needs alerts).
+    # Independent flags: log / marquee / tile-info via 通知 menu.
     dlg.hud.set_sample_alerts()
     assert dlg.hud.alert_marquee.has_alerts()
     assert not dlg.hud.alert_marquee.isHidden()
-    dlg.hud.icon_bar.button("notify").setChecked(False)
-    assert dlg.hud.sel_label.isHidden()
+    # 歷史記錄框 off → log hides; tile info + marquee stay.
+    dlg.hud.set_log_visible(False)
     assert dlg.hud.log_view.isHidden()
+    assert not dlg.hud.sel_label.isHidden()
+    assert not dlg.hud.alert_marquee.isHidden()
+    dlg.hud.set_log_visible(True)
+    assert not dlg.hud.log_view.isHidden()
+    # 警報 off → marquee hides; tile info + log stay.
+    dlg.hud.set_marquee_enabled(False)
     assert dlg.hud.alert_marquee.isHidden()
-    dlg.hud.icon_bar.button("notify").setChecked(True)
     assert not dlg.hud.sel_label.isHidden()
     assert not dlg.hud.log_view.isHidden()
+    dlg.hud.set_marquee_enabled(True)
     assert not dlg.hud.alert_marquee.isHidden()
-    # Clear alerts → marquee hides even with chrome on.
+    # 方格資訊 off → tile hides; log／marquee stay. 資訊 icon unaffected.
+    dlg.hud.set_tile_info_visible(False)
+    assert dlg.hud.sel_label.isHidden()
+    assert not dlg.hud.log_view.isHidden()
+    assert not dlg.hud.alert_marquee.isHidden()
+    assert dlg.hud.icon_bar.button("info").isChecked() is False
+    dlg.hud.set_tile_info_visible(True)
+    assert not dlg.hud.sel_label.isHidden()
+    # 資訊 opens island profile — never toggles tile box.
+    dlg.hud.icon_bar.button("info").setChecked(True)
+    assert not dlg.hud.island_profile.isHidden()
+    assert not dlg.hud.sel_label.isHidden()
+    body = dlg.hud.island_profile_body.text()
+    assert "玩家" in body and "建島" in body
+    assert "回合" in body and str(dlg.state.size) in body
+    dlg.hud.icon_bar.button("info").setChecked(False)
+    assert dlg.hud.island_profile.isHidden()
+    # Restore notify options; clear alerts → marquee hides even with 警報 on.
+    dlg.hud.set_log_visible(True)
+    dlg.hud.set_marquee_enabled(True)
     dlg.hud.set_alerts([])
     assert dlg.hud.alert_marquee.isHidden()
+    assert not dlg.hud.log_view.isHidden()
 
 
     # Select a buildable grass cell → farm/factory enable.
@@ -2907,12 +3077,91 @@ def test_dialog_import_offscreen():
     assert dlg.tool_buttons["farm"].isEnabled()
     assert dlg.tool_buttons["factory"].isEnabled()
     assert dlg.tool_buttons["defense"].isEnabled()
-    assert dlg.tool_buttons["missile_base"].isEnabled()
+    # 飛彈基地硬鎖 until 防衛 exists on the island.
+    assert not dlg.tool_buttons["missile_base"].isEnabled()
+    assert not dlg.tool_buttons["shipyard"].isEnabled()
     assert not dlg.tool_buttons["remove"].isEnabled()
     assert "農場" in dlg.tool_buttons["farm"].text()
     assert str(COST_FARM) in dlg.tool_buttons["farm"].text()
     assert "防衛" in dlg.tool_buttons["defense"].text()
     assert "飛彈基地" in dlg.tool_buttons["missile_base"].text()
+    # Building nav: List Row Fill categories + detail pane (no thumbnails).
+    from hakoniwa.list_row_fill import (
+        LIST_ROW_ANIM_MS,
+        HakoniwaListRowFillItem,
+    )
+
+    assert len(dlg._category_names) >= 5
+    assert "生産" in dlg._category_names and "港湾" in dlg._category_names
+    assert "軍事" in dlg._category_names
+    assert "生産" in dlg._category_rows
+    assert isinstance(dlg._category_rows["生産"], HakoniwaListRowFillItem)
+    assert LIST_ROW_ANIM_MS == 500
+    # Number on every category row (01…).
+    assert dlg._category_rows["開發"].index == 1
+    assert "住居" in dlg._category_names
+    assert dlg._category_rows["住居"].index == 2
+    assert dlg._category_rows["生産"].index == 3
+    assert "onsen_village" in dlg._tree_items
+    assert "🔒" in dlg._tree_items["onsen_village"].title
+    assert "village" in dlg._tree_items
+    assert "🔒" in dlg._tree_items["village"].title
+    # Children default collapsed.
+    for name in dlg._category_names:
+        assert dlg.is_category_expanded(name) is False
+        assert dlg._category_panels[name].isHidden()
+    assert "shipyard" in dlg._tree_items
+    assert "🔒" in dlg._tree_items["shipyard"].title
+    assert "🔒" in dlg._tree_items["missile_base"].title
+    assert "🔒" not in dlg._tree_items["farm"].title
+    # Expand 港湾 → Timeline Draw plays; select a locked row.
+    from hakoniwa.timeline_draw import TIMELINE_ANIM_MS, TimelineDrawPanel
+
+    assert TIMELINE_ANIM_MS == 2400
+    dlg._toggle_build_category("港湾")
+    assert dlg.is_category_expanded("港湾")
+    harbor_panel = dlg._category_panels["港湾"]
+    assert isinstance(harbor_panel, TimelineDrawPanel)
+    assert not harbor_panel.isHidden()
+    # Animation started from 0; snap complete so nodes are hittable in smoke.
+    assert harbor_panel.drawProgress < 1.0 or harbor_panel._anim.state() != 0
+    harbor_panel.snap_complete()
+    assert harbor_panel.drawProgress == 1.0
+    dlg._select_build_child("shipyard")
+    assert "造船" in dlg.hud.build_detail_title.text()
+    assert not dlg.hud.build_place_btn.isEnabled()
+    # Unlock defense → missile_base row clears lock (top up for 防衛＋飛彈費用).
+    dlg.state.funds = max(dlg.state.funds, COST_DEFENSE + COST_MISSILE_BASE + 50)
+    assert dlg.state.place_building(*grass, "defense") == "ok"
+    # Pick another empty grass for the unlocked 飛彈基地.
+    other_grass = next(
+        (
+            (i, j)
+            for i, j in land
+            if (i, j) != grass
+            and dlg.state.cell(i, j).terrain == "grass"
+            and dlg.state.cell(i, j).building is None
+        ),
+        None,
+    )
+    if other_grass is None:
+        dirt = next(
+            (
+                (i, j)
+                for i, j in land
+                if dlg.state.cell(i, j).terrain == "dirt"
+                and dlg.state.cell(i, j).building is None
+            ),
+            None,
+        )
+        assert dirt is not None
+        dlg.state.funds = max(dlg.state.funds, COST_LEVEL)
+        dlg.state.level_land(*dirt)
+        other_grass = dirt
+    dlg._on_cell_clicked(*other_grass)
+    dlg._refresh_toolbar()
+    assert "🔒" not in dlg._tree_items["missile_base"].title
+    assert dlg.tool_buttons["missile_base"].isEnabled()
 
     # Map pan/zoom API.
     old_cell = dlg.map.cell
@@ -3203,8 +3452,28 @@ def test_user_art_loader_hook():
         k for k in USER_BUILDING_FILES
     }
     assert "farm" in USER_BUILDING_FILES and "missile_base" in USER_BUILDING_FILES
+    assert "village" in USER_BUILDING_FILES
+    assert "town" in USER_BUILDING_FILES
+    assert "city" in USER_BUILDING_FILES
+    assert "village.png" in names["building"]
+    assert "town.png" in names["building"]
+    assert "city.png" in names["building"]
     assert "inora" in USER_MONSTER_FILES
-    assert set(USER_TERRAIN_FILES) >= {"sea", "dirt", "grass", "forest", "mountain"}
+    assert set(USER_TERRAIN_FILES) >= {
+        "sea",
+        "dirt",
+        "grass",
+        "forest",
+        "mountain",
+        "onsen_mountain",
+        "oilfield",
+        "crater",
+    }
+    assert "village" not in USER_TERRAIN_FILES
+    assert "town" not in USER_TERRAIN_FILES
+    assert "city" not in USER_TERRAIN_FILES
+    assert "village.png" not in names["terrain"]
+    assert "onsen_village" in USER_BUILDING_FILES
 
     roots = default_user_art_roots(None)
     assert ASSETS_USER_DIR in roots
@@ -3450,6 +3719,635 @@ def test_building_sprite_ew_south_align_offscreen():
     )
 
 
+def test_mountain_sprite_building_placement():
+    """Mountain PNG uses building placement; the ground tile stays bundled.
+
+    Forest, village, and oilfield user PNGs still replace the flat diamond.
+    """
+    import os
+    import struct
+    import zlib
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    try:
+        from PySide6.QtCore import QPointF
+        from PySide6.QtGui import QColor, QImage, QPixmap
+        from PySide6.QtWidgets import QApplication
+        from hakoniwa.grid import DEFAULT_CELL, cell_center, cell_screen_size
+        from hakoniwa.tiles import (
+            ATLAS,
+            ELEVATED_SPRITE_TERRAINS,
+            SPRITES_DIR,
+            alpha_content_rect,
+        )
+        from hakoniwa.user_art import configure_user_art
+        from hakoniwa.view import HakoniwaMapWidget
+    except Exception as exc:  # pragma: no cover - optional GUI
+        print(f"mountain sprite: skip ({exc})")
+        return
+
+    assert ELEVATED_SPRITE_TERRAINS == frozenset({"mountain", "onsen_mountain"})
+    bundled = SPRITES_DIR / "mountain.png"
+    assert bundled.is_file(), bundled
+
+    app = QApplication.instance() or QApplication([])
+    ground = ATLAS.pixmap_for("mountain")
+    dirt = ATLAS.pixmap_for("dirt")
+    assert ground is not None and dirt is not None
+    assert not ground.isNull() and ground.cacheKey() == dirt.cacheKey()
+    for flat in ("forest", "oilfield", "crater"):
+        assert ATLAS.elevated_sprite(flat) is None
+    assert ATLAS.elevated_sprite("village") is None
+
+    def _tiny_png(path: Path, rgb=(200, 40, 40)) -> None:
+        w = h = 2
+        r, g, b = rgb
+        raw = b""
+        for _y in range(h):
+            raw += b"\x00" + bytes([r, g, b]) * w
+        compressed = zlib.compress(raw, 9)
+
+        def chunk(tag: bytes, data: bytes) -> bytes:
+            return (
+                struct.pack(">I", len(data))
+                + tag
+                + data
+                + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+            )
+
+        ihdr = struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)
+        path.write_bytes(
+            b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", ihdr)
+            + chunk(b"IDAT", compressed)
+            + chunk(b"IEND", b"")
+        )
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = Path(tmp)
+            data_user = cfg / "Data" / "hakoniwa" / "user"
+            data_user.mkdir(parents=True)
+            _tiny_png(data_user / "mountain.png", rgb=(10, 20, 30))
+            _tiny_png(data_user / "forest.png", rgb=(10, 180, 40))
+            _tiny_png(data_user / "village.png", rgb=(180, 140, 40))
+            _tiny_png(data_user / "oilfield.png", rgb=(40, 40, 40))
+            configure_user_art(cfg)
+            ATLAS.invalidate_user_cache()
+            sprite = ATLAS.elevated_sprite("mountain")
+            assert sprite is not None and sprite.width() == 2
+            ground_user = ATLAS.pixmap_for("mountain")
+            assert ground_user is not None and ground_user.width() == dirt.width()
+            assert ground_user.width() != 2
+            for key in ("forest", "oilfield"):
+                flat = ATLAS.pixmap_for(key)
+                assert flat is not None and flat.width() == 2, key
+            village_art = ATLAS.building_pixmap("village")
+            assert village_art is not None and village_art.width() == 2
+            assert ATLAS.elevated_sprite("forest") is None
+            assert ATLAS.elevated_sprite("village") is None
+            assert ATLAS.elevated_sprite("oilfield") is None
+    finally:
+        configure_user_art(None)
+        ATLAS.invalidate_user_cache()
+
+    # Hollow tall stub: peak and S edge are magenta; the middle is clear so
+    # the mountain ground tile shows through the footprint.
+    stub_img = QImage(40, 80, QImage.Format.Format_ARGB32)
+    stub_img.fill(QColor(0, 0, 0, 0))
+    magenta = QColor(255, 0, 255, 255)
+    for y in range(16):
+        for x in range(40):
+            stub_img.setPixelColor(x, y, magenta)
+    for y in range(16, 72):
+        for x in list(range(8)) + list(range(32, 40)):
+            stub_img.setPixelColor(x, y, magenta)
+    for y in range(72, 80):
+        for x in range(40):
+            stub_img.setPixelColor(x, y, magenta)
+    stub = QPixmap.fromImage(stub_img)
+    content = alpha_content_rect(stub)
+    assert content.width() == 40 and content.height() == 80, (
+        content.width(),
+        content.height(),
+    )
+
+    original = ATLAS.elevated_sprite
+
+    def _stub_sprite(terrain: str):
+        return stub if terrain == "mountain" else None
+
+    ATLAS.elevated_sprite = _stub_sprite  # type: ignore[method-assign]
+    try:
+        state = IslandState.new_game()
+        grass = [
+            (i, j)
+            for i in range(20)
+            for j in range(20)
+            if state.cell(i, j).terrain == "grass"
+        ]
+        gi, gj = min(grass, key=lambda ij: abs(ij[0] - 10) + abs(ij[1] - 10))
+        assert state.raise_mountain(gi, gj) == "ok"
+        widget = HakoniwaMapWidget(state)
+        assert widget.cell == float(DEFAULT_CELL)
+        widget.resize(1280, 720)
+        tcx, tcy = cell_center(gi, gj, widget.cell)
+        ox0, oy0 = widget._origin_offset_raw()
+        widget._pan = QPointF(
+            widget.width() / 2.0 - (tcx + ox0),
+            widget.height() / 2.0 - (tcy + oy0),
+        )
+        widget.show()
+        app.processEvents()
+        rendered = widget.grab().toImage()
+        ox, oy = widget._origin_offset()
+        bw, bh = cell_screen_size(widget.cell)
+        scale = bw / 40.0
+        sprite_h = 80.0 * scale
+        cx, cy = cell_center(gi, gj, widget.cell)
+        south_rel = bh / 2.0
+        n_rel = -bh / 2.0
+        dest_top = south_rel - sprite_h
+
+        def _sample(dx: float, dy: float) -> QColor:
+            px = int(round(cx + ox + dx))
+            py = int(round(cy + oy + dy))
+            if px < 0 or py < 0 or px >= rendered.width() or py >= rendered.height():
+                return QColor(0, 0, 0)
+            return QColor(rendered.pixel(px, py))
+
+        def _is_magenta(c: QColor) -> bool:
+            return c.red() > 200 and c.blue() > 200 and c.green() < 80
+
+        # Peak band (source rows 0–15) sits above the N tip.
+        peak_dy = dest_top + (8.0 / 80.0) * sprite_h
+        assert peak_dy < n_rel - 8.0, (peak_dy, n_rel)
+        assert _is_magenta(_sample(0.0, peak_dy)), "mountain peak clipped or missing above N"
+        # Content bottom sits on S; nothing leaks below the tip.
+        assert _is_magenta(_sample(0.0, south_rel - 4.0)), "mountain bottom missing at S"
+        assert not _is_magenta(_sample(0.0, south_rel + 8.0)), "mountain sprite leaked below S"
+        # Side rails span the cell width (left=W, right=E).
+        mid_dy = dest_top + (40.0 / 80.0) * sprite_h
+        assert _is_magenta(_sample(-(bw / 2.0) + 6.0, mid_dy)), "missing near West"
+        assert _is_magenta(_sample((bw / 2.0) - 6.0, mid_dy)), "missing near East"
+        # Clear center of the footprint shows the ground tile, not the sprite.
+        assert not _is_magenta(_sample(0.0, 0.0)), "sprite covered the mountain ground tile"
+    finally:
+        ATLAS.elevated_sprite = original  # type: ignore[method-assign]
+    print("mountain sprite: building placement, ground tile kept, flat terrains unchanged")
+
+
+def test_onsen_mountain_and_village():
+    """溫泉山 is a mountain anomaly; 溫泉村 is a hard-locked village-family building."""
+    import random
+
+    import hakoniwa.model as model_mod
+
+    from hakoniwa.model import (
+        BUILDINGS,
+        HARD_LOCKED_BUILDINGS,
+        MOUNTAIN_FAMILY,
+        ONSEN_MOUNTAIN_CHANCE,
+        PLACEABLE_BUILDINGS,
+        SAVE_VERSION,
+        SCORE_PER_MOUNTAIN,
+        SCORE_PER_VILLAGE,
+    )
+
+    assert SAVE_VERSION == 17
+    assert "onsen_mountain" in MOUNTAIN_FAMILY and "mountain" in MOUNTAIN_FAMILY
+    assert "onsen_village" in HARD_LOCKED_BUILDINGS
+    assert "onsen_village" not in PLACEABLE_BUILDINGS
+    assert BUILDINGS["onsen_village"]["cost"] == 0
+    assert BUILDINGS["onsen_village"]["label"] == "溫泉村"
+    assert ONSEN_MOUNTAIN_CHANCE > 0
+    assert ("onsen_village", "溫泉村", 0, "") in TOOL_SPECS
+
+    state = IslandState.new_game()
+    land = [(i, j) for i in range(20) for j in range(20) if state.is_land(i, j)]
+    host = next(ij for ij in land if state.cell(*ij).terrain == "grass")
+    hi, hj = host
+    before = state.island_score()
+    state.cell(hi, hj).terrain = "onsen_mountain"
+    assert state.island_score() == before + SCORE_PER_MOUNTAIN
+    assert state.can_place_building(hi, hj, "quarry")
+    assert state.place_building(hi, hj, "onsen_village") != "ok"
+    ok, reason = tool_enabled(state, "onsen_village", (hi, hj))
+    assert ok is False and "鎖定" in reason
+    ok, _ = tool_enabled(state, "quarry", (hi, hj))
+    assert ok is True
+
+    # Grass beside 溫泉山 grows 溫泉村 (building on grass, not 村 terrain).
+    oi, oj = next(ij for ij in neighbors(hi, hj) if state.is_land(*ij))
+    state.cell(oi, oj).terrain = "grass"
+    state.cell(oi, oj).building = None
+    old_spawn = model_mod.SETTLEMENT_SPAWN_CHANCE
+    model_mod.SETTLEMENT_SPAWN_CHANCE = 1.0
+    try:
+        notes = state._evolve_settlements()
+    finally:
+        model_mod.SETTLEMENT_SPAWN_CHANCE = old_spawn
+    assert state.cell(oi, oj).terrain == "grass"
+    assert state.cell(oi, oj).building == "onsen_village"
+    assert any("溫泉村" in n for n in notes)
+    scored = state.island_score()
+    state.cell(oi, oj).building = None
+    assert state.island_score() == scored - SCORE_PER_VILLAGE
+    state.cell(oi, oj).building = "onsen_village"
+    # Same family as 村: a neighbor of 溫泉村 can count toward the next village.
+    assert state._near_farm_or_settlement(hi, hj)
+
+    # Grass beside a farm, with no 溫泉山, still grows 村.
+    plain_island = IslandState.new_game()
+    p_land = [
+        (i, j)
+        for i in range(20)
+        for j in range(20)
+        if plain_island.is_land(i, j) and plain_island.cell(i, j).terrain == "grass"
+    ]
+    fi, fj = p_land[0]
+    assert plain_island.place_building(fi, fj, "farm") == "ok"
+    vi, vj = next(
+        (ni, nj)
+        for ni, nj in neighbors(fi, fj)
+        if plain_island.cell(ni, nj).terrain == "grass"
+        and plain_island.cell(ni, nj).building is None
+    )
+    model_mod.SETTLEMENT_SPAWN_CHANCE = 1.0
+    try:
+        plain_island._evolve_settlements()
+    finally:
+        model_mod.SETTLEMENT_SPAWN_CHANCE = old_spawn
+    assert plain_island.cell(vi, vj).terrain == "grass"
+    assert plain_island.cell(vi, vj).building == "village"
+
+    # Ordinary mountain → 溫泉山. Chance 0 does not roll. Fresh eruptions stay 山.
+    plain = next(
+        ij for ij in land if state.cell(*ij).terrain in ("grass", "dirt") and state.cell(*ij).building is None
+    )
+    state.cell(*plain).terrain = "mountain"
+    state.cell(*plain).building = None
+    old_chance = model_mod.ONSEN_MOUNTAIN_CHANCE
+    old_fire = model_mod.FIRE_BASE_CHANCE
+    old_typhoon = model_mod.TYPHOON_BASE_CHANCE
+    old_quake = model_mod.QUAKE_BASE_CHANCE
+    old_volcano = model_mod.VOLCANO_BASE_CHANCE
+    old_tsunami = model_mod.TSUNAMI_BASE_CHANCE
+    model_mod.FIRE_BASE_CHANCE = 0.0
+    model_mod.TYPHOON_BASE_CHANCE = 0.0
+    model_mod.QUAKE_BASE_CHANCE = 0.0
+    model_mod.VOLCANO_BASE_CHANCE = 0.0
+    model_mod.TSUNAMI_BASE_CHANCE = 0.0
+    model_mod.ONSEN_MOUNTAIN_CHANCE = 0.0
+    try:
+        state._apply_disasters()
+        assert state.cell(*plain).terrain == "mountain"
+        model_mod.ONSEN_MOUNTAIN_CHANCE = 1.0
+        notes = state._apply_disasters()
+        assert state.cell(*plain).terrain == "onsen_mountain"
+        assert any("溫泉山" in n for n in notes)
+    finally:
+        model_mod.ONSEN_MOUNTAIN_CHANCE = old_chance
+        model_mod.FIRE_BASE_CHANCE = old_fire
+        model_mod.TYPHOON_BASE_CHANCE = old_typhoon
+        model_mod.QUAKE_BASE_CHANCE = old_quake
+        model_mod.VOLCANO_BASE_CHANCE = old_volcano
+        model_mod.TSUNAMI_BASE_CHANCE = old_tsunami
+
+    # 整地 溫泉山 → 荒地. Quarry on it is cleared with the cell.
+    state.cell(*plain).building = "quarry"
+    assert state.level_land(*plain) == "ok"
+    assert state.cell(*plain).terrain == "dirt"
+    assert state.cell(*plain).building is None
+
+    # Save stays on version 16; both keys round-trip. No migration bump.
+    blob = state.to_dict()
+    assert blob["version"] == SAVE_VERSION == 17
+    loaded = IslandState.from_dict(blob)
+    assert loaded.cell(hi, hj).terrain == "onsen_mountain"
+    assert loaded.cell(oi, oj).building == "onsen_village"
+    assert loaded.cell(oi, oj).terrain == "grass"
+    assert loaded.to_dict()["version"] == 17
+
+    # A volcano-made mountain is not flipped in the same roll.
+    fresh = IslandState.new_game()
+    model_mod.FIRE_BASE_CHANCE = 0.0
+    model_mod.TYPHOON_BASE_CHANCE = 0.0
+    model_mod.QUAKE_BASE_CHANCE = 0.0
+    model_mod.TSUNAMI_BASE_CHANCE = 0.0
+    model_mod.VOLCANO_BASE_CHANCE = 1.0
+    model_mod.ONSEN_MOUNTAIN_CHANCE = 1.0
+    orig_random = random.random
+    random.random = lambda: 0.0  # type: ignore[assignment]
+    try:
+        notes = fresh._apply_disasters()
+    finally:
+        random.random = orig_random  # type: ignore[assignment]
+        model_mod.FIRE_BASE_CHANCE = old_fire
+        model_mod.TYPHOON_BASE_CHANCE = old_typhoon
+        model_mod.QUAKE_BASE_CHANCE = old_quake
+        model_mod.VOLCANO_BASE_CHANCE = old_volcano
+        model_mod.TSUNAMI_BASE_CHANCE = old_tsunami
+        model_mod.ONSEN_MOUNTAIN_CHANCE = old_chance
+    assert any("噴火" in n for n in notes)
+    assert fresh.terrain_count("mountain") == 1
+    assert fresh.terrain_count("onsen_mountain") == 0
+
+    # Paint: 溫泉山 is an elevated ground tile; 溫泉村 uses building_pixmap only.
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    try:
+        from PySide6.QtWidgets import QApplication
+        from hakoniwa.tiles import ATLAS, ELEVATED_SPRITE_TERRAINS
+        from hakoniwa.view import HakoniwaMapWidget
+    except Exception as exc:  # pragma: no cover
+        print(f"onsen paint: skip ({exc})")
+        print("onsen: rules OK (no Qt)")
+        return
+
+    assert "onsen_mountain" in ELEVATED_SPRITE_TERRAINS
+    app = QApplication.instance() or QApplication([])
+    ground = ATLAS.pixmap_for("onsen_mountain")
+    dirt = ATLAS.pixmap_for("dirt")
+    assert ground is not None and dirt is not None
+    assert ground.cacheKey() == dirt.cacheKey()
+    sprite = ATLAS.elevated_sprite("onsen_mountain")
+    assert sprite is not None and not sprite.isNull()
+    village_pix = ATLAS.building_pixmap("onsen_village")
+    assert village_pix is not None and not village_pix.isNull()
+    assert ATLAS.elevated_sprite("onsen_village") is None
+
+    paint = IslandState.new_game()
+    gi, gj = next(
+        (i, j)
+        for i in range(20)
+        for j in range(20)
+        if paint.cell(i, j).terrain == "grass"
+    )
+    paint.cell(gi, gj).terrain = "onsen_mountain"
+    ni, nj = next(
+        (a, b)
+        for a, b in neighbors(gi, gj)
+        if paint.cell(a, b).terrain == "grass"
+    )
+    paint.cell(ni, nj).building = "onsen_village"
+    widget = HakoniwaMapWidget(paint)
+    seen_terrain: list = []
+    asked_building: list = []
+    orig_top = HakoniwaMapWidget._paint_terrain_top
+    orig_b = ATLAS.building_pixmap
+
+    def _spy_top(self, painter, terrain_key, cx, cy, poly):
+        seen_terrain.append(terrain_key)
+        return orig_top(self, painter, terrain_key, cx, cy, poly)
+
+    def _spy_b(kind):
+        asked_building.append(kind)
+        return orig_b(kind)
+
+    HakoniwaMapWidget._paint_terrain_top = _spy_top  # type: ignore[method-assign]
+    ATLAS.building_pixmap = _spy_b  # type: ignore[method-assign]
+    try:
+        widget.resize(960, 640)
+        widget.show()
+        app.processEvents()
+        grabbed = widget.grab()
+        assert not grabbed.isNull()
+    finally:
+        HakoniwaMapWidget._paint_terrain_top = orig_top  # type: ignore[method-assign]
+        ATLAS.building_pixmap = orig_b  # type: ignore[method-assign]
+    assert "onsen_mountain" in seen_terrain
+    assert "onsen_village" not in seen_terrain
+    assert "village" not in seen_terrain
+    assert "onsen_village" in asked_building
+    print("onsen: mountain family + locked village + paint path OK")
+
+
+def test_oilfield_and_crater_tiles():
+    """Oilfield／crater bundled tops, missile leaves 彈坑, flat diamond paint."""
+    import os
+
+    from hakoniwa.tiles import ATLAS, TERRAIN_TILE_FILES, TILES_DIR
+
+    for key, other in (("oilfield", "sea"), ("crater", "dirt")):
+        fname = TERRAIN_TILE_FILES[key]
+        path = TILES_DIR / fname
+        assert path.is_file(), path
+        assert path.stat().st_size > 1000, path
+        assert fname != TERRAIN_TILE_FILES[other]
+        assert ATLAS.tint_for(key) is None
+    # Forest／mountain washes stay. 村／町／都市 are buildings, not terrain tops.
+    assert TERRAIN_TILE_FILES["forest"] == "grass-01.png"
+    assert TERRAIN_TILE_FILES["mountain"] == "dirt-01.png"
+    assert TERRAIN_TILE_FILES["onsen_mountain"] == "dirt-01.png"
+    assert "village" not in TERRAIN_TILE_FILES
+    assert ATLAS.tint_for("forest") is not None
+    assert ATLAS.tint_for("mountain") is not None
+    assert ATLAS.tint_for("onsen_mountain") is not None
+
+    state = IslandState.new_game()
+    state.funds = 8000
+    land = [(i, j) for i in range(20) for j in range(20) if state.is_land(i, j)]
+    grass = [(i, j) for i, j in land if state.cell(i, j).terrain == "grass"]
+    dirt = [(i, j) for i, j in land if state.cell(i, j).terrain == "dirt"]
+    assert len(grass) >= 3 and len(dirt) >= 3
+
+    gi, gj = grass[0]
+    assert state.fire_missile(gi, gj) == "ok"
+    assert state.cell(gi, gj).terrain == "crater"
+    assert state.cell(gi, gj).building is None
+    assert any("彈坑" in line for line in state.log)
+    assert state.can_level(gi, gj)
+    assert state.level_land(gi, gj) == "ok"
+    assert state.cell(gi, gj).terrain == "grass"
+
+    # Ground under a building still becomes the crater tile; the marker stays.
+    fi, fj = grass[1]
+    assert state.place_building(fi, fj, "farm") == "ok"
+    assert state.fire_missile(fi, fj) == "ok"
+    assert state.cell(fi, fj).terrain == "crater"
+    assert state.cell(fi, fj).building == "farm"
+
+    di, dj = dirt[0]
+    assert state.fire_missile(di, dj) == "ok"
+    assert state.cell(di, dj).terrain == "crater"
+    blob = state.to_dict()
+    assert blob["version"] == SAVE_VERSION
+    loaded = IslandState.from_dict(blob)
+    assert loaded.cell(di, dj).terrain == "crater"
+    assert loaded.cell(fi, fj).terrain == "crater"
+    assert loaded.cell(fi, fj).building == "farm"
+
+    # 森／山／溫泉山 and water are not rewritten by a miss.
+    # 村／町／都市 are buildings on 平地, so the ground follows grass→彈坑.
+    protected_kinds = (
+        (grass[2], "forest"),
+        (dirt[1], "mountain"),
+        (dirt[2], "onsen_mountain"),
+    )
+    for (i, j), kind in protected_kinds:
+        state.cell(i, j).terrain = kind
+        state.cell(i, j).building = None
+        if kind == "forest":
+            state.cell(i, j).trees = TREE_MIN
+        assert state.fire_missile(i, j) == "ok"
+        assert state.cell(i, j).terrain == kind
+    # Leveled grass under a 村 still becomes 彈坑; the building stays.
+    state.cell(gi, gj).terrain = "grass"
+    state.cell(gi, gj).building = "village"
+    assert state.fire_missile(gi, gj) == "ok"
+    assert state.cell(gi, gj).terrain == "crater"
+    assert state.cell(gi, gj).building == "village"
+
+    sea = next(
+        (i, j)
+        for i in range(20)
+        for j in range(20)
+        if state.cell(i, j).terrain == "sea"
+    )
+    assert state.fire_missile(*sea) == "ok"
+    assert state.cell(*sea).terrain == "sea"
+    state.cell(*sea).terrain = "oilfield"
+    assert state.fire_missile(*sea) == "ok"
+    assert state.cell(*sea).terrain == "oilfield"
+
+    # Hitting a monster does not leave a crater.
+    state.cell(gi, gj).terrain = "grass"
+    state.cell(gi, gj).building = None
+    state.cell(gi, gj).trees = 0
+    mi, mj = grass[0]
+    assert state.cell(mi, mj).terrain == "grass"
+    assert state.spawn_monster(mi, mj) is not None
+    assert state.fire_missile(mi, mj) == "ok"
+    assert state.monster_at(mi, mj) is None
+    assert state.cell(mi, mj).terrain == "grass"
+
+    # Defense cover nullifies the crater.
+    bi, bj = grass[0]
+    state.cell(bi, bj).terrain = "grass"
+    state.cell(bi, bj).trees = 0
+    state.cell(bi, bj).building = None
+    near = next(ij for ij in neighbors(bi, bj) if state.is_land(*ij))
+    state.cell(*near).terrain = "grass"
+    state.cell(*near).trees = 0
+    state.cell(*near).building = None
+    state.funds = max(state.funds, COST_DEFENSE + COST_MISSILE)
+    assert state.place_building(bi, bj, "defense") == "ok"
+    assert state.protected_by_defense(*near)
+    assert state.fire_missile(*near) == "ok"
+    assert state.cell(*near).terrain == "grass"
+    assert any("無效化" in line for line in state.log)
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    try:
+        from PySide6.QtCore import QPointF
+        from PySide6.QtGui import QColor
+        from PySide6.QtWidgets import QApplication
+        from hakoniwa.view import HakoniwaMapWidget
+    except Exception as exc:  # pragma: no cover
+        print(f"oilfield/crater paint: skip Qt ({exc})")
+        return
+
+    app = QApplication.instance() or QApplication([])
+    oil_pix = ATLAS.pixmap_for("oilfield")
+    crater_pix = ATLAS.pixmap_for("crater")
+    sea_pix = ATLAS.pixmap_for("sea")
+    dirt_pix = ATLAS.pixmap_for("dirt")
+    assert oil_pix is not None and not oil_pix.isNull()
+    assert crater_pix is not None and not crater_pix.isNull()
+    assert oil_pix.cacheKey() != sea_pix.cacheKey()
+    assert crater_pix.cacheKey() != dirt_pix.cacheKey()
+
+    paint = IslandState.new_game()
+    lands = [(i, j) for i in range(20) for j in range(20) if paint.is_land(i, j)]
+    crater_at = next(ij for ij in lands if paint.cell(*ij).terrain == "grass")
+    dirt_at = next(ij for ij in lands if paint.cell(*ij).terrain == "dirt")
+    paint.cell(*crater_at).terrain = "crater"
+    seas = [
+        (i, j)
+        for i in range(20)
+        for j in range(20)
+        if paint.cell(i, j).terrain == "sea"
+    ]
+    oil_at, sea_at = seas[0], seas[1]
+    paint.cell(*oil_at).terrain = "oilfield"
+    # 村 is a building, so it must not show up as a terrain-top key.
+    village_at = next(ij for ij in lands if ij not in (crater_at, dirt_at))
+    paint.cell(*village_at).building = "village"
+
+    widget = HakoniwaMapWidget(paint)
+    widget.resize(960, 640)
+    painted: list = []
+    clipped: list = []
+    orig_paint = widget._paint_terrain_top
+
+    def _spy(painter, terrain_key, cx, cy, poly):
+        painted.append(terrain_key)
+        orig_clip = painter.setClipPath
+
+        def _clip(path, *args, **kwargs):
+            if terrain_key in ("oilfield", "crater", "sea", "dirt"):
+                clipped.append(terrain_key)
+            return orig_clip(path, *args, **kwargs)
+
+        painter.setClipPath = _clip  # type: ignore[method-assign]
+        try:
+            return orig_paint(painter, terrain_key, cx, cy, poly)
+        finally:
+            painter.setClipPath = orig_clip  # type: ignore[method-assign]
+
+    widget._paint_terrain_top = _spy  # type: ignore[method-assign]
+
+    def _color_at(i: int, j: int, dx: float, dy: float) -> QColor:
+        tcx, tcy = cell_center(i, j, widget.cell)
+        ox0, oy0 = widget._origin_offset_raw()
+        widget._pan = QPointF(
+            widget.width() / 2.0 - (tcx + ox0),
+            widget.height() / 2.0 - (tcy + oy0),
+        )
+        widget.show()
+        app.processEvents()
+        img = widget.grab().toImage()
+        ox, oy = widget._origin_offset()
+        cx, cy = cell_center(i, j, widget.cell)
+        px = int(round(cx + ox + dx))
+        py = int(round(cy + oy + dy))
+        assert 0 <= px < img.width() and 0 <= py < img.height()
+        return QColor(img.pixel(px, py))
+
+    oil_mid = _color_at(*oil_at, 0.0, 0.0)
+    w, h = cell_screen_size(widget.cell)
+    oil_rim = _color_at(*oil_at, w * 0.28, 0.0)
+    sea_mid = _color_at(*sea_at, 0.0, 0.0)
+    crater_mid = _color_at(*crater_at, 0.0, 0.0)
+    crater_rim = _color_at(*crater_at, w * 0.28, 0.0)
+    dirt_mid = _color_at(*dirt_at, 0.0, 0.0)
+    widget.hide()
+
+    assert "oilfield" in painted and "crater" in painted
+    assert "village" not in painted
+    assert "sea" in painted and "dirt" in painted
+    assert clipped.count("oilfield") >= 1
+    assert clipped.count("crater") >= 1
+    # Slick is the dark center; surrounding water stays sea-blue (no brown wash).
+    assert oil_mid.blue() < 110 and oil_mid.green() < 90, (
+        oil_mid.red(),
+        oil_mid.green(),
+        oil_mid.blue(),
+    )
+    assert oil_rim.blue() > 120, (oil_rim.red(), oil_rim.green(), oil_rim.blue())
+    assert sea_mid.blue() > oil_mid.blue() + 40
+    # Pit is darker than the wasteland ring and darker than plain dirt.
+    crater_l = crater_mid.red() + crater_mid.green() + crater_mid.blue()
+    rim_l = crater_rim.red() + crater_rim.green() + crater_rim.blue()
+    dirt_l = dirt_mid.red() + dirt_mid.green() + dirt_mid.blue()
+    assert crater_l < rim_l - 40, (crater_l, rim_l)
+    assert crater_l < dirt_l - 80, (crater_l, dirt_l)
+    print("oilfield + crater tops: missile leave + diamond paint OK")
+
+
+
 def test_oblique_preview_png_if_possible():
     """Write a small foreshortening proof PNG when Qt offscreen is available."""
     import json
@@ -3591,10 +4489,14 @@ def main():
     test_terrain_top_assets()
     test_user_art_loader_hook()
     test_building_sprite_ew_south_align_offscreen()
+    test_mountain_sprite_building_placement()
+    test_oilfield_and_crater_tiles()
+    test_onsen_mountain_and_village()
     test_catalog_costs()
     test_new_island_and_loop()
     test_guestbook_local()
     test_settlements_and_disasters()
+    test_settlements_use_building_paint_path()
     test_monster_events()
     test_defense_and_missile_base()
     test_decoy_and_tourism_camouflage()
