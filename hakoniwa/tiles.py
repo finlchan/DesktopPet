@@ -32,7 +32,7 @@ OCEAN_BACKGROUND = ASSETS_DIR / "ocean-background.png"
 TERRAIN_TILE_FILES: Dict[str, str] = {
     "sea": "sea-01.png",
     "shallow": "shallow-01.png",
-    "oilfield": "sea-01.png",  # reuse deep-sea top + dark wash（色塊；用戶後補平台圖）
+    "oilfield": "oilfield-01.png",  # 海面＋油膜（扁平菱形頂）
     "dirt": "dirt-01.png",
     "grass": "grass-01.png",
     "forest": "grass-01.png",
@@ -40,13 +40,14 @@ TERRAIN_TILE_FILES: Dict[str, str] = {
     "village": "dirt-01.png",
     "town": "dirt-01.png",
     "city": "dirt-01.png",
+    "crater": "crater-01.png",  # 荒地＋圓坑（飛彈落空留下）
 }
 
 # Optional colour wash after texture (settlements / forest stay readable).
 # Forest uses grass top + deeper green wash (flat top only; no skirts).
 # Shallow keeps un-tinted shallow-01.png; deep sea is baked into sea-01.png.
+# 油田／彈坑 use their own tops (no wash — the slick and pit are in the art).
 TERRAIN_TINT: Dict[str, tuple] = {
-    "oilfield": (30, 28, 24, 150),  # 海底油田／石油平台色塊洗
     "forest": (12, 58, 24, 120),
     "mountain": (90, 85, 75, 110),
     "village": (200, 170, 100, 55),

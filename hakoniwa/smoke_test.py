@@ -3204,7 +3204,15 @@ def test_user_art_loader_hook():
     }
     assert "farm" in USER_BUILDING_FILES and "missile_base" in USER_BUILDING_FILES
     assert "inora" in USER_MONSTER_FILES
-    assert set(USER_TERRAIN_FILES) >= {"sea", "dirt", "grass", "forest", "mountain"}
+    assert set(USER_TERRAIN_FILES) >= {
+        "sea",
+        "dirt",
+        "grass",
+        "forest",
+        "mountain",
+        "oilfield",
+        "crater",
+    }
 
     roots = default_user_art_roots(None)
     assert ASSETS_USER_DIR in roots
@@ -3450,6 +3458,227 @@ def test_building_sprite_ew_south_align_offscreen():
     )
 
 
+def test_oilfield_and_crater_tiles():
+    """Oilfield／crater bundled tops, missile leaves 彈坑, flat diamond paint."""
+    import os
+
+    from hakoniwa.tiles import ATLAS, TERRAIN_TILE_FILES, TILES_DIR
+
+    for key, other in (("oilfield", "sea"), ("crater", "dirt")):
+        fname = TERRAIN_TILE_FILES[key]
+        path = TILES_DIR / fname
+        assert path.is_file(), path
+        assert path.stat().st_size > 1000, path
+        assert fname != TERRAIN_TILE_FILES[other]
+        assert ATLAS.tint_for(key) is None
+    # Forest／mountain／settlement washes stay on their own tops.
+    assert TERRAIN_TILE_FILES["forest"] == "grass-01.png"
+    assert TERRAIN_TILE_FILES["mountain"] == "dirt-01.png"
+    assert TERRAIN_TILE_FILES["village"] == "dirt-01.png"
+    assert TERRAIN_TILE_FILES["town"] == "dirt-01.png"
+    assert TERRAIN_TILE_FILES["city"] == "dirt-01.png"
+    assert ATLAS.tint_for("forest") is not None
+    assert ATLAS.tint_for("mountain") is not None
+    assert ATLAS.tint_for("village") is not None
+
+    state = IslandState.new_game()
+    state.funds = 8000
+    land = [(i, j) for i in range(20) for j in range(20) if state.is_land(i, j)]
+    grass = [(i, j) for i, j in land if state.cell(i, j).terrain == "grass"]
+    dirt = [(i, j) for i, j in land if state.cell(i, j).terrain == "dirt"]
+    assert len(grass) >= 3 and len(dirt) >= 3
+
+    gi, gj = grass[0]
+    assert state.fire_missile(gi, gj) == "ok"
+    assert state.cell(gi, gj).terrain == "crater"
+    assert state.cell(gi, gj).building is None
+    assert any("彈坑" in line for line in state.log)
+    assert state.can_level(gi, gj)
+    assert state.level_land(gi, gj) == "ok"
+    assert state.cell(gi, gj).terrain == "grass"
+
+    # Ground under a building still becomes the crater tile; the marker stays.
+    fi, fj = grass[1]
+    assert state.place_building(fi, fj, "farm") == "ok"
+    assert state.fire_missile(fi, fj) == "ok"
+    assert state.cell(fi, fj).terrain == "crater"
+    assert state.cell(fi, fj).building == "farm"
+
+    di, dj = dirt[0]
+    assert state.fire_missile(di, dj) == "ok"
+    assert state.cell(di, dj).terrain == "crater"
+    blob = state.to_dict()
+    assert blob["version"] == SAVE_VERSION
+    loaded = IslandState.from_dict(blob)
+    assert loaded.cell(di, dj).terrain == "crater"
+    assert loaded.cell(fi, fj).terrain == "crater"
+    assert loaded.cell(fi, fj).building == "farm"
+
+    # 森／山／村／町／都市 and water are not rewritten by a miss.
+    protected_kinds = (
+        (grass[2], "forest"),
+        (dirt[1], "mountain"),
+        (dirt[2], "village"),
+    )
+    for (i, j), kind in protected_kinds:
+        state.cell(i, j).terrain = kind
+        state.cell(i, j).building = None
+        if kind == "forest":
+            state.cell(i, j).trees = TREE_MIN
+        assert state.fire_missile(i, j) == "ok"
+        assert state.cell(i, j).terrain == kind
+    town_i, town_j = dirt[3]
+    state.cell(town_i, town_j).terrain = "town"
+    assert state.fire_missile(town_i, town_j) == "ok"
+    assert state.cell(town_i, town_j).terrain == "town"
+    state.cell(town_i, town_j).terrain = "city"
+    assert state.fire_missile(town_i, town_j) == "ok"
+    assert state.cell(town_i, town_j).terrain == "city"
+
+    sea = next(
+        (i, j)
+        for i in range(20)
+        for j in range(20)
+        if state.cell(i, j).terrain == "sea"
+    )
+    assert state.fire_missile(*sea) == "ok"
+    assert state.cell(*sea).terrain == "sea"
+    state.cell(*sea).terrain = "oilfield"
+    assert state.fire_missile(*sea) == "ok"
+    assert state.cell(*sea).terrain == "oilfield"
+
+    # Hitting a monster does not leave a crater.
+    mi, mj = grass[0]
+    assert state.cell(mi, mj).terrain == "grass"
+    assert state.spawn_monster(mi, mj) is not None
+    assert state.fire_missile(mi, mj) == "ok"
+    assert state.monster_at(mi, mj) is None
+    assert state.cell(mi, mj).terrain == "grass"
+
+    # Defense cover nullifies the crater.
+    bi, bj = grass[0]
+    state.cell(bi, bj).terrain = "grass"
+    state.cell(bi, bj).trees = 0
+    state.cell(bi, bj).building = None
+    near = next(ij for ij in neighbors(bi, bj) if state.is_land(*ij))
+    state.cell(*near).terrain = "grass"
+    state.cell(*near).trees = 0
+    state.cell(*near).building = None
+    state.funds = max(state.funds, COST_DEFENSE + COST_MISSILE)
+    assert state.place_building(bi, bj, "defense") == "ok"
+    assert state.protected_by_defense(*near)
+    assert state.fire_missile(*near) == "ok"
+    assert state.cell(*near).terrain == "grass"
+    assert any("無效化" in line for line in state.log)
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    try:
+        from PySide6.QtCore import QPointF
+        from PySide6.QtGui import QColor
+        from PySide6.QtWidgets import QApplication
+        from hakoniwa.view import HakoniwaMapWidget
+    except Exception as exc:  # pragma: no cover
+        print(f"oilfield/crater paint: skip Qt ({exc})")
+        return
+
+    app = QApplication.instance() or QApplication([])
+    oil_pix = ATLAS.pixmap_for("oilfield")
+    crater_pix = ATLAS.pixmap_for("crater")
+    sea_pix = ATLAS.pixmap_for("sea")
+    dirt_pix = ATLAS.pixmap_for("dirt")
+    assert oil_pix is not None and not oil_pix.isNull()
+    assert crater_pix is not None and not crater_pix.isNull()
+    assert oil_pix.cacheKey() != sea_pix.cacheKey()
+    assert crater_pix.cacheKey() != dirt_pix.cacheKey()
+
+    paint = IslandState.new_game()
+    lands = [(i, j) for i in range(20) for j in range(20) if paint.is_land(i, j)]
+    crater_at = next(ij for ij in lands if paint.cell(*ij).terrain == "grass")
+    dirt_at = next(ij for ij in lands if paint.cell(*ij).terrain == "dirt")
+    paint.cell(*crater_at).terrain = "crater"
+    seas = [
+        (i, j)
+        for i in range(20)
+        for j in range(20)
+        if paint.cell(i, j).terrain == "sea"
+    ]
+    oil_at, sea_at = seas[0], seas[1]
+    paint.cell(*oil_at).terrain = "oilfield"
+    # Settlement still paints as its own key (not the new tops).
+    village_at = next(ij for ij in lands if ij not in (crater_at, dirt_at))
+    paint.cell(*village_at).terrain = "village"
+
+    widget = HakoniwaMapWidget(paint)
+    widget.resize(960, 640)
+    painted: list = []
+    clipped: list = []
+    orig_paint = widget._paint_terrain_top
+
+    def _spy(painter, terrain_key, cx, cy, poly):
+        painted.append(terrain_key)
+        orig_clip = painter.setClipPath
+
+        def _clip(path, *args, **kwargs):
+            if terrain_key in ("oilfield", "crater", "sea", "dirt"):
+                clipped.append(terrain_key)
+            return orig_clip(path, *args, **kwargs)
+
+        painter.setClipPath = _clip  # type: ignore[method-assign]
+        try:
+            return orig_paint(painter, terrain_key, cx, cy, poly)
+        finally:
+            painter.setClipPath = orig_clip  # type: ignore[method-assign]
+
+    widget._paint_terrain_top = _spy  # type: ignore[method-assign]
+
+    def _color_at(i: int, j: int, dx: float, dy: float) -> QColor:
+        tcx, tcy = cell_center(i, j, widget.cell)
+        ox0, oy0 = widget._origin_offset_raw()
+        widget._pan = QPointF(
+            widget.width() / 2.0 - (tcx + ox0),
+            widget.height() / 2.0 - (tcy + oy0),
+        )
+        widget.show()
+        app.processEvents()
+        img = widget.grab().toImage()
+        ox, oy = widget._origin_offset()
+        cx, cy = cell_center(i, j, widget.cell)
+        px = int(round(cx + ox + dx))
+        py = int(round(cy + oy + dy))
+        assert 0 <= px < img.width() and 0 <= py < img.height()
+        return QColor(img.pixel(px, py))
+
+    oil_mid = _color_at(*oil_at, 0.0, 0.0)
+    w, h = cell_screen_size(widget.cell)
+    oil_rim = _color_at(*oil_at, w * 0.28, 0.0)
+    sea_mid = _color_at(*sea_at, 0.0, 0.0)
+    crater_mid = _color_at(*crater_at, 0.0, 0.0)
+    crater_rim = _color_at(*crater_at, w * 0.28, 0.0)
+    dirt_mid = _color_at(*dirt_at, 0.0, 0.0)
+    widget.hide()
+
+    assert "oilfield" in painted and "crater" in painted
+    assert "village" in painted
+    assert "sea" in painted and "dirt" in painted
+    assert clipped.count("oilfield") >= 1
+    assert clipped.count("crater") >= 1
+    # Slick is the dark center; surrounding water stays sea-blue (no brown wash).
+    assert oil_mid.blue() < 110 and oil_mid.green() < 90, (
+        oil_mid.red(),
+        oil_mid.green(),
+        oil_mid.blue(),
+    )
+    assert oil_rim.blue() > 120, (oil_rim.red(), oil_rim.green(), oil_rim.blue())
+    assert sea_mid.blue() > oil_mid.blue() + 40
+    # Pit is darker than the wasteland ring and darker than plain dirt.
+    crater_l = crater_mid.red() + crater_mid.green() + crater_mid.blue()
+    rim_l = crater_rim.red() + crater_rim.green() + crater_rim.blue()
+    dirt_l = dirt_mid.red() + dirt_mid.green() + dirt_mid.blue()
+    assert crater_l < rim_l - 40, (crater_l, rim_l)
+    assert crater_l < dirt_l - 80, (crater_l, dirt_l)
+    print("oilfield + crater tops: missile leave + diamond paint OK")
+
+
 def test_oblique_preview_png_if_possible():
     """Write a small foreshortening proof PNG when Qt offscreen is available."""
     import json
@@ -3589,6 +3818,7 @@ def main():
     test_grid_geometry()
     test_oblique_foreshortening_invariant()
     test_terrain_top_assets()
+    test_oilfield_and_crater_tiles()
     test_user_art_loader_hook()
     test_building_sprite_ew_south_align_offscreen()
     test_catalog_costs()
