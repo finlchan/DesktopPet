@@ -3099,7 +3099,13 @@ def test_dialog_import_offscreen():
     assert LIST_ROW_ANIM_MS == 500
     # Number on every category row (01…).
     assert dlg._category_rows["開發"].index == 1
-    assert dlg._category_rows["生産"].index == 2
+    assert "住居" in dlg._category_names
+    assert dlg._category_rows["住居"].index == 2
+    assert dlg._category_rows["生産"].index == 3
+    assert "onsen_village" in dlg._tree_items
+    assert "🔒" in dlg._tree_items["onsen_village"].title
+    assert "village" in dlg._tree_items
+    assert "🔒" in dlg._tree_items["village"].title
     # Children default collapsed.
     for name in dlg._category_names:
         assert dlg.is_category_expanded(name) is False
@@ -3974,7 +3980,6 @@ def test_onsen_mountain_and_village():
         model_mod.SETTLEMENT_SPAWN_CHANCE = old_spawn
     assert plain_island.cell(vi, vj).terrain == "grass"
     assert plain_island.cell(vi, vj).building == "village"
-    assert plain_island.cell(vi, vj).building is None
 
     # Ordinary mountain → 溫泉山. Chance 0 does not roll. Fresh eruptions stay 山.
     plain = next(
@@ -4208,6 +4213,9 @@ def test_oilfield_and_crater_tiles():
     assert state.cell(*sea).terrain == "oilfield"
 
     # Hitting a monster does not leave a crater.
+    state.cell(gi, gj).terrain = "grass"
+    state.cell(gi, gj).building = None
+    state.cell(gi, gj).trees = 0
     mi, mj = grass[0]
     assert state.cell(mi, mj).terrain == "grass"
     assert state.spawn_monster(mi, mj) is not None

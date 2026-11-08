@@ -28,6 +28,10 @@ try:
     from .model import SETTLEMENT_BUILDINGS  # type: ignore
 except ImportError:  # pragma: no cover — older tip keeps settlements as terrain
     SETTLEMENT_BUILDINGS = frozenset()  # type: ignore
+try:
+    from .model import HARD_LOCKED_BUILDINGS  # type: ignore
+except ImportError:  # pragma: no cover
+    HARD_LOCKED_BUILDINGS = frozenset()  # type: ignore
 
 # Action keys hard-locked until a facility exists (already in game rules).
 ACTION_UNLOCK_PREREQS: Dict[str, Tuple[str, str]] = {
@@ -64,6 +68,7 @@ PLACEMENT_BLURBS: Dict[str, str] = {
     "research_lab": "平地",
     "amusement_park": "平地",
     "power_plant": "平地",
+    "onsen_village": "溫泉山旁的空平地（自然出現）",
 }
 
 # One-line effect blurbs for the detail pane.
@@ -110,6 +115,7 @@ EFFECT_BLURBS: Dict[str, Tuple[str, ...]] = {
     "village": ("住居建築；人口自然演進（非點選建造）",),
     "town": ("住居建築；人口自然演進（非點選建造）",),
     "city": ("住居建築；人口自然演進（非點選建造）",),
+    "onsen_village": ("溫泉山旁的平地自然出現（與村同族，不可直接建設）",),
 }
 
 
@@ -189,9 +195,14 @@ def build_tree_categories() -> Tuple[Tuple[str, Tuple[str, ...]], ...]:
     """Categories for the drawer tree (includes 住居 when applicable)."""
     cats: List[Tuple[str, Tuple[str, ...]]] = list(_BASE_CATEGORIES)
     settlements = settlement_keys_for_tree()
-    if settlements:
+    extra: List[str] = []
+    # 溫泉村 is a hard-locked village-family building, not a population upgrade.
+    if "onsen_village" in BUILDINGS and "onsen_village" not in settlements:
+        extra.append("onsen_village")
+    residence = settlements + tuple(extra)
+    if residence:
         # Insert after 開發 (catalog §2.2 住居).
-        cats.insert(1, ("住居", settlements))
+        cats.insert(1, ("住居", residence))
     return tuple(cats)
 
 
@@ -216,6 +227,9 @@ def unlock_met(state: IslandState, kind: str) -> Tuple[bool, str]:
     Returns (met, reason). Reason empty when met; otherwise the lock tip.
     Placement terrain is *not* an unlock — handled separately.
     """
+    # Hard-locked catalog rows (溫泉村): visible, never activatable.
+    if kind in HARD_LOCKED_BUILDINGS:
+        return False, "只能在溫泉山旁的平地自然出現"
     # Non-placeable settlements: always "browse only", never activatable.
     if kind in settlement_keys_for_tree():
         return False, "住居由人口演進生成（不可點選建造）"

@@ -453,6 +453,9 @@ Coord = Tuple[int, int]
 LAND_TERRAINS = frozenset(k for k, v in TERRAIN.items() if v["land"])
 SETTLEMENT_BUILDINGS = frozenset({"village", "town", "city"})
 BUILDABLE = frozenset({"grass"})  # 平地 only（村／町／都市請先整地；採掘場除外）
+# 17 covers both migrations that previously each claimed this number:
+# legacy terrain village/town/city → grass + building (Cell.from_dict), and
+# island profile player_name / created_at (missing values default on load).
 SAVE_VERSION = 17
 
 

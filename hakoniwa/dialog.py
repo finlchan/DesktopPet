@@ -1432,14 +1432,18 @@ class HakoniwaIslandDialog(QDialog):
         shown_cost = cost_for_kind(self.state, key, tool_cost)
         if shown_cost is None:
             cost_lab.setText("費用: 免費／依指令")
-        elif shown_cost == 0 and key in settlement_keys_for_tree():
+        elif shown_cost == 0 and (
+            key in settlement_keys_for_tree() or key in HARD_LOCKED_BUILDINGS
+        ):
             cost_lab.setText("費用: 0（非點選建造）")
         else:
             cost_lab.setText(f"資金: {shown_cost}")
 
         met, lock_reason = unlock_met(self.state, key)
         prereq = unlock_prereq(key)
-        if key in settlement_keys_for_tree():
+        if key in HARD_LOCKED_BUILDINGS:
+            status_lab.setText(f"狀態: 鎖定 🔒\n前提: {lock_reason}")
+        elif key in settlement_keys_for_tree():
             status_lab.setText("狀態: 瀏覽用（人口演進）\n前提: 不可點選建造")
         elif met:
             prereq_txt = "無" if prereq is None else display_label(prereq[0].split("|")[0])
@@ -1458,7 +1462,7 @@ class HakoniwaIslandDialog(QDialog):
         # Action label: 放置 for buildings, otherwise keep tool verb.
         if key in PLACEABLE_BUILDINGS:
             place_btn.setText("放置")
-        elif key in settlement_keys_for_tree():
+        elif key in settlement_keys_for_tree() or key in HARD_LOCKED_BUILDINGS:
             place_btn.setText("不可建造")
         else:
             place_btn.setText("執行")
