@@ -30,7 +30,7 @@ OCEAN_BACKGROUND = ASSETS_DIR / "ocean-background.png"
 
 # Terrain whose user/bundled PNG is a 2.5D prop (building placement), not a
 # diamond fill. Ground for these keys stays the bundled top below.
-# Forest, oilfield, village/town/city, and any crater stay flat tops.
+# Forest, oilfield, and crater stay flat tops. 村／町／都市 are buildings.
 ELEVATED_SPRITE_TERRAINS = frozenset({"mountain", "onsen_mountain"})
 ELEVATED_SPRITE_FILES: Dict[str, str] = {
     "mountain": "mountain.png",
@@ -52,23 +52,18 @@ TERRAIN_TILE_FILES: Dict[str, str] = {
     "forest": "grass-01.png",
     "mountain": "dirt-01.png",  # ground tile; height is sprites/mountain.png
     "onsen_mountain": "dirt-01.png",  # ground tile; height is sprites/onsen_mountain.png
-    "village": "dirt-01.png",
-    "town": "dirt-01.png",
-    "city": "dirt-01.png",
     "crater": "crater-01.png",  # 荒地＋圓坑（飛彈落空留下）
 }
 
-# Optional colour wash after texture (settlements / forest stay readable).
+# Optional colour wash after texture (forest / mountain / oilfield stay readable).
 # Forest uses grass top + deeper green wash (flat top only; no skirts).
 # Shallow keeps un-tinted shallow-01.png; deep sea is baked into sea-01.png.
 # 油田／彈坑 use their own tops (no wash — the slick and pit are in the art).
+# 村／町／都市 are buildings (USER_BUILDING_FILES) — no terrain tint.
 TERRAIN_TINT: Dict[str, tuple] = {
     "forest": (12, 58, 24, 120),
     "mountain": (90, 85, 75, 110),
     "onsen_mountain": (96, 88, 72, 110),
-    "village": (200, 170, 100, 55),
-    "town": (180, 120, 70, 70),
-    "city": (140, 100, 120, 80),
 }
 
 _BLACK_KEY_LUMA = 28  # near-black outside diamond → transparent

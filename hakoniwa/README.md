@@ -23,7 +23,7 @@ not a flat top-down square grid rotated 45°.
 | Harbor | 港灣 800／造船所 500（臨海平地色塊）；有其一可貿易輸出 100噸≈5資金 |
 | Breakwater | 防波堤 200（臨海平地色塊）；鄰格減海嘯；自身不被海嘯摧毀 |
 | Oilfield | 掘削 200：陸→淺灘／淺灘→海／海→探油；油田被動產資；機率枯竭→海；地面為 `oilfield-01.png`（海面油膜） |
-| Crater | 飛彈落空於空的荒地／平地→彈坑（`crater-01.png`）；防衛範圍內落空不留坑；整地→平地。森／山／村／町／都市與海域不改 |
+| Crater | 飛彈落空於空的荒地／平地→彈坑（`crater-01.png`）；防衛範圍內落空不留坑；整地→平地。森／山／溫泉山與海域不改。村／町／都市是建築，所在平地仍會變彈坑 |
 | Monument | 紀念碑 9999（平地色塊）；加島分數／安穩；抗怪獸踩踏；鄰格抑火災如森 |
 | Bank | 銀行 500（平地色塊）；流動資金上限 9999；溢出進存款緩衝；可手動存提 |
 | Supermarket | 超市 300（平地色塊）；資金買糧 100噸≈8資金（略貴於貿易輸出） |
@@ -98,15 +98,17 @@ placement above (alpha AABB, left=W, right=E, bottom=S, may exceed N, no
 diamond clip). Shipped at `hakoniwa/assets/sprites/mountain.png`; a user drop
 of the same name replaces that sprite only. `onsen_mountain.png` uses that
 same placement on 溫泉山. `onsen_village.png` is building art (user drop or
-`assets/sprites/onsen_village.png`), not a terrain top. `forest.png`,
-`oilfield.png`, `village.png`, `town.png`, and `city.png` stay flat terrain tops.
+`assets/sprites/onsen_village.png`), not a terrain top. `village.png`,
+`town.png`, and `city.png` are building art too (EW+S, not a diamond top).
+`forest.png` and `oilfield.png` stay flat terrain tops. `crater.png` is the
+optional override for the missile pit.
 
 | Category | Filenames |
 |---|---|
-| Terrain | `sea.png` `shallow.png` `oilfield.png` `dirt.png` `crater.png` `grass.png` `forest.png` `mountain.png` `onsen_mountain.png` `village.png` `town.png` `city.png` |
+| Terrain | `sea.png` `shallow.png` `oilfield.png` `dirt.png` `crater.png` `grass.png` `forest.png` `mountain.png` `onsen_mountain.png` |
 | Backdrop | `ocean-background.png` |
 
-| Buildings | `farm.png` `factory.png` `quarry.png` `defense.png` `missile_base.png` `undersea_base.png` `decoy.png` `harbor.png` `shipyard.png` `breakwater.png` `monument.png` `bank.png` `supermarket.png` `shrine.png` `park.png` `airport.png` `rocket_base.png` `hotel.png` `casino.png` `university.png` `research_lab.png` `aquafarm.png` `amusement_park.png` `power_plant.png` `onsen_village.png` |
+| Buildings | `farm.png` `factory.png` `quarry.png` `village.png` `town.png` `city.png` `defense.png` `missile_base.png` `undersea_base.png` `decoy.png` `harbor.png` `shipyard.png` `breakwater.png` `monument.png` `bank.png` `supermarket.png` `shrine.png` `park.png` `airport.png` `rocket_base.png` `hotel.png` `casino.png` `university.png` `research_lab.png` `aquafarm.png` `amusement_park.png` `power_plant.png` `onsen_village.png` |
 
 | Monsters | `inora.png` |
 

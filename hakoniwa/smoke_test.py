@@ -57,6 +57,7 @@ from hakoniwa.model import (
     COST_PARK,
     COST_POWER_PLANT,
     COST_UNDERSEA_BASE,
+    COST_CITY,
     COST_QUARRY,
     COST_RAISE,
     COST_RESEARCH_LAB,
@@ -65,7 +66,13 @@ from hakoniwa.model import (
     COST_SHIPYARD,
     COST_SHRINE,
     COST_SUPERMARKET,
+    COST_TOWN,
     COST_UNIVERSITY,
+    COST_VILLAGE,
+    BUILDINGS,
+    PLACEABLE_BUILDINGS,
+    SETTLEMENT_BUILDINGS,
+    TERRAIN,
     HOTEL_TOURISM_BASE,
     HOTEL_TOURISM_PER_100_POP,
     AMUSEMENT_TOURISM_BASE,
@@ -268,6 +275,15 @@ def test_catalog_costs():
     assert COST_AMUSEMENT_PARK == 1300
     assert COST_POWER_PLANT == 650
     assert COST_UNDERSEA_BASE == 8000
+    assert COST_VILLAGE == 0
+    assert COST_TOWN == 0
+    assert COST_CITY == 0
+    assert SETTLEMENT_BUILDINGS == frozenset({"village", "town", "city"})
+    for key in SETTLEMENT_BUILDINGS:
+        assert key in BUILDINGS
+        assert key not in TERRAIN
+        assert key not in PLACEABLE_BUILDINGS
+        assert BUILDINGS[key]["cost"] == 0
     assert SCORE_PER_MONUMENT == 2000
     assert SCORE_PER_QUARRY == 70
     assert SCORE_PER_BREAKWATER == 50
@@ -330,7 +346,7 @@ def test_catalog_costs():
     assert FUNDS_PER_FOOD_BUY == 8
     assert FUNDS_PER_QUARRY == 8
     assert FUNDS_PER_OILFIELD == 50
-    assert SAVE_VERSION == 16
+    assert SAVE_VERSION == 17
     assert 0 < OIL_DISCOVER_CHANCE <= 1
     assert 0 < OIL_DEPLETION_CHANCE < 1
     assert TSUNAMI_BASE_CHANCE > 0
@@ -1426,7 +1442,7 @@ def test_park_and_attract():
         notes = state._evolve_settlements()
     finally:
         model_mod.SETTLEMENT_SPAWN_CHANCE = old_chance
-    assert state.cell(si, sj).terrain == "village" or any("村落" in n for n in notes)
+    assert state.cell(si, sj).building == "village" or any("村落" in n for n in notes)
 
     # Attract: too poor / then success / double-book blocked.
     state.funds = COST_ATTRACT - 1
@@ -2212,36 +2228,41 @@ def test_settlements_and_disasters():
         # Force spawn (random < 0.20).
         random.random = lambda: 0.0  # type: ignore[assignment]
         notes = state._evolve_settlements()
-        assert state.cell(si, sj).terrain == "village"
+        assert state.cell(si, sj).building == "village"
+        assert state.cell(si, sj).terrain == "grass"
         assert any("村落" in n for n in notes)
 
         state.population = VILLAGE_TO_TOWN_POP
         notes = state._evolve_settlements()
-        assert state.cell(si, sj).terrain == "town"
+        assert state.cell(si, sj).building == "town"
         assert any("村→町" in n for n in notes)
 
         state.population = TOWN_TO_CITY_POP
         notes = state._evolve_settlements()
-        assert state.cell(si, sj).terrain == "city"
+        assert state.cell(si, sj).building == "city"
         assert any("町→都市" in n for n in notes)
 
         assert state.can_level(si, sj)
         assert state.level_land(si, sj) == "ok"
         assert state.cell(si, sj).terrain == "grass"
+        assert state.cell(si, sj).building is None
 
         # Fire on town (no forest neighbor); silence typhoon/quake/volcano/tsunami.
         model_mod.TYPHOON_BASE_CHANCE = 0.0
         model_mod.QUAKE_BASE_CHANCE = 0.0
         model_mod.VOLCANO_BASE_CHANCE = 0.0
         model_mod.TSUNAMI_BASE_CHANCE = 0.0
-        state.cell(si, sj).terrain = "town"
+        state.cell(si, sj).terrain = "grass"
+        state.cell(si, sj).building = "town"
         assert not state._has_forest_neighbor(si, sj)
         notes = state._apply_disasters()
+        assert state.cell(si, sj).building is None
         assert state.cell(si, sj).terrain == "dirt"
         assert any("火災" in n for n in notes)
 
         # Forest neighbor mitigates fire: mid-roll between reduced and base → no burn.
-        state.cell(si, sj).terrain = "town"
+        state.cell(si, sj).terrain = "grass"
+        state.cell(si, sj).building = "town"
         forest_spot = next(
             (
                 (ni, nj)
@@ -2260,7 +2281,7 @@ def test_settlements_and_disasters():
         assert reduced < mid < FIRE_BASE_CHANCE
         random.random = lambda: mid  # type: ignore[assignment]
         notes = state._apply_disasters()
-        assert state.cell(si, sj).terrain == "town"
+        assert state.cell(si, sj).building == "town"
         assert not any("火災" in n and f"({si},{sj})" in n for n in notes)
 
         # Typhoon: farm → plain (silence fire/quake/tsunami).
@@ -2287,11 +2308,20 @@ def test_settlements_and_disasters():
         assert state.cell(gi, gj).terrain == "dirt"
         assert any("地震" in n for n in notes)
 
-        state.cell(si, sj).terrain = "village"
+        state.cell(si, sj).terrain = "grass"
+        state.cell(si, sj).building = "village"
         data = state.to_dict()
         assert data["version"] == SAVE_VERSION
         loaded = IslandState.from_dict(data)
-        assert loaded.cell(si, sj).terrain == "village"
+        assert loaded.cell(si, sj).building == "village"
+        assert loaded.cell(si, sj).terrain == "grass"
+
+        # Legacy save: terrain=village migrates to grass + building.
+        legacy = state.to_dict()
+        legacy["cells"][si][sj] = {"terrain": "village", "building": None}
+        migrated = IslandState.from_dict(legacy)
+        assert migrated.cell(si, sj).terrain == "grass"
+        assert migrated.cell(si, sj).building == "village"
     finally:
         random.random = orig_random  # type: ignore[assignment]
         model_mod.FIRE_BASE_CHANCE = old_fire
@@ -2299,6 +2329,82 @@ def test_settlements_and_disasters():
         model_mod.QUAKE_BASE_CHANCE = old_quake
         model_mod.VOLCANO_BASE_CHANCE = old_volcano
         model_mod.TSUNAMI_BASE_CHANCE = old_tsunami
+
+
+def test_settlements_use_building_paint_path():
+    """village/town/city must not go through ``_paint_terrain_top``.
+
+    Catalog: settlements are BUILDINGS + USER_BUILDING_FILES. Paint uses the
+    building EW+S branch (scale=bw/content_w, bottom=S, may exceed N, no clip).
+    """
+    import os
+
+    from hakoniwa.tiles import TERRAIN_TILE_FILES, TERRAIN_TINT
+    from hakoniwa.user_art import USER_BUILDING_FILES, USER_TERRAIN_FILES
+
+    for key in ("village", "town", "city"):
+        assert key not in TERRAIN
+        assert key not in TERRAIN_TILE_FILES
+        assert key not in TERRAIN_TINT
+        assert key not in USER_TERRAIN_FILES
+        assert key in BUILDINGS
+        assert key in USER_BUILDING_FILES
+        assert key in SETTLEMENT_BUILDINGS
+        assert key not in PLACEABLE_BUILDINGS
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    try:
+        from PySide6.QtWidgets import QApplication
+        from hakoniwa.tiles import ATLAS
+        from hakoniwa.view import HakoniwaMapWidget
+    except Exception as exc:  # pragma: no cover
+        print(f"settlement paint path: skip Qt spy ({exc})")
+        print("settlements: catalog is buildings (terrain paint keys cleared)")
+        return
+
+    app = QApplication.instance() or QApplication([])
+    del app
+
+    state = IslandState.new_game()
+    grass = [
+        (i, j)
+        for i in range(state.size)
+        for j in range(state.size)
+        if state.cell(i, j).terrain == "grass" and state.cell(i, j).building is None
+    ]
+    assert grass
+    gi, gj = grass[0]
+    state.cell(gi, gj).building = "village"
+
+    terrain_keys: list[str] = []
+    building_keys: list[str] = []
+    orig_terrain = HakoniwaMapWidget._paint_terrain_top
+    orig_building = ATLAS.building_pixmap
+
+    def spy_terrain(self, painter, terrain_key, cx, cy, poly):
+        terrain_keys.append(terrain_key)
+        return orig_terrain(self, painter, terrain_key, cx, cy, poly)
+
+    def spy_building(kind):
+        building_keys.append(kind)
+        return orig_building(kind)
+
+    HakoniwaMapWidget._paint_terrain_top = spy_terrain  # type: ignore[method-assign]
+    ATLAS.building_pixmap = spy_building  # type: ignore[method-assign]
+    try:
+        widget = HakoniwaMapWidget(state)
+        widget.resize(640, 480)
+        widget.grab()  # force paintEvent
+    finally:
+        HakoniwaMapWidget._paint_terrain_top = orig_terrain  # type: ignore[method-assign]
+        ATLAS.building_pixmap = orig_building  # type: ignore[method-assign]
+
+    assert terrain_keys, "expected terrain paints"
+    assert "village" not in terrain_keys
+    assert "town" not in terrain_keys
+    assert "city" not in terrain_keys
+    assert "village" in building_keys
+    print("settlements: building paint path (not _paint_terrain_top) OK")
 
 
 def test_monster_events():
@@ -3205,6 +3311,12 @@ def test_user_art_loader_hook():
         k for k in USER_BUILDING_FILES
     }
     assert "farm" in USER_BUILDING_FILES and "missile_base" in USER_BUILDING_FILES
+    assert "village" in USER_BUILDING_FILES
+    assert "town" in USER_BUILDING_FILES
+    assert "city" in USER_BUILDING_FILES
+    assert "village.png" in names["building"]
+    assert "town.png" in names["building"]
+    assert "city.png" in names["building"]
     assert "inora" in USER_MONSTER_FILES
     assert set(USER_TERRAIN_FILES) >= {
         "sea",
@@ -3212,9 +3324,15 @@ def test_user_art_loader_hook():
         "grass",
         "forest",
         "mountain",
+        "onsen_mountain",
         "oilfield",
         "crater",
     }
+    assert "village" not in USER_TERRAIN_FILES
+    assert "town" not in USER_TERRAIN_FILES
+    assert "city" not in USER_TERRAIN_FILES
+    assert "village.png" not in names["terrain"]
+    assert "onsen_village" in USER_BUILDING_FILES
 
     roots = default_user_art_roots(None)
     assert ASSETS_USER_DIR in roots
@@ -3496,8 +3614,9 @@ def test_mountain_sprite_building_placement():
     dirt = ATLAS.pixmap_for("dirt")
     assert ground is not None and dirt is not None
     assert not ground.isNull() and ground.cacheKey() == dirt.cacheKey()
-    for flat in ("forest", "village", "town", "city", "oilfield"):
+    for flat in ("forest", "oilfield", "crater"):
         assert ATLAS.elevated_sprite(flat) is None
+    assert ATLAS.elevated_sprite("village") is None
 
     def _tiny_png(path: Path, rgb=(200, 40, 40)) -> None:
         w = h = 2
@@ -3539,9 +3658,11 @@ def test_mountain_sprite_building_placement():
             ground_user = ATLAS.pixmap_for("mountain")
             assert ground_user is not None and ground_user.width() == dirt.width()
             assert ground_user.width() != 2
-            for key in ("forest", "village", "oilfield"):
+            for key in ("forest", "oilfield"):
                 flat = ATLAS.pixmap_for(key)
                 assert flat is not None and flat.width() == 2, key
+            village_art = ATLAS.building_pixmap("village")
+            assert village_art is not None and village_art.width() == 2
             assert ATLAS.elevated_sprite("forest") is None
             assert ATLAS.elevated_sprite("village") is None
             assert ATLAS.elevated_sprite("oilfield") is None
@@ -3652,7 +3773,7 @@ def test_onsen_mountain_and_village():
         SCORE_PER_VILLAGE,
     )
 
-    assert SAVE_VERSION == 16
+    assert SAVE_VERSION == 17
     assert "onsen_mountain" in MOUNTAIN_FAMILY and "mountain" in MOUNTAIN_FAMILY
     assert "onsen_village" in HARD_LOCKED_BUILDINGS
     assert "onsen_village" not in PLACEABLE_BUILDINGS
@@ -3716,7 +3837,8 @@ def test_onsen_mountain_and_village():
         plain_island._evolve_settlements()
     finally:
         model_mod.SETTLEMENT_SPAWN_CHANCE = old_spawn
-    assert plain_island.cell(vi, vj).terrain == "village"
+    assert plain_island.cell(vi, vj).terrain == "grass"
+    assert plain_island.cell(vi, vj).building == "village"
     assert plain_island.cell(vi, vj).building is None
 
     # Ordinary mountain → 溫泉山. Chance 0 does not roll. Fresh eruptions stay 山.
@@ -3760,12 +3882,12 @@ def test_onsen_mountain_and_village():
 
     # Save stays on version 16; both keys round-trip. No migration bump.
     blob = state.to_dict()
-    assert blob["version"] == SAVE_VERSION == 16
+    assert blob["version"] == SAVE_VERSION == 17
     loaded = IslandState.from_dict(blob)
     assert loaded.cell(hi, hj).terrain == "onsen_mountain"
     assert loaded.cell(oi, oj).building == "onsen_village"
     assert loaded.cell(oi, oj).terrain == "grass"
-    assert loaded.to_dict()["version"] == 16
+    assert loaded.to_dict()["version"] == 17
 
     # A volcano-made mountain is not flipped in the same roll.
     fresh = IslandState.new_game()
@@ -3857,7 +3979,7 @@ def test_onsen_mountain_and_village():
         ATLAS.building_pixmap = orig_b  # type: ignore[method-assign]
     assert "onsen_mountain" in seen_terrain
     assert "onsen_village" not in seen_terrain
-    assert "village" not in seen_terrain or paint.terrain_count("village") > 0
+    assert "village" not in seen_terrain
     assert "onsen_village" in asked_building
     print("onsen: mountain family + locked village + paint path OK")
 
@@ -3875,15 +3997,14 @@ def test_oilfield_and_crater_tiles():
         assert path.stat().st_size > 1000, path
         assert fname != TERRAIN_TILE_FILES[other]
         assert ATLAS.tint_for(key) is None
-    # Forest／mountain／settlement washes stay on their own tops.
+    # Forest／mountain washes stay. 村／町／都市 are buildings, not terrain tops.
     assert TERRAIN_TILE_FILES["forest"] == "grass-01.png"
     assert TERRAIN_TILE_FILES["mountain"] == "dirt-01.png"
-    assert TERRAIN_TILE_FILES["village"] == "dirt-01.png"
-    assert TERRAIN_TILE_FILES["town"] == "dirt-01.png"
-    assert TERRAIN_TILE_FILES["city"] == "dirt-01.png"
+    assert TERRAIN_TILE_FILES["onsen_mountain"] == "dirt-01.png"
+    assert "village" not in TERRAIN_TILE_FILES
     assert ATLAS.tint_for("forest") is not None
     assert ATLAS.tint_for("mountain") is not None
-    assert ATLAS.tint_for("village") is not None
+    assert ATLAS.tint_for("onsen_mountain") is not None
 
     state = IslandState.new_game()
     state.funds = 8000
@@ -3918,11 +4039,12 @@ def test_oilfield_and_crater_tiles():
     assert loaded.cell(fi, fj).terrain == "crater"
     assert loaded.cell(fi, fj).building == "farm"
 
-    # 森／山／村／町／都市 and water are not rewritten by a miss.
+    # 森／山／溫泉山 and water are not rewritten by a miss.
+    # 村／町／都市 are buildings on 平地, so the ground follows grass→彈坑.
     protected_kinds = (
         (grass[2], "forest"),
         (dirt[1], "mountain"),
-        (dirt[2], "village"),
+        (dirt[2], "onsen_mountain"),
     )
     for (i, j), kind in protected_kinds:
         state.cell(i, j).terrain = kind
@@ -3931,13 +4053,12 @@ def test_oilfield_and_crater_tiles():
             state.cell(i, j).trees = TREE_MIN
         assert state.fire_missile(i, j) == "ok"
         assert state.cell(i, j).terrain == kind
-    town_i, town_j = dirt[3]
-    state.cell(town_i, town_j).terrain = "town"
-    assert state.fire_missile(town_i, town_j) == "ok"
-    assert state.cell(town_i, town_j).terrain == "town"
-    state.cell(town_i, town_j).terrain = "city"
-    assert state.fire_missile(town_i, town_j) == "ok"
-    assert state.cell(town_i, town_j).terrain == "city"
+    # Leveled grass under a 村 still becomes 彈坑; the building stays.
+    state.cell(gi, gj).terrain = "grass"
+    state.cell(gi, gj).building = "village"
+    assert state.fire_missile(gi, gj) == "ok"
+    assert state.cell(gi, gj).terrain == "crater"
+    assert state.cell(gi, gj).building == "village"
 
     sea = next(
         (i, j)
@@ -4008,9 +4129,9 @@ def test_oilfield_and_crater_tiles():
     ]
     oil_at, sea_at = seas[0], seas[1]
     paint.cell(*oil_at).terrain = "oilfield"
-    # Settlement still paints as its own key (not the new tops).
+    # 村 is a building, so it must not show up as a terrain-top key.
     village_at = next(ij for ij in lands if ij not in (crater_at, dirt_at))
-    paint.cell(*village_at).terrain = "village"
+    paint.cell(*village_at).building = "village"
 
     widget = HakoniwaMapWidget(paint)
     widget.resize(960, 640)
@@ -4062,7 +4183,7 @@ def test_oilfield_and_crater_tiles():
     widget.hide()
 
     assert "oilfield" in painted and "crater" in painted
-    assert "village" in painted
+    assert "village" not in painted
     assert "sea" in painted and "dirt" in painted
     assert clipped.count("oilfield") >= 1
     assert clipped.count("crater") >= 1
@@ -4232,6 +4353,7 @@ def main():
     test_new_island_and_loop()
     test_guestbook_local()
     test_settlements_and_disasters()
+    test_settlements_use_building_paint_path()
     test_monster_events()
     test_defense_and_missile_base()
     test_decoy_and_tourism_camouflage()

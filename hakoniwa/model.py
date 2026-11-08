@@ -3,7 +3,7 @@
 v1 deepen: catalog place costs, terrain commands (整地／填海／植林／伐採／造山／掘削),
 forest tree growth + timber→funds, farm／工場／採掘場 production with labor
 assignment (農場優先), optional population stub, visitor guestbook (name + text),
-color-block monster events (飛彈 stub), village/town/city terrain evolution +
+color-block monster events (飛彈 stub), village/town/city building evolution +
 fire/typhoon/quake/volcano/tsunami disaster stubs, 防衛設施／飛彈基地 color-block
 buildings (spawn/stomp/missile stubs), 港灣／造船所／貿易輸出（臨海色塊；糧食→資金）,
 紀念碑色塊＋簡易島分數／安穩（國威；抗踩踏；抑火災如森）,
@@ -272,11 +272,15 @@ MONSTER_MAX_CHANCE = 0.45
 MONSTER_REWARD = 30     # 殘骸換資金 stub
 MAX_MONSTERS = 1        # v1: one color-block 怪獸 at a time
 
-# Settlement evolution (catalog 村／町／都市; pop thresholds scaled for short loop).
+# Settlement evolution (catalog 村／町／都市 as buildings; pop thresholds scaled).
 # Catalog: 平地 near farm/settlement → 村 ~20%/turn; 村→町@3000, 町→都市@10000.
+# Not placeable from the build menu — spawn／upgrade only (cost 0).
 SETTLEMENT_SPAWN_CHANCE = 0.20
 VILLAGE_TO_TOWN_POP = 300    # simplified (catalog ~3000)
 TOWN_TO_CITY_POP = 1000      # simplified (catalog ~10000)
+COST_VILLAGE = 0
+COST_TOWN = 0
+COST_CITY = 0
 
 # Disaster stubs (per-candidate cell chance; forest neighbors mitigate fire/typhoon).
 FIRE_BASE_CHANCE = 0.08
@@ -307,13 +311,11 @@ TERRAIN = {
     "mountain": {"label": "山", "color": (110, 100, 88), "land": True},
     # 山系異變（地面仍是山格；可見高度是 sprites/onsen_mountain.png）.
     "onsen_mountain": {"label": "溫泉山", "color": (118, 104, 90), "land": True},
-    # 居住地形（泥地貼圖＋色洗；建築仍色塊）
-    "village": {"label": "村", "color": (186, 150, 96), "land": True},
-    "town": {"label": "町", "color": (168, 118, 72), "land": True},
-    "city": {"label": "都市", "color": (128, 96, 110), "land": True},
 }
 
 # Buildings as solid color blocks on 平地（採掘場在山上）.
+# 村／町／都市：住居建築（非地形）；走建築貼圖路徑（EW+S、可出北尖、無菱形 clip）；
+# 由演進生成／升級，不進 PLACEABLE_BUILDINGS。
 BUILDINGS = {
     None: {"label": "（無）", "color": None, "cost": 0},
     "farm": {"label": "農場", "color": (210, 190, 60), "cost": COST_FARM},
@@ -323,6 +325,25 @@ BUILDINGS = {
         "label": "採掘場",
         "color": (150, 110, 70),
         "cost": COST_QUARRY,
+        "tall": True,
+    },
+    # 居住建築（演進生成；用戶 PNG 走建築對齊，非地形頂面）
+    "village": {
+        "label": "村",
+        "color": (186, 150, 96),
+        "cost": COST_VILLAGE,
+        "tall": True,
+    },
+    "town": {
+        "label": "町",
+        "color": (168, 118, 72),
+        "cost": COST_TOWN,
+        "tall": True,
+    },
+    "city": {
+        "label": "都市",
+        "color": (128, 96, 110),
+        "cost": COST_CITY,
         "tall": True,
     },
     # 軍事色塊佔位（定本費用；美術後補）
@@ -423,9 +444,9 @@ LANDFILL_COST = COST_LANDFILL
 
 Coord = Tuple[int, int]
 LAND_TERRAINS = frozenset(k for k, v in TERRAIN.items() if v["land"])
-SETTLEMENT_TERRAINS = frozenset({"village", "town", "city"})
+SETTLEMENT_BUILDINGS = frozenset({"village", "town", "city"})
 BUILDABLE = frozenset({"grass"})  # 平地 only（村／町／都市請先整地；採掘場除外）
-SAVE_VERSION = 16
+SAVE_VERSION = 17
 
 
 def timber_funds(trees: int) -> int:
@@ -612,10 +633,15 @@ class Cell:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Cell":
         terrain = data.get("terrain", "sea")
+        building = data.get("building")
+        # Legacy: village/town/city were terrains → migrate to grass + building.
+        if terrain in SETTLEMENT_BUILDINGS:
+            if building in (None, "none"):
+                building = terrain
+            terrain = "grass"
         if terrain not in TERRAIN:
             # Legacy / unknown → sea
             terrain = "sea"
-        building = data.get("building")
         if building in (None, "none") or building not in BUILDINGS:
             building = None
         try:
@@ -964,11 +990,11 @@ class IslandState:
             missile_bases=self.building_count("missile_base"),
             undersea_bases=self.undersea_base_count(),
             villages=(
-                self.terrain_count("village")
+                self.building_count("village")
                 + self.building_count("onsen_village")
             ),
-            towns=self.terrain_count("town"),
-            cities=self.terrain_count("city"),
+            towns=self.building_count("town"),
+            cities=self.building_count("city"),
             banks=self.building_count("bank"),
             supermarkets=self.building_count("supermarket"),
             shrines=self.shrine_count(),
@@ -1044,7 +1070,7 @@ class IslandState:
         return self._adjacent_to_land(i, j)
 
     def can_level(self, i: int, j: int) -> bool:
-        """整地：荒地→平地、清建築、森／村／町／都市→平地；山→荒地。"""
+        """整地：荒地→平地、清建築（含村／町／都市）、森→平地；山→荒地。"""
         if self.monster_at(i, j) is not None:
             return False
         c = self.cell(i, j)
@@ -1055,7 +1081,6 @@ class IslandState:
         if (
             c.terrain in ("dirt", "crater", "forest")
             or c.terrain in MOUNTAIN_FAMILY
-            or c.terrain in SETTLEMENT_TERRAINS
         ):
             return True
         return False  # empty 平地 — nothing to do
@@ -1396,11 +1421,11 @@ class IslandState:
         return "ok"
 
     def level_land(self, i: int, j: int) -> str:
-        """整地：荒地／森／村／町／都市→平地；山→荒地；並清除建築。"""
+        """整地：荒地／森→平地；山→荒地；並清除建築（含村／町／都市）。"""
         if not self.can_level(i, j):
             if self.monster_at(i, j) is not None:
                 return "此格有怪獸，無法整地（請先發射飛彈）"
-            return "此格無需整地（須為荒地、彈坑、山、森、村／町／都市、或有建築的陸地）"
+            return "此格無需整地（須為荒地、彈坑、山、森、或有建築的陸地）"
         if self.funds < COST_LEVEL:
             return f"資金不足（整地需要 {COST_LEVEL}）"
         c = self.cell(i, j)
@@ -1413,10 +1438,10 @@ class IslandState:
             # Catalog 掘削-lite：山／溫泉山→荒地（再整地→平地）.
             c.terrain = "dirt"
             c.trees = 0
-        elif prev in ("dirt", "crater", "forest") or prev in SETTLEMENT_TERRAINS:
+        elif prev in ("dirt", "crater", "forest"):
             c.terrain = "grass"
             c.trees = 0
-        # grass + building: terrain stays grass after clear
+        # grass + building (incl. settlements): terrain stays grass after clear
         parts = [f"({i},{j})"]
         if prev != c.terrain:
             if prev == "forest" and prev_trees:
@@ -1490,7 +1515,7 @@ class IslandState:
 
         落空且不在防衛範圍：空的荒地／平地→彈坑（扁平頂面）。
         防衛設施周圍：落空飛彈的附帶傷害無效（地形不變）。
-        森／山／村／町／都市與海域不因落空改寫。
+        森／山／溫泉山與海域不因落空改寫。村／町／都市是建築，所在平地仍會變彈坑。
         紙糊假設施易毀：著彈格有紙糊則拆除（真防衛不受直擊拆除）。
         """
         cost = self.missile_cost()
@@ -1527,7 +1552,7 @@ class IslandState:
                 )
             else:
                 crater_note = ""
-                # 荒地／平地 only. 森／山／村／町／都市 and water keep their own rules.
+                # 荒地／平地 only. 森／山／溫泉山 and water keep their own rules.
                 if c.terrain in ("dirt", "grass"):
                     prev = TERRAIN[c.terrain]["label"]
                     c.terrain = "crater"
@@ -1717,9 +1742,10 @@ class IslandState:
         """Empty 平地 near 農場／公園 or 村／町／都市／溫泉村 can grow a village."""
         for ni, nj in neighbors(i, j, self.size):
             c = self.cell(ni, nj)
-            if c.building in ("farm", "park", "onsen_village"):
-                return True
-            if c.terrain in SETTLEMENT_TERRAINS:
+            if (
+                c.building in ("farm", "park", "onsen_village")
+                or c.building in SETTLEMENT_BUILDINGS
+            ):
                 return True
         return False
 
@@ -1738,9 +1764,9 @@ class IslandState:
         )
 
     def _evolve_settlements(self) -> List[str]:
-        """村／町／都市 terrain evolution on plain land near farms/parks (simplified).
+        """村／町／都市 building evolution on plain land near farms/parks (simplified).
 
-        Grass beside 溫泉山 grows 溫泉村 (a building on grass) instead of 村 terrain.
+        Grass beside 溫泉山 grows 溫泉村 (a building on grass) instead of 村.
         """
         notes: List[str] = []
         # Spawn: empty 平地 adjacent to farm/park/settlement → 村 (~20%/turn；近公園更高).
@@ -1772,18 +1798,18 @@ class IslandState:
                 chance = min(1.0, chance + PARK_SETTLEMENT_SPAWN_BONUS)
             if random.random() >= chance:
                 continue
-            self.cell(i, j).terrain = "village"
+            self.cell(i, j).building = "village"
             notes.append(f"平地出現村落 ({i},{j})")
 
         # Upgrade by island population thresholds (short-loop scaled).
         for i in range(self.size):
             for j in range(self.size):
                 c = self.cell(i, j)
-                if c.terrain == "village" and self.population >= VILLAGE_TO_TOWN_POP:
-                    c.terrain = "town"
+                if c.building == "village" and self.population >= VILLAGE_TO_TOWN_POP:
+                    c.building = "town"
                     notes.append(f"村→町 ({i},{j})（人口 {self.population}）")
-                elif c.terrain == "town" and self.population >= TOWN_TO_CITY_POP:
-                    c.terrain = "city"
+                elif c.building == "town" and self.population >= TOWN_TO_CITY_POP:
+                    c.building = "city"
                     notes.append(f"町→都市 ({i},{j})（人口 {self.population}）")
         return notes
 
@@ -1827,8 +1853,7 @@ class IslandState:
                 c = self.cell(i, j)
                 is_decoy = c.building == "decoy"
                 flammable = (
-                    c.terrain in ("town", "city")
-                    or c.building == "factory"
+                    c.building in ("town", "city", "factory")
                     or is_decoy
                 )
                 if not flammable:
@@ -1873,10 +1898,7 @@ class IslandState:
         for i in range(self.size):
             for j in range(self.size):
                 c = self.cell(i, j)
-                quakable = (
-                    c.terrain == "city"
-                    or c.building in ("factory", "quarry")
-                )
+                quakable = c.building in ("city", "factory", "quarry")
                 if not quakable:
                     continue
                 if random.random() >= QUAKE_BASE_CHANCE * sat:
@@ -1906,9 +1928,8 @@ class IslandState:
                     # 防波堤自身不受海嘯摧毀（防災設施）
                     if c.building == "breakwater":
                         continue
-                    vulnerable = (
-                        c.building is not None or c.terrain in SETTLEMENT_TERRAINS
-                    )
+                    # Settlements are buildings now — any building is coastal-vulnerable.
+                    vulnerable = c.building is not None
                     if not vulnerable:
                         continue
                     chance = (
