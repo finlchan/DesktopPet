@@ -3450,6 +3450,181 @@ def test_building_sprite_ew_south_align_offscreen():
     )
 
 
+def test_mountain_sprite_building_placement():
+    """Mountain PNG uses building placement; the ground tile stays bundled.
+
+    Forest, village, and oilfield user PNGs still replace the flat diamond.
+    """
+    import os
+    import struct
+    import zlib
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    try:
+        from PySide6.QtCore import QPointF
+        from PySide6.QtGui import QColor, QImage, QPixmap
+        from PySide6.QtWidgets import QApplication
+        from hakoniwa.grid import DEFAULT_CELL, cell_center, cell_screen_size
+        from hakoniwa.tiles import (
+            ATLAS,
+            ELEVATED_SPRITE_TERRAINS,
+            SPRITES_DIR,
+            alpha_content_rect,
+        )
+        from hakoniwa.user_art import configure_user_art
+        from hakoniwa.view import HakoniwaMapWidget
+    except Exception as exc:  # pragma: no cover - optional GUI
+        print(f"mountain sprite: skip ({exc})")
+        return
+
+    assert ELEVATED_SPRITE_TERRAINS == frozenset({"mountain"})
+    bundled = SPRITES_DIR / "mountain.png"
+    assert bundled.is_file(), bundled
+
+    app = QApplication.instance() or QApplication([])
+    ground = ATLAS.pixmap_for("mountain")
+    dirt = ATLAS.pixmap_for("dirt")
+    assert ground is not None and dirt is not None
+    assert not ground.isNull() and ground.cacheKey() == dirt.cacheKey()
+    for flat in ("forest", "village", "town", "city", "oilfield"):
+        assert ATLAS.elevated_sprite(flat) is None
+
+    def _tiny_png(path: Path, rgb=(200, 40, 40)) -> None:
+        w = h = 2
+        r, g, b = rgb
+        raw = b""
+        for _y in range(h):
+            raw += b"\x00" + bytes([r, g, b]) * w
+        compressed = zlib.compress(raw, 9)
+
+        def chunk(tag: bytes, data: bytes) -> bytes:
+            return (
+                struct.pack(">I", len(data))
+                + tag
+                + data
+                + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+            )
+
+        ihdr = struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)
+        path.write_bytes(
+            b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", ihdr)
+            + chunk(b"IDAT", compressed)
+            + chunk(b"IEND", b"")
+        )
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = Path(tmp)
+            data_user = cfg / "Data" / "hakoniwa" / "user"
+            data_user.mkdir(parents=True)
+            _tiny_png(data_user / "mountain.png", rgb=(10, 20, 30))
+            _tiny_png(data_user / "forest.png", rgb=(10, 180, 40))
+            _tiny_png(data_user / "village.png", rgb=(180, 140, 40))
+            _tiny_png(data_user / "oilfield.png", rgb=(40, 40, 40))
+            configure_user_art(cfg)
+            ATLAS.invalidate_user_cache()
+            sprite = ATLAS.elevated_sprite("mountain")
+            assert sprite is not None and sprite.width() == 2
+            ground_user = ATLAS.pixmap_for("mountain")
+            assert ground_user is not None and ground_user.width() == dirt.width()
+            assert ground_user.width() != 2
+            for key in ("forest", "village", "oilfield"):
+                flat = ATLAS.pixmap_for(key)
+                assert flat is not None and flat.width() == 2, key
+            assert ATLAS.elevated_sprite("forest") is None
+            assert ATLAS.elevated_sprite("village") is None
+            assert ATLAS.elevated_sprite("oilfield") is None
+    finally:
+        configure_user_art(None)
+        ATLAS.invalidate_user_cache()
+
+    # Hollow tall stub: peak and S edge are magenta; the middle is clear so
+    # the mountain ground tile shows through the footprint.
+    stub_img = QImage(40, 80, QImage.Format.Format_ARGB32)
+    stub_img.fill(QColor(0, 0, 0, 0))
+    magenta = QColor(255, 0, 255, 255)
+    for y in range(16):
+        for x in range(40):
+            stub_img.setPixelColor(x, y, magenta)
+    for y in range(16, 72):
+        for x in list(range(8)) + list(range(32, 40)):
+            stub_img.setPixelColor(x, y, magenta)
+    for y in range(72, 80):
+        for x in range(40):
+            stub_img.setPixelColor(x, y, magenta)
+    stub = QPixmap.fromImage(stub_img)
+    content = alpha_content_rect(stub)
+    assert content.width() == 40 and content.height() == 80, (
+        content.width(),
+        content.height(),
+    )
+
+    original = ATLAS.elevated_sprite
+
+    def _stub_sprite(terrain: str):
+        return stub if terrain == "mountain" else None
+
+    ATLAS.elevated_sprite = _stub_sprite  # type: ignore[method-assign]
+    try:
+        state = IslandState.new_game()
+        grass = [
+            (i, j)
+            for i in range(20)
+            for j in range(20)
+            if state.cell(i, j).terrain == "grass"
+        ]
+        gi, gj = min(grass, key=lambda ij: abs(ij[0] - 10) + abs(ij[1] - 10))
+        assert state.raise_mountain(gi, gj) == "ok"
+        widget = HakoniwaMapWidget(state)
+        assert widget.cell == float(DEFAULT_CELL)
+        widget.resize(1280, 720)
+        tcx, tcy = cell_center(gi, gj, widget.cell)
+        ox0, oy0 = widget._origin_offset_raw()
+        widget._pan = QPointF(
+            widget.width() / 2.0 - (tcx + ox0),
+            widget.height() / 2.0 - (tcy + oy0),
+        )
+        widget.show()
+        app.processEvents()
+        rendered = widget.grab().toImage()
+        ox, oy = widget._origin_offset()
+        bw, bh = cell_screen_size(widget.cell)
+        scale = bw / 40.0
+        sprite_h = 80.0 * scale
+        cx, cy = cell_center(gi, gj, widget.cell)
+        south_rel = bh / 2.0
+        n_rel = -bh / 2.0
+        dest_top = south_rel - sprite_h
+
+        def _sample(dx: float, dy: float) -> QColor:
+            px = int(round(cx + ox + dx))
+            py = int(round(cy + oy + dy))
+            if px < 0 or py < 0 or px >= rendered.width() or py >= rendered.height():
+                return QColor(0, 0, 0)
+            return QColor(rendered.pixel(px, py))
+
+        def _is_magenta(c: QColor) -> bool:
+            return c.red() > 200 and c.blue() > 200 and c.green() < 80
+
+        # Peak band (source rows 0–15) sits above the N tip.
+        peak_dy = dest_top + (8.0 / 80.0) * sprite_h
+        assert peak_dy < n_rel - 8.0, (peak_dy, n_rel)
+        assert _is_magenta(_sample(0.0, peak_dy)), "mountain peak clipped or missing above N"
+        # Content bottom sits on S; nothing leaks below the tip.
+        assert _is_magenta(_sample(0.0, south_rel - 4.0)), "mountain bottom missing at S"
+        assert not _is_magenta(_sample(0.0, south_rel + 8.0)), "mountain sprite leaked below S"
+        # Side rails span the cell width (left=W, right=E).
+        mid_dy = dest_top + (40.0 / 80.0) * sprite_h
+        assert _is_magenta(_sample(-(bw / 2.0) + 6.0, mid_dy)), "missing near West"
+        assert _is_magenta(_sample((bw / 2.0) - 6.0, mid_dy)), "missing near East"
+        # Clear center of the footprint shows the ground tile, not the sprite.
+        assert not _is_magenta(_sample(0.0, 0.0)), "sprite covered the mountain ground tile"
+    finally:
+        ATLAS.elevated_sprite = original  # type: ignore[method-assign]
+    print("mountain sprite: building placement, ground tile kept, flat terrains unchanged")
+
+
 def test_oblique_preview_png_if_possible():
     """Write a small foreshortening proof PNG when Qt offscreen is available."""
     import json
@@ -3591,6 +3766,7 @@ def main():
     test_terrain_top_assets()
     test_user_art_loader_hook()
     test_building_sprite_ew_south_align_offscreen()
+    test_mountain_sprite_building_placement()
     test_catalog_costs()
     test_new_island_and_loop()
     test_guestbook_local()

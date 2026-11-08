@@ -25,7 +25,16 @@ _ALPHA_MIN = 8  # treat near-transparent as empty
 # Package-local assets (also bundled into frozen EXE via build.bat --add-data).
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 TILES_DIR = ASSETS_DIR / "tiles"
+SPRITES_DIR = ASSETS_DIR / "sprites"
 OCEAN_BACKGROUND = ASSETS_DIR / "ocean-background.png"
+
+# Terrain whose user/bundled PNG is a 2.5D prop (building placement), not a
+# diamond fill. Ground for these keys stays the bundled top below.
+# Forest, oilfield, village/town/city, and any crater stay flat tops.
+ELEVATED_SPRITE_TERRAINS = frozenset({"mountain"})
+ELEVATED_SPRITE_FILES: Dict[str, str] = {
+    "mountain": "mountain.png",
+}
 
 # Primary terrain → active top PNG (flat diamond on black; black keyed out).
 # 淺灘 = original sea art as-is; 海 = same art recolored deeper blue.
@@ -36,7 +45,7 @@ TERRAIN_TILE_FILES: Dict[str, str] = {
     "dirt": "dirt-01.png",
     "grass": "grass-01.png",
     "forest": "grass-01.png",
-    "mountain": "dirt-01.png",  # reuse dirt top + wash（色塊；用戶後補山圖）
+    "mountain": "dirt-01.png",  # ground tile; height is sprites/mountain.png
     "village": "dirt-01.png",
     "town": "dirt-01.png",
     "city": "dirt-01.png",
@@ -111,13 +120,16 @@ def _key_black_to_alpha(img: QImage) -> QImage:
 class TileAtlas:
     """Lazy-loaded terrain tops + optional ocean backdrop.
 
-    Lookup order per terrain: user PNG (if dropped) → bundled ``tiles/`` → None
-    (view falls back to solid TERRAIN color). Ocean: user → bundled → wash.
+    Lookup order per flat terrain: user PNG (if dropped) → bundled ``tiles/`` →
+    None (view falls back to solid TERRAIN color). Ocean: user → bundled → wash.
+    Mountain is not a flat fill: ``elevated_sprite`` loads that PNG (user drop,
+    else ``assets/sprites/``) and the ground tile stays the bundled top.
     """
 
     def __init__(self) -> None:
         self._pixmaps: Dict[str, QPixmap] = {}
         self._user_terrain: Dict[str, Optional[QPixmap]] = {}
+        self._elevated: Dict[str, Optional[QPixmap]] = {}
         self._bg: Optional[QPixmap] = None
         self._bg_tried = False
         self._user_bg_tried = False
@@ -126,6 +138,7 @@ class TileAtlas:
     def invalidate_user_cache(self) -> None:
         """Clear user-override caches after :func:`configure_user_art`."""
         self._user_terrain.clear()
+        self._elevated.clear()
         self._user_bg = None
         self._user_bg_tried = False
         self._bg = None
@@ -133,20 +146,22 @@ class TileAtlas:
         clear_content_bounds_cache()
 
     def pixmap_for(self, terrain: str) -> Optional[QPixmap]:
-        # 1) Optional user override (no new art shipped — only if file exists).
-        if terrain in self._user_terrain:
-            user_cached = self._user_terrain[terrain]
-            if user_cached is not None and not user_cached.isNull():
-                return user_cached
-        else:
-            user_pix = USER_ART.terrain_pixmap(terrain)
-            if user_pix is not None and not user_pix.isNull():
-                # Apply same black-key as bundled diamond tops when needed.
-                img = user_pix.toImage()
-                keyed = QPixmap.fromImage(_key_black_to_alpha(img))
-                self._user_terrain[terrain] = keyed if not keyed.isNull() else user_pix
-                return self._user_terrain[terrain]
-            self._user_terrain[terrain] = None
+        # 1) Optional user diamond fill. Elevated sprites (mountain) do not
+        # replace this top — their PNG is drawn unclipped by elevated_sprite.
+        if terrain not in ELEVATED_SPRITE_TERRAINS:
+            if terrain in self._user_terrain:
+                user_cached = self._user_terrain[terrain]
+                if user_cached is not None and not user_cached.isNull():
+                    return user_cached
+            else:
+                user_pix = USER_ART.terrain_pixmap(terrain)
+                if user_pix is not None and not user_pix.isNull():
+                    # Apply same black-key as bundled diamond tops when needed.
+                    img = user_pix.toImage()
+                    keyed = QPixmap.fromImage(_key_black_to_alpha(img))
+                    self._user_terrain[terrain] = keyed if not keyed.isNull() else user_pix
+                    return self._user_terrain[terrain]
+                self._user_terrain[terrain] = None
 
         # 2) Bundled active tops (sea／dirt／grass and aliases).
         fname = TERRAIN_TILE_FILES.get(terrain)
@@ -190,6 +205,28 @@ class TileAtlas:
             return None
         self._bg = QPixmap(str(OCEAN_BACKGROUND))
         return self._bg if not self._bg.isNull() else None
+
+    def elevated_sprite(self, terrain: str) -> Optional[QPixmap]:
+        """2.5D prop for a terrain cell. None → ground tile only.
+
+        User ``mountain.png`` wins, else the bundled sprite. No black-key
+        (dark rock must stay opaque). Placement is the building AABB path.
+        """
+        if terrain not in ELEVATED_SPRITE_TERRAINS:
+            return None
+        if terrain in self._elevated:
+            cached = self._elevated[terrain]
+            return cached if cached is not None and not cached.isNull() else None
+        user_pix = USER_ART.terrain_pixmap(terrain)
+        if user_pix is not None and not user_pix.isNull():
+            self._elevated[terrain] = user_pix
+            return user_pix
+        fname = ELEVATED_SPRITE_FILES.get(terrain)
+        path = SPRITES_DIR / fname if fname else None
+        pix = QPixmap(str(path)) if path is not None and path.is_file() else QPixmap()
+        self._elevated[terrain] = None if pix.isNull() else pix
+        stored = self._elevated[terrain]
+        return stored if stored is not None and not stored.isNull() else None
 
     def building_pixmap(self, kind: str) -> Optional[QPixmap]:
         """Optional user building art; None → view paints color diamond."""

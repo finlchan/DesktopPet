@@ -41,6 +41,7 @@ USER_TERRAIN_FILES: Dict[str, str] = {
     "dirt": "dirt.png",
     "grass": "grass.png",
     "forest": "forest.png",
+    # Drawn as an unclipped 2.5D sprite (building placement), not a diamond fill.
     "mountain": "mountain.png",
     "village": "village.png",
     "town": "town.png",
