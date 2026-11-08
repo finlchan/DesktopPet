@@ -11,7 +11,7 @@ not a flat top-down square grid rotated 45°.
 |---|---|
 | Projection | Logical 1:1 diamond tops → screen `H = W · 0.65` (`grid.OBLIQUE_Y_SCALE`) |
 | Lattice | v9 diagonal-strip stagger, 20×20, same-layer 海／淺灘／mud／grass |
-| Terrain | Flat top PNGs in `assets/tiles/` (dirt／grass／shallow／sea；森＝草面＋綠洗); 淺灘＝原海面貼圖、海＝同圖加深藍; ocean backdrop optional |
+| Terrain | Flat top PNGs in `assets/tiles/` (dirt／grass／shallow／sea／oilfield／crater；森＝草面＋綠洗); 淺灘＝原海面貼圖、海＝同圖加深藍；油田＝海面＋油膜、彈坑＝荒地＋圓坑（皆無色洗、菱形 clip）; ocean backdrop optional |
 | User art | Optional PNGs in `Data/hakoniwa/user/` or `assets/user/` replace building／monster color blocks and optionally terrain (see below); missing → color blocks / bundled tops |
 | Building art | User PNGs align by **alpha content AABB** (ignore canvas padding): content left↔right = diamond W↔E (full cell `W`); content bottom = S tip; top may rise above N; **no** diamond clip. Flat art（防波堤 etc.）included. Terrain tops stay diamond-clipped. `mountain.png` uses this same unclipped placement on top of the mountain ground tile (not a diamond fill). `tall=True` marks portrait-friendly keys |
 | Cell size | `DEFAULT_CELL=120`; wheel zoom `MIN_CELL…MAX_CELL` (12…256); `OBLIQUE_Y_SCALE=0.65` |
@@ -22,7 +22,8 @@ not a flat top-down square grid rotated 45°.
 | Labor | 回合勞動：農場優先，再工場、採掘場；產能依就業比例 |
 | Harbor | 港灣 800／造船所 500（臨海平地色塊）；有其一可貿易輸出 100噸≈5資金 |
 | Breakwater | 防波堤 200（臨海平地色塊）；鄰格減海嘯；自身不被海嘯摧毀 |
-| Oilfield | 掘削 200：陸→淺灘／淺灘→海／海→探油；油田被動產資；機率枯竭→海 |
+| Oilfield | 掘削 200：陸→淺灘／淺灘→海／海→探油；油田被動產資；機率枯竭→海；地面為 `oilfield-01.png`（海面油膜） |
+| Crater | 飛彈落空於空的荒地／平地→彈坑（`crater-01.png`）；防衛範圍內落空不留坑；整地→平地。森／山／村／町／都市與海域不改 |
 | Monument | 紀念碑 9999（平地色塊）；加島分數／安穩；抗怪獸踩踏；鄰格抑火災如森 |
 | Bank | 銀行 500（平地色塊）；流動資金上限 9999；溢出進存款緩衝；可手動存提 |
 | Supermarket | 超市 300（平地色塊）；資金買糧 100噸≈8資金（略貴於貿易輸出） |
@@ -102,7 +103,7 @@ same placement on 溫泉山. `onsen_village.png` is building art (user drop or
 
 | Category | Filenames |
 |---|---|
-| Terrain | `sea.png` `shallow.png` `oilfield.png` `dirt.png` `grass.png` `forest.png` `mountain.png` `onsen_mountain.png` `village.png` `town.png` `city.png` |
+| Terrain | `sea.png` `shallow.png` `oilfield.png` `dirt.png` `crater.png` `grass.png` `forest.png` `mountain.png` `onsen_mountain.png` `village.png` `town.png` `city.png` |
 | Backdrop | `ocean-background.png` |
 
 | Buildings | `farm.png` `factory.png` `quarry.png` `defense.png` `missile_base.png` `undersea_base.png` `decoy.png` `harbor.png` `shipyard.png` `breakwater.png` `monument.png` `bank.png` `supermarket.png` `shrine.png` `park.png` `airport.png` `rocket_base.png` `hotel.png` `casino.png` `university.png` `research_lab.png` `aquafarm.png` `amusement_park.png` `power_plant.png` `onsen_village.png` |
@@ -110,7 +111,7 @@ same placement on 溫泉山. `onsen_village.png` is building art (user drop or
 | Monsters | `inora.png` |
 
 Fallback when a file is absent: buildings／monsters → solid color; terrain → bundled
-`assets/tiles/{sea,shallow,dirt,grass}-01.png` (or color if that is missing too). Hook:
+`assets/tiles/{sea,shallow,dirt,grass,oilfield,crater}-01.png` (or color if that is missing too). Hook:
 `hakoniwa.user_art` + `TileAtlas` / map paint in `view.py`.
 
 ## Checklist after any map/view change

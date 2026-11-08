@@ -292,7 +292,7 @@ FOREST_FIRE_FACTOR = 0.25     # any adjacent 森 → fire chance × this
 FOREST_TYPHOON_FACTOR = 0.35  # any adjacent 森 → typhoon chance × this
 BREAKWATER_TSUNAMI_FACTOR = 0.25  # adjacent 防波堤 → tsunami chance × this
 
-# Terrain kinds — map paints flat top textures (dirt／grass／海／淺灘) via tiles.py;
+# Terrain kinds — map paints flat top textures (dirt／grass／海／淺灘／油田／彈坑) via tiles.py;
 # ``color`` remains fallback / tint basis. Opening map: 中央 7 泥／草,
 # coastal 淺灘 ring, rest 海 (deep).
 TERRAIN = {
@@ -300,6 +300,8 @@ TERRAIN = {
     "shallow": {"label": "淺灘", "color": (72, 168, 176), "land": False},
     "oilfield": {"label": "海底油田", "color": (48, 52, 58), "land": False},
     "dirt": {"label": "荒地", "color": (139, 90, 43), "land": True},
+    # 飛彈落空於空的荒地／平地留下的圓坑（扁平頂面；整地→平地）。
+    "crater": {"label": "彈坑", "color": (92, 72, 52), "land": True},
     "grass": {"label": "平地", "color": (74, 143, 60), "land": True},
     "forest": {"label": "森", "color": (36, 96, 48), "land": True},
     "mountain": {"label": "山", "color": (110, 100, 88), "land": True},
@@ -1051,7 +1053,7 @@ class IslandState:
         if c.building is not None:
             return True
         if (
-            c.terrain in ("dirt", "forest")
+            c.terrain in ("dirt", "crater", "forest")
             or c.terrain in MOUNTAIN_FAMILY
             or c.terrain in SETTLEMENT_TERRAINS
         ):
@@ -1398,7 +1400,7 @@ class IslandState:
         if not self.can_level(i, j):
             if self.monster_at(i, j) is not None:
                 return "此格有怪獸，無法整地（請先發射飛彈）"
-            return "此格無需整地（須為荒地、山、森、村／町／都市、或有建築的陸地）"
+            return "此格無需整地（須為荒地、彈坑、山、森、村／町／都市、或有建築的陸地）"
         if self.funds < COST_LEVEL:
             return f"資金不足（整地需要 {COST_LEVEL}）"
         c = self.cell(i, j)
@@ -1411,7 +1413,7 @@ class IslandState:
             # Catalog 掘削-lite：山／溫泉山→荒地（再整地→平地）.
             c.terrain = "dirt"
             c.trees = 0
-        elif prev in ("dirt", "forest") or prev in SETTLEMENT_TERRAINS:
+        elif prev in ("dirt", "crater", "forest") or prev in SETTLEMENT_TERRAINS:
             c.terrain = "grass"
             c.trees = 0
         # grass + building: terrain stays grass after clear
@@ -1486,7 +1488,9 @@ class IslandState:
     def fire_missile(self, i: int, j: int) -> str:
         """飛彈 stub：對選格發射；有飛彈基地則較便宜。命中怪獸則擊破。
 
-        防衛設施周圍：落空飛彈的「附帶傷害」無效（本機無落空毀陸時僅記 log）。
+        落空且不在防衛範圍：空的荒地／平地→彈坑（扁平頂面）。
+        防衛設施周圍：落空飛彈的附帶傷害無效（地形不變）。
+        森／山／村／町／都市與海域不因落空改寫。
         紙糊假設施易毀：著彈格有紙糊則拆除（真防衛不受直擊拆除）。
         """
         cost = self.missile_cost()
@@ -1515,16 +1519,23 @@ class IslandState:
                     f"（−{cost} 資金）"
                 )
                 return "ok"
-            # Miss stub: near defense → no collateral (missile damage nullified).
+            # Miss: near defense → no collateral. Else plain land becomes 彈坑.
             if self.protected_by_defense(i, j):
                 self._log(
                     f"回合 {self.turn}：飛彈落空於 ({i},{j}){base_note}"
                     f" — 防衛設施無效化附帶傷害（−{cost} 資金）"
                 )
             else:
+                crater_note = ""
+                # 荒地／平地 only. 森／山／村／町／都市 and water keep their own rules.
+                if c.terrain in ("dirt", "grass"):
+                    prev = TERRAIN[c.terrain]["label"]
+                    c.terrain = "crater"
+                    c.trees = 0
+                    crater_note = f" — {prev}→彈坑"
                 self._log(
                     f"回合 {self.turn}：飛彈落空於 ({i},{j}){base_note}"
-                    f"（−{cost} 資金）"
+                    f"{crater_note}（−{cost} 資金）"
                 )
             return "ok"
         m.hp -= 1
