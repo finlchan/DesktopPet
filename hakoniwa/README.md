@@ -58,18 +58,16 @@ All numeric / function chrome sits **inside the map viewport** (`HakoniwaMapHud`
 |---|---|---|
 | Status | Top center | **Single line**; order 狀態→資金→糧食→人口→回合→格數→分數; no connection mode |
 
-| Alert marquee | Under status | 警報走馬燈; shown when 通知 chrome on **and** alerts queued |
-| Tile info | Top-left | Below status／marquee; 資訊 icon or 通知 chrome (open by default) |
-| Action log | Bottom-right | ~70% transparent; part of 通知 chrome |
-
+| Alert marquee | Under status | 警報走馬燈; 通知→警報 on **and** alerts queued |
+| Tile info | Top-left | Below status／marquee; 通知→方格資訊 (open by default) |
+| Action log | Bottom-right | ~70% transparent; 通知→歷史記錄框 |
 | Guestbook | Bottom center | ~70% transparent; **closed by default**; open via 留言 icon |
 | Icon bar | Bottom-left | 通知／建築／資訊／留言／設定 — hover micro-animations |
-| Build drawer | Above icon bar | 建築 icon → build toolbar |
+| Build drawer | Full height, left | 建築 icon → **tree browse** (formal categories) + right detail／放置; unmet unlock prereqs hard-locked (🔒); no building thumbnails in the tree |
+| Island profile | Above icon bar | 資訊 icon → 本島基本資料 (player／created／name／turn／size…) |
 | Settings drawer | Above icon bar | 設定 icon → server connection |
 
-
-「通知」toggles status chrome in sync: 格資訊 + 行動日誌 + 警報走馬燈（無警報時走馬燈保持隱藏）。
-
+「通知」opens a small menu: 歷史記錄框／警報／方格資訊（independent）. 「資訊」shows island profile — not the tile box.
 
 No permanent right-side build column. Server URL / 本機·連線 live under 設定.
 
