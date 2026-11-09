@@ -255,7 +255,7 @@ QLabel#hakoniwaIslandProfileBody {{
     color: {_HUD_TEXT_DIM};
     background: transparent;
     border: none;
-    font-size: 7pt;
+    font-size: 6pt;
 }}
 QLineEdit#hakoniwaHudInput {{
     background-color: rgba(14, 28, 32, 180);
