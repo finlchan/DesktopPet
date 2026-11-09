@@ -665,38 +665,55 @@ class HakoniwaMapHud(QWidget):
             f"每回合糧食收支：{_format_signed(food_delta)}",
             f"每回合人口變化：{_format_signed(people_delta)}",
         ]
-        survey = [
+        residents = [
             f"居民滿意度：{state.happiness_bonus()}",
             "稅率：0",
             "失業率：0",
             "犯罪率：0",
-            "電力供需：0",
-            "綠化率：0",
-            "淺灘及防波堤等級：0",
-            "飛彈自動迎擊成功率：0",
-            "軍事防衛力評級：0",
-            "被攻擊／受損次數：0",
-            f"島嶼總資產／綜合評分：{state.island_score()}",
-            "伺服器排名：0",
         ]
-        rates = [
+        demands = [
             "住宅需求：0",
             "商店需求：0",
             "工廠需求：0",
+        ]
+        environment = [
+            "電力供需：0",
+            "綠化率：0",
+            "淺灘及防波堤等級：0",
             f"空氣污染指數：{state.shown_air()}",
             f"水源污染指數：{state.shown_water()}",
             f"天災機會率：{state.shown_disaster()}",
             f"怪物出現率：{spawn}",
+        ]
+        military = [
+            "軍事防衛力評級：0",
             "發射飛彈數目：0",
             "擊退本島怪物數次：0",
             "擊退其他島怪物數次：0",
+            "飛彈自動迎擊成功率：0",
+            "被攻擊／受損次數：0",
         ]
-        rule = '<span style="color:#5ac8be;">────────</span>'
-        blocks = (identity, balances, survey, rates)
-        parts = [rule]
-        for block in blocks:
-            parts.append("<br>".join(html.escape(line) for line in block))
-            parts.append(rule)
+        standing = [
+            f"島嶼總資產／綜合評分：{state.island_score()}",
+            "伺服器排名：0",
+        ]
+        sections = (
+            ("島嶼身分", identity),
+            ("資源收益", balances),
+            ("居民", residents),
+            ("需求", demands),
+            ("環境", environment),
+            ("軍事", military),
+            ("評價", standing),
+        )
+        parts = []
+        for title, rows in sections:
+            parts.append(
+                '<span style="color:#5ac8be;">── </span>'
+                f'<span style="color:{_HUD_TEXT};">{html.escape(title)}</span>'
+                '<span style="color:#5ac8be;"> ──</span>'
+            )
+            parts.append("<br>".join(html.escape(line) for line in rows))
         self._profile_basic_text = "<br>".join(parts)
         active = POLICY_LABELS.get(state.policy_key(), "未選擇")
         self._profile_policy_text = (
