@@ -264,17 +264,15 @@ QPushButton#hakoniwaIslandProfileTab:checked {{
 QPushButton#hakoniwaIslandProfileTab:hover:!checked {{
     background-color: rgba(28, 52, 56, 220);
 }}
-QLabel#hakoniwaIslandProfileBody {{
+QLabel#hakoniwaIslandProfileBody,
+QLabel#hakoniwaProfileSectionTitle {{
     color: {_HUD_TEXT_DIM};
     background: transparent;
     border: none;
-    font-size: 11pt;
+    font-size: 9pt;
 }}
 QLabel#hakoniwaProfileSectionTitle {{
     color: {_HUD_TEXT};
-    background: transparent;
-    border: none;
-    font-size: 11pt;
     font-weight: bold;
 }}
 QWidget#hakoniwaProfileHeader {{
