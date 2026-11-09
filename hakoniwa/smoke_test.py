@@ -2961,6 +2961,18 @@ def test_dialog_import_offscreen():
     titles = ("島嶼身分", "資源收益", "居民", "需求", "環境", "軍事", "評價")
     for earlier, later in zip(titles, titles[1:]):
         assert basic.index(earlier) < basic.index(later), (earlier, later)
+    assert dlg.hud._profile_accordion.open_title() == "島嶼身分"
+    assert dlg.hud._profile_accordion.open_count() == 1
+    dlg.hud._profile_accordion.toggle_title("資源收益")
+    assert dlg.hud._profile_accordion.open_title() == "資源收益"
+    assert dlg.hud._profile_accordion.open_count() == 1
+    opened = dlg.hud._profile_accordion.section("資源收益")
+    from PySide6.QtCore import QEasingCurve
+
+    assert opened._height_anim.duration() == 450
+    assert opened._angle_anim.duration() == 450
+    assert opened._height_anim.easingCurve().type() == QEasingCurve.Type.InOutCubic
+    assert opened._angle_anim.easingCurve().type() == QEasingCurve.Type.InOutCubic
     assert basic.index("資源收益") < basic.index("每回合資金收支")
     assert basic.index("糧食：") < basic.index("每回合資金收支")
     military_rows = (

@@ -15,10 +15,23 @@ import html
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from PySide6.QtCore import QEvent, QPoint, Qt, QTimer
+from PySide6.QtCore import (
+    Property,
+    QAbstractAnimation,
+    QEasingCurve,
+    QEvent,
+    QPoint,
+    QPropertyAnimation,
+    Qt,
+    QTimer,
+    QVariantAnimation,
+)
 from PySide6.QtGui import (
     QAction,
+    QColor,
     QKeySequence,
+    QPainter,
+    QPen,
     QResizeEvent,
     QShortcut,
     QShowEvent,
@@ -255,7 +268,25 @@ QLabel#hakoniwaIslandProfileBody {{
     color: {_HUD_TEXT_DIM};
     background: transparent;
     border: none;
-    font-size: 6pt;
+    font-size: 11pt;
+}}
+QLabel#hakoniwaProfileSectionTitle {{
+    color: {_HUD_TEXT};
+    background: transparent;
+    border: none;
+    font-size: 11pt;
+    font-weight: bold;
+}}
+QWidget#hakoniwaProfileHeader {{
+    background: transparent;
+    border: none;
+}}
+QScrollArea#hakoniwaProfileScroll {{
+    background: transparent;
+    border: none;
+}}
+QWidget#hakoniwaProfileAccordion {{
+    background: transparent;
 }}
 QLineEdit#hakoniwaHudInput {{
     background-color: rgba(14, 28, 32, 180);
@@ -332,6 +363,214 @@ QPushButton#hakoniwaDrawerAction:hover {{
     background-color: rgba(28, 52, 56, 230);
 }}
 """
+
+
+_ACCORDION_MS = 450  # ease-in-out, about 0.45s
+
+
+class _RotatingPlus(QWidget):
+    """Plus mark. A 135° turn reads as a times mark."""
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._angle = 0.0
+        self.setFixedSize(18, 18)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+    def get_angle(self) -> float:
+        return self._angle
+
+    def set_angle(self, value: float) -> None:
+        self._angle = float(value)
+        self.update()
+
+    angle = Property(float, get_angle, set_angle)
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.translate(self.width() / 2, self.height() / 2)
+        painter.rotate(self._angle)
+        pen = QPen(QColor(_HUD_TEXT))
+        pen.setWidthF(1.8)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.drawLine(-5, 0, 5, 0)
+        painter.drawLine(0, -5, 0, 5)
+        painter.end()
+
+
+class _AccordionSection(QWidget):
+    """One FAQ block. The clip height animates 0 → content.
+
+    Outer fixed height is the grid row (0fr → 1fr). The inner label stays
+    at full height and is clipped, which is overflow:hidden.
+    """
+
+    def __init__(self, title: str, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.title_text = title
+        self._open = False
+        self._full = 0
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 4)
+        lay.setSpacing(0)
+        self.header = QWidget(self)
+        self.header.setObjectName("hakoniwaProfileHeader")
+        self.header.setCursor(Qt.CursorShape.PointingHandCursor)
+        head = QHBoxLayout(self.header)
+        head.setContentsMargins(0, 3, 0, 3)
+        head.setSpacing(6)
+        self.title = QLabel(self.header)
+        self.title.setObjectName("hakoniwaProfileSectionTitle")
+        self.title.setTextFormat(Qt.TextFormat.RichText)
+        self.title.setText(
+            '<span style="color:#5ac8be;">── </span>'
+            f'<span style="color:{_HUD_TEXT};">{html.escape(title)}</span>'
+            '<span style="color:#5ac8be;"> ──</span>'
+        )
+        head.addWidget(self.title, stretch=1)
+        self.plus = _RotatingPlus(self.header)
+        head.addWidget(self.plus, stretch=0, alignment=Qt.AlignmentFlag.AlignRight)
+        lay.addWidget(self.header)
+        # Outer wrapper: animated row size. Inner: full text, clipped.
+        self.clip = QWidget(self)
+        self.clip.setFixedHeight(0)
+        self.body = QLabel(self.clip)
+        self.body.setObjectName("hakoniwaIslandProfileBody")
+        self.body.setWordWrap(True)
+        self.body.setAlignment(
+            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
+        )
+        lay.addWidget(self.clip)
+        self.header.mouseReleaseEvent = self._header_mouse  # type: ignore[method-assign]
+        self._height_anim = QVariantAnimation(self)
+        self._height_anim.setDuration(_ACCORDION_MS)
+        self._height_anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        self._height_anim.valueChanged.connect(self._apply_height)
+        self._angle_anim = QPropertyAnimation(self.plus, b"angle", self)
+        self._angle_anim.setDuration(_ACCORDION_MS)
+        self._angle_anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+
+    def _header_mouse(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            host = self.parent()
+            toggle = getattr(host, "toggle_section", None)
+            if toggle is not None:
+                toggle(self)
+        QWidget.mouseReleaseEvent(self.header, event)
+
+    def set_rows(self, lines: List[str]) -> None:
+        self.body.setText("\n".join(lines))
+        self._place_body()
+        if self._open and self._height_anim.state() != QAbstractAnimation.State.Running:
+            self.clip.setFixedHeight(self._full)
+
+    def _place_body(self) -> None:
+        width = max(self.clip.width(), self.width() - 4, 80)
+        self.body.setFixedWidth(width)
+        height = max(self.body.sizeHint().height(), 0)
+        self.body.setFixedHeight(height)
+        self.body.move(0, 0)
+        self._full = height
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._place_body()
+        if self._height_anim.state() == QAbstractAnimation.State.Running:
+            self._height_anim.setEndValue(self._full if self._open else 0)
+        elif self._open:
+            self.clip.setFixedHeight(self._full)
+
+    def is_open(self) -> bool:
+        return self._open
+
+    def set_open(self, open_: bool, *, animate: bool) -> None:
+        self._open = bool(open_)
+        self._place_body()
+        target = self._full if self._open else 0
+        angle = 135.0 if self._open else 0.0
+        if not animate:
+            self._height_anim.stop()
+            self._angle_anim.stop()
+            self.clip.setFixedHeight(target)
+            self.plus.set_angle(angle)
+            return
+        self._run(self._height_anim, self.clip.height(), target)
+        self._run(self._angle_anim, self.plus.get_angle(), angle)
+
+    def _run(self, anim, start: float, end: float) -> None:
+        anim.stop()
+        anim.setStartValue(start)
+        anim.setEndValue(end)
+        anim.start()
+
+    def _apply_height(self, value) -> None:
+        self.clip.setFixedHeight(max(0, int(value)))
+
+
+class _ProfileAccordion(QWidget):
+    """FAQ list. Opening one section closes whichever was open."""
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("hakoniwaProfileAccordion")
+        self._lay = QVBoxLayout(self)
+        self._lay.setContentsMargins(0, 0, 0, 0)
+        self._lay.setSpacing(0)
+        self._sections: List[_AccordionSection] = []
+        self._open: Optional[_AccordionSection] = None
+        self._ready = False
+
+    def set_sections(self, sections: List[Tuple[str, List[str]]]) -> None:
+        if not self._ready:
+            for title, rows in sections:
+                sec = _AccordionSection(title, self)
+                sec.set_rows(rows)
+                self._lay.addWidget(sec)
+                self._sections.append(sec)
+            self._lay.addStretch(1)
+            self._ready = True
+            if self._sections:
+                self.toggle_section(self._sections[0], animate=False)
+            return
+        for sec, (_title, rows) in zip(self._sections, sections):
+            sec.set_rows(rows)
+
+    def toggle_section(self, section: _AccordionSection, animate: bool = True) -> None:
+        if section is self._open:
+            section.set_open(False, animate=animate)
+            self._open = None
+            return
+        if self._open is not None:
+            self._open.set_open(False, animate=animate)
+        section.set_open(True, animate=animate)
+        self._open = section
+
+    def toggle_title(self, title: str) -> None:
+        for sec in self._sections:
+            if sec.title_text == title:
+                self.toggle_section(sec, animate=True)
+                return
+
+    def open_title(self) -> str:
+        return self._open.title_text if self._open is not None else ""
+
+    def open_count(self) -> int:
+        return sum(1 for sec in self._sections if sec.is_open())
+
+    def plain_text(self) -> str:
+        chunks: List[str] = []
+        for sec in self._sections:
+            chunks.append(sec.title_text)
+            chunks.append(sec.body.text())
+        return "\n".join(chunks)
+
+    def section(self, title: str) -> _AccordionSection:
+        for sec in self._sections:
+            if sec.title_text == title:
+                return sec
+        raise KeyError(title)
 
 
 class HakoniwaMapHud(QWidget):
@@ -499,12 +738,24 @@ class HakoniwaMapHud(QWidget):
         self._profile_policy_text = ""
         self._profile_secretary_text = ""
         self._profile_achievement_text = ""
+        self._profile_sections: List[Tuple[str, List[str]]] = []
+        self._profile_accordion = _ProfileAccordion()
+        self._profile_scroll = QScrollArea(self.island_profile)
+        self._profile_scroll.setObjectName("hakoniwaProfileScroll")
+        self._profile_scroll.setWidgetResizable(True)
+        self._profile_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._profile_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self._profile_scroll.setWidget(self._profile_accordion)
+        profile_lay.addWidget(self._profile_scroll, stretch=1)
         self.island_profile_body = QLabel("")
         self.island_profile_body.setObjectName("hakoniwaIslandProfileBody")
         self.island_profile_body.setWordWrap(True)
         self.island_profile_body.setAlignment(
             Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
         )
+        self.island_profile_body.setVisible(False)
         profile_lay.addWidget(self.island_profile_body, stretch=1)
         self._policy_choice_row = QWidget(self.island_profile)
         choice_lay = QHBoxLayout(self._policy_choice_row)
@@ -697,7 +948,7 @@ class HakoniwaMapHud(QWidget):
             f"島嶼總資產／綜合評分：{state.island_score()}",
             "伺服器排名：0",
         ]
-        sections = (
+        self._profile_sections = [
             ("島嶼身分", identity),
             ("資源收益", balances),
             ("居民", residents),
@@ -705,16 +956,8 @@ class HakoniwaMapHud(QWidget):
             ("環境", environment),
             ("軍事", military),
             ("評價", standing),
-        )
-        parts = []
-        for title, rows in sections:
-            parts.append(
-                '<span style="color:#5ac8be;">── </span>'
-                f'<span style="color:{_HUD_TEXT};">{html.escape(title)}</span>'
-                '<span style="color:#5ac8be;"> ──</span>'
-            )
-            parts.append("<br>".join(html.escape(line) for line in rows))
-        self._profile_basic_text = "<br>".join(parts)
+        ]
+        self._profile_basic_text = ""
         active = POLICY_LABELS.get(state.policy_key(), "未選擇")
         self._profile_policy_text = (
             f"目前：{active}\n"
@@ -766,8 +1009,12 @@ class HakoniwaMapHud(QWidget):
         if not btn.isChecked():
             btn.setChecked(True)
         self._policy_choice_row.setVisible(key == "policy")
-        if key == "basic":
-            self.island_profile_body.setText(self._profile_basic_text)
+        basic = key == "basic"
+        self._profile_scroll.setVisible(basic)
+        self.island_profile_body.setVisible(not basic)
+        if basic:
+            self._profile_accordion.set_sections(self._profile_sections)
+            self.island_profile_body.setText(self._profile_accordion.plain_text())
         elif key == "policy":
             self.island_profile_body.setText(self._profile_policy_text)
         elif key == "secretary":
