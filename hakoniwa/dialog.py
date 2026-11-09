@@ -161,6 +161,16 @@ _PROFILE_PAGES: Tuple[Tuple[str, str], ...] = (
 _PROFILE_BLANK = "尚未決定。"
 
 
+def _format_signed(value: int) -> str:
+    """Show a balance as +2, +0, or -1."""
+    value = int(value)
+    if value > 0:
+        return f"+{value}"
+    if value < 0:
+        return str(value)
+    return "+0"
+
+
 def _format_percent(chance: float) -> str:
     """Show a model rate as a percent. Whole numbers stay whole."""
     pct = max(0.0, float(chance)) * 100.0
@@ -633,6 +643,7 @@ class HakoniwaMapHud(QWidget):
         created = str(getattr(state, "created_at", "") or "").strip() or "—"
         player = str(getattr(state, "player_name", "") or "").strip() or "—"
         spawn = _format_percent(state._monster_spawn_chance())
+        funds_delta, food_delta, people_delta = state.shown_turn_balances()
         lines = [
             f"島名：{state.name}",
             f"玩家：{player}",
@@ -644,8 +655,9 @@ class HakoniwaMapHud(QWidget):
             f"人口：{state.population}",
             f"資金：{state.funds}",
             f"糧食：{state.food}",
-            f"每回合收入：{state.shown_income()}",
-            "每回合支出：0",
+            f"每回合資金收支：{_format_signed(funds_delta)}",
+            f"每回合糧食收支：{_format_signed(food_delta)}",
+            f"每回合人口變化：{_format_signed(people_delta)}",
             "住宅需求：0",
             "商店需求：0",
             "工廠需求：0",
@@ -653,7 +665,7 @@ class HakoniwaMapHud(QWidget):
             f"水源污染指數：{state.shown_water()}",
             f"天災機會率：{state.shown_disaster()}",
             f"怪物出現率：{spawn}",
-            "發射飛機數目：0",
+            "發射飛彈數目：0",
             "擊退本島怪物數次：0",
             "擊退其他島怪物數次：0",
         ]
@@ -662,15 +674,15 @@ class HakoniwaMapHud(QWidget):
         self._profile_policy_text = (
             f"目前：{active}\n"
             "三選一，會存進這座島。再點一次已選的方針會取消。\n"
-            "重觀光：每回合收入 +10，空氣污染 +3\n"
-            "重環保：每回合收入 −5，空氣污染 −3，水源污染 −3，天災機會率 −3\n"
+            "重觀光：每回合資金收支 +10，空氣污染 +3\n"
+            "重環保：每回合資金收支 −5，空氣污染 −3，水源污染 −3，天災機會率 −3\n"
             "重軍備：怪物出現率減半，防衛 +3\n"
             f"防衛：{state.shown_defense()}"
         )
         self._profile_secretary_text = (
             "秘書：島務助理\n"
             f"{state.secretary_line()}\n"
-            f"加成：每回合收入 +{SECRETARY_INCOME}"
+            f"加成：每回合資金收支 +{SECRETARY_INCOME}"
         )
         have = set(state.achievements)
         earned_lines = []
@@ -685,7 +697,7 @@ class HakoniwaMapHud(QWidget):
         else:
             earned_lines.append("溫泉開村達成後，溫泉村解鎖建設")
         earned_lines.append(f"已達成 {len(state.achievements)}／{len(ACHIEVEMENTS)}")
-        earned_lines.append(f"成就加成：每回合收入 +{extra}")
+        earned_lines.append(f"成就加成：每回合資金收支 +{extra}")
         self._profile_achievement_text = "\n".join(earned_lines)
         active_policy = state.policy_key()
         for key, btn in self._policy_choice_buttons.items():

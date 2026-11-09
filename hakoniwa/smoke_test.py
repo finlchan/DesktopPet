@@ -2932,15 +2932,16 @@ def test_dialog_import_offscreen():
     assert dlg.hud._profile_page == "basic"
     basic = dlg.hud.island_profile_body.text()
     for row in (
-        "每回合收入：2",
-        "每回合支出：0",
+        "每回合資金收支：+2",
+        "每回合糧食收支：-20",
+        "每回合人口變化：+0",
         "住宅需求：0",
         "商店需求：0",
         "工廠需求：0",
         "空氣污染指數：0",
         "水源污染指數：0",
         "天災機會率：0",
-        "發射飛機數目：0",
+        "發射飛彈數目：0",
         "擊退本島怪物數次：0",
         "擊退其他島怪物數次：0",
     ):
@@ -4550,6 +4551,7 @@ def test_info_policy_secretary_achievements():
     assert state.policy == ""
     assert state.achievements == []
     assert state.shown_income() == SECRETARY_INCOME
+    assert state.shown_turn_balances() == (SECRETARY_INCOME, -20, 0)
     assert state.shown_air() == 0
     assert state.shown_water() == 0
     assert state.shown_disaster() == 0

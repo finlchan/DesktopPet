@@ -1173,9 +1173,75 @@ class IslandState:
         return self.policy if self.policy in ISLAND_POLICIES else ""
 
     def shown_income(self) -> int:
-        """Displayed 每回合收入: policy + secretary + one per earned achievement."""
+        """Policy, secretary, and achievement modifiers for 每回合資金收支."""
         policy = POLICY_INCOME.get(self.policy_key(), 0)
         return policy + SECRETARY_INCOME + ACHIEVEMENT_INCOME_EACH * len(self.achievements)
+
+    def shown_turn_balances(self) -> Tuple[int, int, int]:
+        """Signed 資金 / 糧食 / 人口 for the next turn.
+
+        Funds add the real building yields to the policy, secretary, and
+        achievement modifiers. Food is production minus the turn's need when
+        the stock can cover it. Population is only the certain change; the
+        0–20 growth roll is not a fixed rate.
+        """
+        farms = self.building_count("farm")
+        factories = self.building_count("factory")
+        quarries = self.building_count("quarry")
+        (
+            farm_labor,
+            factory_labor,
+            quarry_labor,
+            _farm_slots,
+            factory_slots,
+            quarry_slots,
+        ) = assign_labor(self.population, farms, factories, quarries)
+        food_gain = scaled_yield(farms * FOOD_PER_FARM, farm_labor, _farm_slots)
+        factory_funds = scaled_yield(
+            factories * FUNDS_PER_FACTORY, factory_labor, factory_slots
+        )
+        quarry_funds = scaled_yield(
+            quarries * FUNDS_PER_QUARRY, quarry_labor, quarry_slots
+        )
+        power_plants = self.power_plant_count()
+        power_funds = power_plants * FUNDS_PER_POWER_PLANT
+        if power_plants > 0 and factory_funds > 0:
+            factory_funds += int(factory_funds * POWER_FACTORY_BONUS)
+        funds = (
+            factory_funds
+            + quarry_funds
+            + power_funds
+            + self.terrain_count("oilfield") * FUNDS_PER_OILFIELD
+            + tourism_funds(
+                self.airport_count(),
+                self.population,
+                hotels=self.hotel_count(),
+                casinos=self.casino_count(),
+                amusement_parks=self.amusement_park_count(),
+            )
+            + self.shown_income()
+        )
+        food_gain += self.aquafarm_count() * FOOD_PER_AQUAFARM
+        food_need = max(0, (self.population // 500) * FOOD_PER_500_POP)
+        if food_need == 0 and self.population > 0:
+            food_need = MIN_FOOD_NEED
+        if self.food + food_gain >= food_need:
+            food = food_gain - food_need
+            happy = self.happiness_bonus()
+            attract = 0
+            if self.attract_pending:
+                attract = (
+                    ATTRACT_POP_BONUS
+                    + ATTRACT_AIRPORT_EXTRA * self.airport_count()
+                )
+            people = 0
+            if farms > 0 or self.land_count() >= 7 or happy > 0 or attract > 0:
+                people = farms * 5 + happy + attract
+            people = min(max(0, 20000 - self.population), people)
+        else:
+            food = -self.food
+            people = -min(self.population, max(10, self.population // 10))
+        return funds, food, people
 
     def shown_air(self) -> int:
         return POLICY_AIR.get(self.policy_key(), 0)
