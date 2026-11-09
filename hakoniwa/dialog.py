@@ -11,6 +11,7 @@ Action log + guestbook frames are ~70% transparent.
 
 from __future__ import annotations
 
+import html
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -254,7 +255,7 @@ QLabel#hakoniwaIslandProfileBody {{
     color: {_HUD_TEXT_DIM};
     background: transparent;
     border: none;
-    font-size: 8pt;
+    font-size: 7pt;
 }}
 QLineEdit#hakoniwaHudInput {{
     background-color: rgba(14, 28, 32, 180);
@@ -471,8 +472,8 @@ class HakoniwaMapHud(QWidget):
         self.island_profile.setObjectName("hakoniwaIslandProfile")
         self.island_profile.setVisible(False)
         profile_lay = QVBoxLayout(self.island_profile)
-        profile_lay.setContentsMargins(8, 6, 8, 6)
-        profile_lay.setSpacing(4)
+        profile_lay.setContentsMargins(6, 4, 6, 2)
+        profile_lay.setSpacing(2)
         self._profile_page = "basic"
         self._profile_basic_text = ""
         self._profile_tab_buttons: Dict[str, QPushButton] = {}
@@ -690,13 +691,13 @@ class HakoniwaMapHud(QWidget):
             "擊退本島怪物數次：0",
             "擊退其他島怪物數次：0",
         ]
-        rule = "────────"
+        rule = '<span style="color:#5ac8be;">────────</span>'
         blocks = (identity, balances, survey, rates)
-        lines = [rule]
+        parts = [rule]
         for block in blocks:
-            lines.extend(block)
-            lines.append(rule)
-        self._profile_basic_text = "\n".join(lines)
+            parts.append("<br>".join(html.escape(line) for line in block))
+            parts.append(rule)
+        self._profile_basic_text = "<br>".join(parts)
         active = POLICY_LABELS.get(state.policy_key(), "未選擇")
         self._profile_policy_text = (
             f"目前：{active}\n"
@@ -965,10 +966,10 @@ class HakoniwaMapHud(QWidget):
                 settings_w, settings_h,
             )
         if not self.island_profile.isHidden():
-            profile_h = full_h
+            profile_top = below + 4
+            profile_h = max(220, btn_y - gap_above_bar - profile_top)
             self.island_profile.setGeometry(
-                margin, max(margin, btn_y - gap_above_bar - profile_h),
-                profile_w, profile_h,
+                margin, profile_top, profile_w, profile_h,
             )
 
         # Action log — bottom-right (~70% transparent frame)

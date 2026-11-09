@@ -2958,11 +2958,10 @@ def test_dialog_import_offscreen():
         "擊退其他島怪物數次：0",
     ):
         assert row in basic, row
-    assert basic.startswith("────────\n島名：")
+    assert basic.count("────────") == 5
     assert basic.index("糧食：") < basic.index("每回合資金收支")
     assert basic.index("每回合人口變化") < basic.index("居民滿意度")
     assert basic.index("伺服器排名：0") < basic.index("住宅需求：0")
-    assert basic.strip().endswith("────────")
     from hakoniwa.dialog import _format_percent
 
     assert f"怪物出現率：{_format_percent(dlg.state._monster_spawn_chance())}" in basic
