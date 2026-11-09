@@ -227,8 +227,10 @@ def unlock_met(state: IslandState, kind: str) -> Tuple[bool, str]:
     Returns (met, reason). Reason empty when met; otherwise the lock tip.
     Placement terrain is *not* an unlock — handled separately.
     """
-    # Hard-locked catalog rows (溫泉村): visible, never activatable.
+    # Hard-locked catalog rows. 溫泉開村 clears the lock on 溫泉村.
     if kind in HARD_LOCKED_BUILDINGS:
+        if state.achievement_unlocks(kind):
+            return True, ""
         return False, "只能在溫泉山旁的平地自然出現"
     # Non-placeable settlements: always "browse only", never activatable.
     if kind in settlement_keys_for_tree():

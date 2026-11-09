@@ -104,7 +104,14 @@ from .model import (
     GuestbookEntry,
     MAX_GUEST_NAME,
     MAX_GUEST_TEXT,
+    ACHIEVEMENT_INCOME_EACH,
+    ACHIEVEMENTS,
     HARD_LOCKED_BUILDINGS,
+    POLICY_GREEN,
+    POLICY_LABELS,
+    POLICY_MILITARY,
+    POLICY_TOURISM,
+    SECRETARY_INCOME,
     MOUNTAIN_FAMILY,
     MOUNTAIN_ONLY_BUILDINGS,
     PLACEABLE_BUILDINGS,
@@ -477,6 +484,9 @@ class HakoniwaMapHud(QWidget):
             )
             tab_row.addWidget(btn)
         profile_lay.addLayout(tab_row)
+        self._profile_policy_text = ""
+        self._profile_secretary_text = ""
+        self._profile_achievement_text = ""
         self.island_profile_body = QLabel("")
         self.island_profile_body.setObjectName("hakoniwaIslandProfileBody")
         self.island_profile_body.setWordWrap(True)
@@ -484,6 +494,29 @@ class HakoniwaMapHud(QWidget):
             Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
         )
         profile_lay.addWidget(self.island_profile_body, stretch=1)
+        self._policy_choice_row = QWidget(self.island_profile)
+        choice_lay = QHBoxLayout(self._policy_choice_row)
+        choice_lay.setContentsMargins(0, 0, 0, 0)
+        choice_lay.setSpacing(4)
+        self._policy_choice_buttons: Dict[str, QPushButton] = {}
+        for key, label in (
+            (POLICY_TOURISM, "重觀光"),
+            (POLICY_GREEN, "重環保"),
+            (POLICY_MILITARY, "重軍備"),
+        ):
+            choice = QPushButton(label)
+            choice.setObjectName("hakoniwaIslandProfileTab")
+            choice.setCheckable(True)
+            choice.setSizePolicy(
+                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+            )
+            choice.clicked.connect(
+                lambda _checked=False, policy=key: self._choose_policy(policy)
+            )
+            self._policy_choice_buttons[key] = choice
+            choice_lay.addWidget(choice)
+        self._policy_choice_row.setVisible(False)
+        profile_lay.addWidget(self._policy_choice_row)
 
         # Guestbook cluster (view + form) — closed by default; open via 留言.
         self.guestbook_frame = QFrame(self)
@@ -596,11 +629,9 @@ class HakoniwaMapHud(QWidget):
         self._layout_overlays()
 
     def refresh_island_profile(self, state: IslandState) -> None:
-        """Fill 基本資料 from fields the model already has. Other pages stay blank."""
+        """Fill the four 資訊 pages from the island's policy, secretary, and achievements."""
         created = str(getattr(state, "created_at", "") or "").strip() or "—"
         player = str(getattr(state, "player_name", "") or "").strip() or "—"
-        # Only 怪物出現率 is already a model query. The other added rows are
-        # not tracked (no income ledger, demand, pollution, flights, or kills).
         spawn = _format_percent(state._monster_spawn_chance())
         lines = [
             f"島名：{state.name}",
@@ -613,34 +644,79 @@ class HakoniwaMapHud(QWidget):
             f"人口：{state.population}",
             f"資金：{state.funds}",
             f"糧食：{state.food}",
-            "每回合收入：0",
+            f"每回合收入：{state.shown_income()}",
             "每回合支出：0",
             "住宅需求：0",
             "商店需求：0",
             "工廠需求：0",
-            "空氣污染指數：0",
-            "水源污染指數：0",
-            "天災機會率：0",
+            f"空氣污染指數：{state.shown_air()}",
+            f"水源污染指數：{state.shown_water()}",
+            f"天災機會率：{state.shown_disaster()}",
             f"怪物出現率：{spawn}",
             "發射飛機數目：0",
             "擊退本島怪物數次：0",
             "擊退其他島怪物數次：0",
         ]
         self._profile_basic_text = "\n".join(lines)
+        active = POLICY_LABELS.get(state.policy_key(), "未選擇")
+        self._profile_policy_text = (
+            f"目前：{active}\n"
+            "三選一，會存進這座島。再點一次已選的方針會取消。\n"
+            "重觀光：每回合收入 +10，空氣污染 +3\n"
+            "重環保：每回合收入 −5，空氣污染 −3，水源污染 −3，天災機會率 −3\n"
+            "重軍備：怪物出現率減半，防衛 +3\n"
+            f"防衛：{state.shown_defense()}"
+        )
+        self._profile_secretary_text = (
+            "秘書：島務助理\n"
+            f"{state.secretary_line()}\n"
+            f"加成：每回合收入 +{SECRETARY_INCOME}"
+        )
+        have = set(state.achievements)
+        earned_lines = []
+        for key, label, funds in ACHIEVEMENTS:
+            if key in have:
+                earned_lines.append(f"{label}：已達成（分數 +{funds}）")
+            else:
+                earned_lines.append(f"{label}：未達成")
+        extra = ACHIEVEMENT_INCOME_EACH * len(state.achievements)
+        if state.achievement_unlocks("onsen_village"):
+            earned_lines.append("溫泉村已可直接建設")
+        else:
+            earned_lines.append("溫泉開村達成後，溫泉村解鎖建設")
+        earned_lines.append(f"已達成 {len(state.achievements)}／{len(ACHIEVEMENTS)}")
+        earned_lines.append(f"成就加成：每回合收入 +{extra}")
+        self._profile_achievement_text = "\n".join(earned_lines)
+        active_policy = state.policy_key()
+        for key, btn in self._policy_choice_buttons.items():
+            btn.setChecked(key == active_policy)
         self.show_island_profile_page(self._profile_page)
 
+    def _choose_policy(self, key: str) -> None:
+        state = self.map.state
+        state.policy = "" if state.policy_key() == key else key
+        self.refresh_island_profile(state)
+        persist = getattr(self, "_persist_profile", None)
+        if persist is not None:
+            persist()
+
     def show_island_profile_page(self, key: str) -> None:
-        """Switch the 資訊 drawer. Only 基本資料 has rows."""
+        """Switch the 資訊 drawer among the four pages."""
         if key not in self._profile_tab_buttons:
             key = "basic"
         self._profile_page = key
         btn = self._profile_tab_buttons[key]
         if not btn.isChecked():
             btn.setChecked(True)
+        self._policy_choice_row.setVisible(key == "policy")
         if key == "basic":
             self.island_profile_body.setText(self._profile_basic_text)
+        elif key == "policy":
+            self.island_profile_body.setText(self._profile_policy_text)
+        elif key == "secretary":
+            self.island_profile_body.setText(self._profile_secretary_text)
         else:
-            self.island_profile_body.setText(_PROFILE_BLANK)
+            self.island_profile_body.setText(self._profile_achievement_text)
 
     def _show_notify_menu(self) -> None:
         """Popup: checkable 歷史記錄框 / 警報 / 方格資訊 under the bell."""
@@ -936,8 +1012,8 @@ def tool_enabled(
     Returns (enabled, reason). Reason is empty when enabled; otherwise a short
     tip for the button tooltip (can't afford / wrong terrain / no selection).
     """
-    # 溫泉村在目錄裡，但永遠不可點選建造.
-    if kind in HARD_LOCKED_BUILDINGS:
+    # 溫泉村 stays locked until 溫泉開村.
+    if state.placement_hard_locked(kind):
         return False, "鎖定：只能在溫泉山旁的平地自然出現"
 
     # 觀望：島上有怪獸即可（不必選格）.
@@ -1011,7 +1087,7 @@ def tool_enabled(
             return False, f"資金不足（需 {cost}）"
         return True, ""
 
-    if kind in PLACEABLE_BUILDINGS:
+    if kind in PLACEABLE_BUILDINGS or state.achievement_unlocks(kind):
         unlocked, lock_reason = state.building_unlock_met(kind)
         if not unlocked:
             return False, lock_reason
@@ -1165,6 +1241,7 @@ class HakoniwaIslandDialog(QDialog):
         self.map = HakoniwaMapWidget(self.state)
         self.map.cell_clicked.connect(self._on_cell_clicked)
         self.hud = HakoniwaMapHud(self.map)
+        self.hud._persist_profile = self._cache_local
         self.stats = self.hud.stats
         self.sel_label = self.hud.sel_label
         self.log_view = self.hud.log_view
@@ -1509,7 +1586,8 @@ class HakoniwaIslandDialog(QDialog):
         if shown_cost is None:
             cost_lab.setText("費用: 免費／依指令")
         elif shown_cost == 0 and (
-            key in settlement_keys_for_tree() or key in HARD_LOCKED_BUILDINGS
+            key in settlement_keys_for_tree()
+            or self.state.placement_hard_locked(key)
         ):
             cost_lab.setText("費用: 0（非點選建造）")
         else:
@@ -1517,7 +1595,7 @@ class HakoniwaIslandDialog(QDialog):
 
         met, lock_reason = unlock_met(self.state, key)
         prereq = unlock_prereq(key)
-        if key in HARD_LOCKED_BUILDINGS:
+        if self.state.placement_hard_locked(key):
             status_lab.setText(f"狀態: 鎖定 🔒\n前提: {lock_reason}")
         elif key in settlement_keys_for_tree():
             status_lab.setText("狀態: 瀏覽用（人口演進）\n前提: 不可點選建造")
@@ -1536,7 +1614,7 @@ class HakoniwaIslandDialog(QDialog):
         effects_lab.setText("\n".join(f"· {ln}" for ln in lines) if lines else "")
 
         # Action label: 放置 for buildings, otherwise keep tool verb.
-        if key in PLACEABLE_BUILDINGS:
+        if key in PLACEABLE_BUILDINGS or self.state.achievement_unlocks(key):
             place_btn.setText("放置")
         elif key in settlement_keys_for_tree() or key in HARD_LOCKED_BUILDINGS:
             place_btn.setText("不可建造")
@@ -1732,7 +1810,7 @@ class HakoniwaIslandDialog(QDialog):
             btn = self.tool_buttons[key]
             # 飛彈費用隨飛彈基地動態變化。
             shown_cost = self.state.missile_cost() if key == "missile" else cost
-            if key in HARD_LOCKED_BUILDINGS:
+            if self.state.placement_hard_locked(key):
                 label = f"🔒 {name}（鎖定）"
             elif shown_cost is None:
                 label = f"{digit}. {name}"
@@ -1983,7 +2061,7 @@ class HakoniwaIslandDialog(QDialog):
 
     def _do_action(self, kind: str) -> None:
         # 觀望／貿易／銀行存提／超市買糧／誘致／火箭發射不需選格；其餘指令要點選格子。
-        if kind in HARD_LOCKED_BUILDINGS:
+        if self.state.placement_hard_locked(kind):
             label = BUILDINGS[kind]["label"]
             QMessageBox.information(
                 self,
@@ -2055,7 +2133,7 @@ class HakoniwaIslandDialog(QDialog):
                 self._drop_to_local_on_error(e)
                 # Fall through to local action below.
 
-        if kind in PLACEABLE_BUILDINGS:
+        if kind in PLACEABLE_BUILDINGS or self.state.achievement_unlocks(kind):
             msg = self.state.place_building(i, j, kind)
         elif kind == "remove":
             msg = self.state.remove_building(i, j)

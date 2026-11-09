@@ -2932,7 +2932,7 @@ def test_dialog_import_offscreen():
     assert dlg.hud._profile_page == "basic"
     basic = dlg.hud.island_profile_body.text()
     for row in (
-        "每回合收入：0",
+        "每回合收入：2",
         "每回合支出：0",
         "住宅需求：0",
         "商店需求：0",
@@ -2962,11 +2962,14 @@ def test_dialog_import_offscreen():
     dlg.hud.refresh_island_profile(dlg.state)
     dlg.hud.show_island_profile_page("policy")
     assert dlg.hud._profile_tab_buttons["policy"].isChecked()
-    assert dlg.hud.island_profile_body.text() == "尚未決定。"
+    assert "目前：未選擇" in dlg.hud.island_profile_body.text()
+    assert "重軍備" in dlg.hud.island_profile_body.text()
     dlg.hud.show_island_profile_page("secretary")
-    assert dlg.hud.island_profile_body.text() == "尚未決定。"
+    assert "島務助理" in dlg.hud.island_profile_body.text()
+    assert "島上平靜" in dlg.hud.island_profile_body.text()
     dlg.hud.show_island_profile_page("achievements")
-    assert dlg.hud.island_profile_body.text() == "尚未決定。"
+    assert "初村：未達成" in dlg.hud.island_profile_body.text()
+    assert "溫泉開村：未達成" in dlg.hud.island_profile_body.text()
     dlg.hud.show_island_profile_page("basic")
     assert "玩家" in dlg.hud.island_profile_body.text()
     assert "住宅需求：0" in dlg.hud.island_profile_body.text()
@@ -4530,6 +4533,102 @@ def test_odometer_status_seen_skip():
         assert seen2 is not None and seen2["turn"] != state.turn
 
 
+def test_info_policy_secretary_achievements():
+    """Policy, one secretary, and four achievements. Save version stays 17."""
+    from hakoniwa.model import (
+        ACHIEVEMENT_INCOME_EACH,
+        MILITARY_SPAWN_FACTOR,
+        POLICY_MILITARY,
+        POLICY_TOURISM,
+        SAVE_VERSION,
+        SECRETARY_INCOME,
+        VILLAGE_TO_TOWN_POP,
+    )
+
+    assert SAVE_VERSION == 17
+    state = IslandState.new_game()
+    assert state.policy == ""
+    assert state.achievements == []
+    assert state.shown_income() == SECRETARY_INCOME
+    assert state.shown_air() == 0
+    assert state.shown_water() == 0
+    assert state.shown_disaster() == 0
+    assert state.shown_defense() == 0
+    assert "平靜" in state.secretary_line()
+    state.food = 40
+    assert "糧食偏低" in state.secretary_line()
+    state.food = 500
+
+    state.policy = POLICY_TOURISM
+    assert state.shown_income() == 10 + SECRETARY_INCOME
+    assert state.shown_air() == 3
+    state.policy = "green"
+    assert state.shown_income() == -5 + SECRETARY_INCOME
+    assert state.shown_air() == -3
+    assert state.shown_water() == -3
+    assert state.shown_disaster() == -3
+    state.policy = POLICY_MILITARY
+    assert state.shown_defense() == 3
+    state.population = 400
+    state.turn = 6
+    state.policy = ""
+    bare = state._monster_spawn_chance()
+    assert bare > 0
+    state.policy = POLICY_MILITARY
+    assert state._monster_spawn_chance() == bare * MILITARY_SPAWN_FACTOR
+
+    state.policy = ""
+    state.population = 100
+    state.turn = 1
+    grass = next(
+        (i, j)
+        for i in range(state.size)
+        for j in range(state.size)
+        if state.cell(i, j).terrain == "grass"
+    )
+    assert state.place_building(*grass, "onsen_village") != "ok"
+    state.cell(*grass).building = "village"
+    before = state.island_score()
+    notes = state.collect_achievements()
+    assert any("初村" in n for n in notes)
+    assert state.island_score() == before + 40
+    assert state.place_building(*grass, "onsen_village") != "ok"
+    state.cell(*grass).building = "onsen_village"
+    state.collect_achievements()
+    assert "onsen_village" in state.achievements
+    other = next(
+        (i, j)
+        for i in range(state.size)
+        for j in range(state.size)
+        if state.cell(i, j).terrain == "grass" and state.cell(i, j).building is None
+    )
+    assert state.place_building(*other, "onsen_village") == "ok"
+    state.population = VILLAGE_TO_TOWN_POP
+    state.turn = 10
+    state.collect_achievements()
+    assert set(state.achievements) == {
+        "first_village",
+        "pop_town",
+        "onsen_village",
+        "tenth_turn",
+    }
+    assert state.shown_income() == SECRETARY_INCOME + 4 * ACHIEVEMENT_INCOME_EACH
+    blob = state.to_dict()
+    assert blob["version"] == 17
+    assert blob["policy"] == ""
+    loaded = IslandState.from_dict(blob)
+    assert loaded.achievements == state.achievements
+    loaded.policy = "nope"
+    assert loaded.policy_key() == ""
+    old = state.to_dict()
+    del old["policy"]
+    del old["achievements"]
+    legacy = IslandState.from_dict(old)
+    assert legacy.policy == ""
+    assert legacy.achievements == []
+    print("info policy / secretary / achievements OK")
+
+
 def main():
     test_grid_geometry()
     test_oblique_foreshortening_invariant()
@@ -4539,6 +4638,7 @@ def main():
     test_mountain_sprite_building_placement()
     test_oilfield_and_crater_tiles()
     test_onsen_mountain_and_village()
+    test_info_policy_secretary_achievements()
     test_catalog_costs()
     test_new_island_and_loop()
     test_guestbook_local()

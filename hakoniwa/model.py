@@ -120,6 +120,7 @@ FUNDS_PER_FOOD_BUY = 8
 # Defense / missile-base interaction stubs (hex radius; catalog 周圍 2).
 DEFENSE_RADIUS = 2
 DEFENSE_SPAWN_FACTOR = 0.25   # spawn chance × this when any land near a defense
+MILITARY_SPAWN_FACTOR = 0.5   # 重軍備：怪物出現率減半（乘在既有機率上）
 DEFENSE_STOMP_SAVE_CHANCE = 0.65  # near defense: chance stomp skips building/terrain wipe
 
 # Placeable building kinds on 平地（港灣／造船所另須臨海）.
@@ -456,7 +457,38 @@ BUILDABLE = frozenset({"grass"})  # 平地 only（村／町／都市請先整地
 # 17 covers both migrations that previously each claimed this number:
 # legacy terrain village/town/city → grass + building (Cell.from_dict), and
 # island profile player_name / created_at (missing values default on load).
+# Policy and achievements are optional keys; missing values stay empty, so
+# this version does not move.
 SAVE_VERSION = 17
+
+# 島嶼方針。空字串是未選，三個加成互斥，預設全 0。
+POLICY_TOURISM = "tourism"
+POLICY_GREEN = "green"
+POLICY_MILITARY = "military"
+ISLAND_POLICIES = frozenset({POLICY_TOURISM, POLICY_GREEN, POLICY_MILITARY})
+POLICY_LABELS = {
+    "": "未選擇",
+    POLICY_TOURISM: "重觀光",
+    POLICY_GREEN: "重環保",
+    POLICY_MILITARY: "重軍備",
+}
+# Display modifiers only. Not a pollution simulation.
+POLICY_INCOME = {POLICY_TOURISM: 10, POLICY_GREEN: -5, POLICY_MILITARY: 0}
+POLICY_AIR = {POLICY_TOURISM: 3, POLICY_GREEN: -3, POLICY_MILITARY: 0}
+POLICY_WATER = {POLICY_TOURISM: 0, POLICY_GREEN: -3, POLICY_MILITARY: 0}
+POLICY_DISASTER = {POLICY_TOURISM: 0, POLICY_GREEN: -3, POLICY_MILITARY: 0}
+POLICY_DEFENSE = {POLICY_TOURISM: 0, POLICY_GREEN: 0, POLICY_MILITARY: 3}
+SECRETARY_INCOME = 2  # the one starter secretary's bonus
+# id, label, one-time score. 溫泉開村 also unlocks placing 溫泉村.
+ACHIEVEMENTS = (
+    ("first_village", "初村", 40),
+    ("pop_town", "人口成町", 40),
+    ("onsen_village", "溫泉開村", 60),
+    ("tenth_turn", "十日", 30),
+)
+ACHIEVEMENT_INCOME_EACH = 1
+ACHIEVEMENT_IDS = frozenset(item[0] for item in ACHIEVEMENTS)
+_ACHIEVEMENT_BY_ID = {item[0]: item for item in ACHIEVEMENTS}
 
 
 def timber_funds(trees: int) -> int:
@@ -783,6 +815,8 @@ class IslandState:
     name: str = "箱庭島"
     player_name: str = "島主"  # 本島玩家／島主顯示名
     created_at: str = ""  # 建島時間（UTC ISO）；空則於 __post_init__ 填入
+    policy: str = ""  # 島嶼方針："" | tourism | green | military
+    achievements: List[str] = field(default_factory=list)
     cells: List[List[Cell]] = field(default_factory=list)
     log: List[str] = field(default_factory=list)
     comments: List[GuestbookEntry] = field(default_factory=list)
@@ -1027,7 +1061,7 @@ class IslandState:
             decoys=self.building_count("decoy"),
             satellite_active=self.has_satellite(),
             bank_deposit=self.bank_deposit,
-        )
+        ) + self.achievement_score()
 
     def tourist_appearance(self, i: int, j: int) -> Tuple[str, Optional[str]]:
 
@@ -1135,9 +1169,83 @@ class IslandState:
             return True, ""
         return False, reason
 
+    def policy_key(self) -> str:
+        return self.policy if self.policy in ISLAND_POLICIES else ""
+
+    def shown_income(self) -> int:
+        """Displayed 每回合收入: policy + secretary + one per earned achievement."""
+        policy = POLICY_INCOME.get(self.policy_key(), 0)
+        return policy + SECRETARY_INCOME + ACHIEVEMENT_INCOME_EACH * len(self.achievements)
+
+    def shown_air(self) -> int:
+        return POLICY_AIR.get(self.policy_key(), 0)
+
+    def shown_water(self) -> int:
+        return POLICY_WATER.get(self.policy_key(), 0)
+
+    def shown_disaster(self) -> int:
+        return POLICY_DISASTER.get(self.policy_key(), 0)
+
+    def shown_defense(self) -> int:
+        """重軍備 raises this. It is a shown modifier, not a new combat stat."""
+        return POLICY_DEFENSE.get(self.policy_key(), 0)
+
+    def shown_housing(self) -> int:
+        """住宅需求 stays 0. No policy moves it."""
+        return 0
+
+    def secretary_line(self) -> str:
+        # A future pool of 2D animated secretaries replaces this single one.
+        if self.shown_housing() >= 5:
+            return "住宅需求偏高，先把住處補上。"
+        if self.shown_disaster() >= 5:
+            return "天災機會偏高，先把風險壓下來。"
+        if self.food < 100:
+            return "糧食偏低，先把肚子顧好。"
+        return "島上平靜，照現在的步調就可以。"
+
+    def achievement_score(self) -> int:
+        total = 0
+        for key in self.achievements:
+            item = _ACHIEVEMENT_BY_ID.get(key)
+            if item is not None:
+                total += int(item[2])
+        return total
+
+    def achievement_unlocks(self, kind: str) -> bool:
+        """溫泉開村 lifts the hard lock on placing 溫泉村."""
+        return kind == "onsen_village" and "onsen_village" in self.achievements
+
+    def placement_hard_locked(self, kind: str) -> bool:
+        return kind in HARD_LOCKED_BUILDINGS and not self.achievement_unlocks(kind)
+
+    def collect_achievements(self) -> List[str]:
+        """Grant one-time achievements the current island already satisfies."""
+        notes: List[str] = []
+        have = set(self.achievements)
+        ready: List[str] = []
+        if self.building_count("village") > 0:
+            ready.append("first_village")
+        if self.population >= VILLAGE_TO_TOWN_POP:
+            ready.append("pop_town")
+        if self.building_count("onsen_village") > 0:
+            ready.append("onsen_village")
+        if self.turn >= 10:
+            ready.append("tenth_turn")
+        for key in ready:
+            if key in have:
+                continue
+            _key, label, points = _ACHIEVEMENT_BY_ID[key]
+            self.achievements.append(key)
+            have.add(key)
+            notes.append(f"成就「{label}」分數 +{points}")
+        return notes
+
     def can_place_building(self, i: int, j: int, kind: str) -> bool:
         """Whether ``kind`` can be placed at (i,j) ignoring funds."""
-        if kind not in PLACEABLE_BUILDINGS:
+        if self.placement_hard_locked(kind):
+            return False
+        if kind not in PLACEABLE_BUILDINGS and not self.achievement_unlocks(kind):
             return False
         ok, _ = self.building_unlock_met(kind)
         if not ok:
@@ -1160,10 +1268,10 @@ class IslandState:
         return True
 
     def place_building(self, i: int, j: int, kind: str) -> str:
-        if kind in HARD_LOCKED_BUILDINGS:
+        if self.placement_hard_locked(kind):
             label = BUILDINGS[kind]["label"]
             return f"{label}不可直接建設（溫泉山旁的平地才會自然出現）"
-        if kind not in PLACEABLE_BUILDINGS:
+        if kind not in PLACEABLE_BUILDINGS and not self.achievement_unlocks(kind):
             return "未知建築"
         ok, reason = self.building_unlock_met(kind)
         if not ok:
@@ -1659,6 +1767,9 @@ class IslandState:
         # Any 防衛設施 covering land → lower island spawn pressure (simple).
         if self.defense_positions():
             chance *= DEFENSE_SPAWN_FACTOR
+        # 重軍備 lowers the real spawn chance. Other policies do not.
+        if self.policy_key() == POLICY_MILITARY:
+            chance *= MILITARY_SPAWN_FACTOR
         return chance
 
     def _spawn_candidate_cells(self) -> List[Coord]:
@@ -2241,6 +2352,7 @@ class IslandState:
             f"島分數 {score}"
             + (f"（{'／'.join(score_bits)}）" if score_bits else "")
         )
+        notes.extend(self.collect_achievements())
 
         self.turn += 1
         for n in notes:
@@ -2301,6 +2413,8 @@ class IslandState:
             "bank_deposit": int(self.bank_deposit),
             "attract_pending": bool(self.attract_pending),
             "satellite_active": bool(self.satellite_active),
+            "policy": self.policy_key(),
+            "achievements": list(self.achievements),
             "cells": [[c.to_dict() for c in row] for row in self.cells],
             "log": list(self.log[-40:]),
             "comments": [c.to_dict() for c in self.comments],
@@ -2330,6 +2444,14 @@ class IslandState:
         raw_sat = data.get("satellite_active")
         raw_player = data.get("player_name") or data.get("owner_name") or ""
         raw_created = data.get("created_at") or data.get("created") or ""
+        raw_policy = str(data.get("policy") or "")
+        if raw_policy not in ISLAND_POLICIES:
+            raw_policy = ""
+        raw_achievements = [
+            str(item)
+            for item in (data.get("achievements") or [])
+            if str(item) in ACHIEVEMENT_IDS
+        ]
         state = cls(
             size=size,
             turn=int(data.get("turn") or 1),
@@ -2346,6 +2468,8 @@ class IslandState:
             name=str(data.get("name") or "箱庭島"),
             player_name=str(raw_player).strip() or "島主",
             created_at=str(raw_created).strip(),
+            policy=raw_policy,
+            achievements=raw_achievements,
             cells=parsed if ok else [],
             log=[str(x) for x in (data.get("log") or [])][-80:],
             comments=_parse_comments(data.get("comments")),
