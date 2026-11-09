@@ -3008,8 +3008,30 @@ def test_dialog_import_offscreen():
     dlg.hud.refresh_island_profile(dlg.state)
     dlg.hud.show_island_profile_page("policy")
     assert dlg.hud._profile_tab_buttons["policy"].isChecked()
-    assert "目前：未選擇" in dlg.hud.island_profile_body.text()
-    assert "重軍備" in dlg.hud.island_profile_body.text()
+    page = dlg.hud.policy_page_text()
+    for title in (
+        "糧食與民生方針",
+        "工商與經濟方針",
+        "環保與災害方針",
+        "國防與對外戰備方針",
+    ):
+        assert title in page
+    assert "緊急糧食配給制" in page
+    assert "更換費用 20" in page
+    assert "緩衝 2 回合" in page
+    assert "重觀光" not in page
+    assert "重軍備" not in page
+    dlg.state.policy_orders = [("ration", 2)]
+    dlg.hud.refresh_island_profile(dlg.state)
+    page = dlg.hud.policy_page_text()
+    assert "實施中" in page
+    assert "剩餘 2 回合" in page
+    assert "1／1" in page
+    assert dlg.hud._policy_buttons["ration"].isChecked()
+    assert not dlg.hud._policy_buttons["intensive"].isEnabled()
+    assert not dlg.hud._policy_buttons["deter"].isEnabled()
+    dlg.state.policy_orders = []
+    dlg.hud.refresh_island_profile(dlg.state)
     dlg.hud.show_island_profile_page("secretary")
     assert "島務助理" in dlg.hud.island_profile_body.text()
     assert "島上平靜" in dlg.hud.island_profile_body.text()
@@ -4580,20 +4602,27 @@ def test_odometer_status_seen_skip():
 
 
 def test_info_policy_secretary_achievements():
-    """Policy, one secretary, and four achievements. Save version stays 17."""
+    """Eleven policies, one secretary, and four achievements. Save stays 17."""
     from hakoniwa.model import (
         ACHIEVEMENT_INCOME_EACH,
         MILITARY_SPAWN_FACTOR,
-        POLICY_MILITARY,
-        POLICY_TOURISM,
+        POLICY_GROUPS,
+        POLICY_LEAD_TURNS,
+        POLICY_SPECS,
+        POLICY_SWAP_COST,
         SAVE_VERSION,
         SECRETARY_INCOME,
+        START_FUNDS,
+        TOWN_TO_CITY_POP,
         VILLAGE_TO_TOWN_POP,
+        policy_effect_text,
     )
 
     assert SAVE_VERSION == 17
     state = IslandState.new_game()
     assert state.policy == ""
+    assert state.policy_orders == []
+    assert state.policy_slot_count() == 1
     assert state.achievements == []
     assert state.shown_income() == SECRETARY_INCOME
     assert state.shown_turn_balances() == (SECRETARY_INCOME, -20, 0)
@@ -4601,32 +4630,110 @@ def test_info_policy_secretary_achievements():
     assert state.shown_water() == 0
     assert state.shown_disaster() == 0
     assert state.shown_defense() == 0
+    assert state.shown_unemployment() == 0
+    assert state.shown_crime() == 0
+    assert state.shown_green() == 0
     assert "平靜" in state.secretary_line()
     state.food = 40
     assert "糧食偏低" in state.secretary_line()
     state.food = 500
 
-    state.policy = POLICY_TOURISM
-    assert state.shown_income() == 10 + SECRETARY_INCOME
-    assert state.shown_air() == 3
-    state.policy = "green"
-    assert state.shown_income() == -5 + SECRETARY_INCOME
-    assert state.shown_air() == -3
-    assert state.shown_water() == -3
-    assert state.shown_disaster() == -3
-    state.policy = POLICY_MILITARY
-    assert state.shown_defense() == 3
+    ids = [pid for _title, group in POLICY_GROUPS for pid in group]
+    assert ids == [
+        "ration",
+        "intensive",
+        "immigration",
+        "freeport",
+        "industry",
+        "austerity",
+        "green_isle",
+        "seawall",
+        "martial",
+        "lure",
+        "deter",
+    ]
+    assert [title for title, _group in POLICY_GROUPS] == [
+        "糧食與民生方針",
+        "工商與經濟方針",
+        "環保與災害方針",
+        "國防與對外戰備方針",
+    ]
+    sigs = []
+    for pid in ids:
+        spec = POLICY_SPECS[pid]
+        moved = [
+            (key, spec[key])
+            for key in spec
+            if key != "label" and spec[key] not in (0, 1, 1.0)
+        ]
+        assert moved, pid
+        assert policy_effect_text(pid)
+        sigs.append(tuple(sorted(moved)))
+    assert len(set(sigs)) == len(ids)
+
+    assert state.toggle_policy("ration") is True
+    assert state.funds == START_FUNDS - POLICY_SWAP_COST
+    assert state.policy_orders == [("ration", POLICY_LEAD_TURNS)]
+    assert state.shown_turn_balances() == (SECRETARY_INCOME, -20, 0)
+    assert state.shown_crime() == 0
+    assert state.toggle_policy("intensive") is False
+    assert state.funds == START_FUNDS - POLICY_SWAP_COST
+    assert state.policy_orders == [("ration", POLICY_LEAD_TURNS)]
+    assert state.advance_policies() == []
+    assert state.policy_orders == [("ration", 1)]
+    assert state.advance_policies() == ["方針生效：緊急糧食配給制"]
+    assert state.policy_orders == [("ration", 0)]
+    assert state.shown_crime() == 2
+    assert state.shown_turn_balances() == (SECRETARY_INCOME, -10, -2)
+    state.population = VILLAGE_TO_TOWN_POP - 1
+    assert state.policy_slot_count() == 1
+    state.population = VILLAGE_TO_TOWN_POP
+    assert state.policy_slot_count() == 3
+    state.population = TOWN_TO_CITY_POP
+    assert state.policy_slot_count() == 4
+    assert state.toggle_policy("freeport") is True
+    state.policy_orders = [("ration", 0), ("freeport", 0)]
+    assert state.shown_crime() == 5
+    assert state.policy_modifier_sum("funds") == 14
+
+    state.policy = "tourism"
+    assert state.policy_key() == "tourism"
+    assert state.shown_air() == 2
+    state.policy_orders = []
+    state.policy = "tourism"
+    assert state.shown_air() == 0
+    assert state.shown_income() == SECRETARY_INCOME
+
     state.population = 400
     state.turn = 6
-    state.policy = ""
+    state.policy_orders = [("deter", POLICY_LEAD_TURNS)]
     bare = state._monster_spawn_chance()
     assert bare > 0
-    state.policy = POLICY_MILITARY
+    state.policy_orders = []
+    assert state._monster_spawn_chance() == bare
+    state.policy_orders = [("deter", 0)]
     assert state._monster_spawn_chance() == bare * MILITARY_SPAWN_FACTOR
+    state.policy_orders = [("lure", 0)]
+    assert state._monster_spawn_chance() == bare * 1.5
+    state.policy_orders = [("martial", 0)]
+    assert state._monster_spawn_chance() == bare * 0.7
+
+    state.funds = POLICY_SWAP_COST - 1
+    state.policy_orders = []
+    assert state.toggle_policy("ration") is False
+    state.funds = POLICY_SWAP_COST
+    assert state.toggle_policy("ration") is True
+    assert state.funds == 0
+    assert state.toggle_policy("ration") is False
+    state.funds = POLICY_SWAP_COST
+    assert state.toggle_policy("ration") is True
+    assert state.policy_orders == []
 
     state.policy = ""
+    state.policy_orders = []
     state.population = 100
     state.turn = 1
+    state.funds = START_FUNDS
     grass = next(
         (i, j)
         for i in range(state.size)
@@ -4660,19 +4767,44 @@ def test_info_policy_secretary_achievements():
         "tenth_turn",
     }
     assert state.shown_income() == SECRETARY_INCOME + 4 * ACHIEVEMENT_INCOME_EACH
+    state.policy_orders = [("seawall", 0)]
     blob = state.to_dict()
     assert blob["version"] == 17
     assert blob["policy"] == ""
+    assert blob["policies"] == [{"id": "seawall", "turns": 0}]
     loaded = IslandState.from_dict(blob)
     assert loaded.achievements == state.achievements
+    assert loaded.policy_orders == [("seawall", 0)]
+    assert loaded.shown_defense() == 3
+    assert loaded.shown_disaster() == -5
     loaded.policy = "nope"
     assert loaded.policy_key() == ""
+    clamped = IslandState.from_dict(
+        {
+            **blob,
+            "policies": [
+                {"id": "ration", "turns": 9},
+                {"id": "nope", "turns": 0},
+            ],
+        }
+    )
+    assert clamped.policy_orders == [("ration", POLICY_LEAD_TURNS)]
     old = state.to_dict()
-    del old["policy"]
-    del old["achievements"]
+    old["policy"] = "tourism"
+    old.pop("policies")
     legacy = IslandState.from_dict(old)
-    assert legacy.policy == ""
-    assert legacy.achievements == []
+    assert legacy.policy == "tourism"
+    assert legacy.policy_orders == []
+    assert legacy.shown_air() == 0
+    assert legacy.shown_income() == SECRETARY_INCOME + 4 * ACHIEVEMENT_INCOME_EACH
+    missing = state.to_dict()
+    del missing["policy"]
+    del missing["policies"]
+    del missing["achievements"]
+    bare_load = IslandState.from_dict(missing)
+    assert bare_load.policy == ""
+    assert bare_load.policy_orders == []
+    assert bare_load.achievements == []
     print("info policy / secretary / achievements OK")
 
 

@@ -122,11 +122,14 @@ from .model import (
     ACHIEVEMENT_INCOME_EACH,
     ACHIEVEMENTS,
     HARD_LOCKED_BUILDINGS,
-    POLICY_GREEN,
-    POLICY_LABELS,
-    POLICY_MILITARY,
-    POLICY_TOURISM,
+    POLICY_GROUPS,
+    POLICY_LEAD_TURNS,
+    POLICY_SPECS,
+    POLICY_SWAP_COST,
     SECRETARY_INCOME,
+    TOWN_TO_CITY_POP,
+    VILLAGE_TO_TOWN_POP,
+    policy_effect_text,
     MOUNTAIN_FAMILY,
     MOUNTAIN_ONLY_BUILDINGS,
     PLACEABLE_BUILDINGS,
@@ -264,6 +267,15 @@ QPushButton#hakoniwaIslandProfileTab:checked {{
 }}
 QPushButton#hakoniwaIslandProfileTab:hover:!checked {{
     background-color: rgba(28, 52, 56, 220);
+}}
+QPushButton#hakoniwaIslandProfileTab[policyChoice="true"] {{
+    text-align: left;
+    padding: 1px 6px;
+}}
+QPushButton#hakoniwaIslandProfileTab:disabled {{
+    background-color: rgba(14, 32, 36, 140);
+    color: rgba(168, 208, 200, 120);
+    border: 1px solid rgba(90, 200, 190, 90);
 }}
 QLabel#hakoniwaIslandProfileBody,
 QLabel#hakoniwaProfileSectionTitle {{
@@ -734,7 +746,6 @@ class HakoniwaMapHud(QWidget):
             )
             tab_row.addWidget(btn)
         profile_lay.addLayout(tab_row)
-        self._profile_policy_text = ""
         self._profile_secretary_text = ""
         self._profile_achievement_text = ""
         self._profile_sections: List[Tuple[str, List[str]]] = []
@@ -756,29 +767,52 @@ class HakoniwaMapHud(QWidget):
         )
         self.island_profile_body.setVisible(False)
         profile_lay.addWidget(self.island_profile_body, stretch=1)
-        self._policy_choice_row = QWidget(self.island_profile)
-        choice_lay = QHBoxLayout(self._policy_choice_row)
-        choice_lay.setContentsMargins(0, 0, 0, 0)
-        choice_lay.setSpacing(4)
-        self._policy_choice_buttons: Dict[str, QPushButton] = {}
-        for key, label in (
-            (POLICY_TOURISM, "重觀光"),
-            (POLICY_GREEN, "重環保"),
-            (POLICY_MILITARY, "重軍備"),
-        ):
-            choice = QPushButton(label)
-            choice.setObjectName("hakoniwaIslandProfileTab")
-            choice.setCheckable(True)
-            choice.setSizePolicy(
-                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        self._policy_panel = QScrollArea(self.island_profile)
+        self._policy_panel.setObjectName("hakoniwaProfileScroll")
+        self._policy_panel.setWidgetResizable(True)
+        self._policy_panel.setFrameShape(QFrame.Shape.NoFrame)
+        self._policy_panel.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self._policy_body = QWidget()
+        self._policy_body.setObjectName("hakoniwaProfileAccordion")
+        policy_col = QVBoxLayout(self._policy_body)
+        policy_col.setContentsMargins(0, 0, 0, 0)
+        policy_col.setSpacing(0)
+        self._policy_header = QLabel("")
+        self._policy_header.setObjectName("hakoniwaIslandProfileBody")
+        self._policy_header.setWordWrap(True)
+        self._policy_header.setAlignment(
+            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
+        )
+        policy_col.addWidget(self._policy_header)
+        self._policy_group_labels: List[QLabel] = []
+        self._policy_buttons: Dict[str, QPushButton] = {}
+        for title, ids in POLICY_GROUPS:
+            group = QLabel(title)
+            group.setObjectName("hakoniwaProfileSectionTitle")
+            group.setAlignment(
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
             )
-            choice.clicked.connect(
-                lambda _checked=False, policy=key: self._choose_policy(policy)
-            )
-            self._policy_choice_buttons[key] = choice
-            choice_lay.addWidget(choice)
-        self._policy_choice_row.setVisible(False)
-        profile_lay.addWidget(self._policy_choice_row)
+            self._policy_group_labels.append(group)
+            policy_col.addWidget(group)
+            for pid in ids:
+                choice = QPushButton(POLICY_SPECS[pid]["label"])
+                choice.setObjectName("hakoniwaIslandProfileTab")
+                choice.setProperty("policyChoice", "true")
+                choice.setCheckable(True)
+                choice.setSizePolicy(
+                    QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
+                )
+                choice.clicked.connect(
+                    lambda _checked=False, policy=pid: self._choose_policy(policy)
+                )
+                self._policy_buttons[pid] = choice
+                policy_col.addWidget(choice)
+        policy_col.addStretch(1)
+        self._policy_panel.setWidget(self._policy_body)
+        self._policy_panel.setVisible(False)
+        profile_lay.addWidget(self._policy_panel, stretch=1)
 
         # Guestbook cluster (view + form) — closed by default; open via 留言.
         self.guestbook_frame = QFrame(self)
@@ -897,7 +931,8 @@ class HakoniwaMapHud(QWidget):
         spawn = _format_percent(state._monster_spawn_chance())
         funds_delta, food_delta, people_delta = state.shown_turn_balances()
         # 居民滿意度 is happiness_bonus. 綜合評分 is island_score.
-        # Tax, crime, power, rank, and the other new rows have no model number.
+        # 失業率、犯罪率、綠化率、軍事防衛力評級 sum 生效中 policies.
+        # Tax, power, coastal grade, intercept, damage, and rank stay 0.
         identity = [
             f"島名：{state.name}",
             f"玩家：{player}",
@@ -918,8 +953,8 @@ class HakoniwaMapHud(QWidget):
         residents = [
             f"居民滿意度：{state.happiness_bonus()}",
             "稅率：0",
-            "失業率：0",
-            "犯罪率：0",
+            f"失業率：{state.shown_unemployment()}",
+            f"犯罪率：{state.shown_crime()}",
         ]
         demands = [
             "住宅需求：0",
@@ -928,7 +963,7 @@ class HakoniwaMapHud(QWidget):
         ]
         environment = [
             "電力供需：0",
-            "綠化率：0",
+            f"綠化率：{state.shown_green()}",
             "淺灘及防波堤等級：0",
             f"空氣污染指數：{state.shown_air()}",
             f"水源污染指數：{state.shown_water()}",
@@ -936,7 +971,7 @@ class HakoniwaMapHud(QWidget):
             f"怪物出現率：{spawn}",
         ]
         military = [
-            "軍事防衛力評級：0",
+            f"軍事防衛力評級：{state.shown_defense()}",
             "發射飛彈數目：0",
             "擊退本島怪物數次：0",
             "擊退其他島怪物數次：0",
@@ -960,15 +995,7 @@ class HakoniwaMapHud(QWidget):
             ("評價", standing),
         ]
         self._profile_basic_text = ""
-        active = POLICY_LABELS.get(state.policy_key(), "未選擇")
-        self._profile_policy_text = (
-            f"目前：{active}\n"
-            "三選一，會存進這座島。再點一次已選的方針會取消。\n"
-            "重觀光：每回合資金收支 +10，空氣污染 +3\n"
-            "重環保：每回合資金收支 −5，空氣污染 −3，水源污染 −3，天災機會率 −3\n"
-            "重軍備：怪物出現率減半，防衛 +3\n"
-            f"防衛：{state.shown_defense()}"
-        )
+        self._sync_policy_panel(state)
         self._profile_secretary_text = (
             "秘書：島務助理\n"
             f"{state.secretary_line()}\n"
@@ -989,15 +1016,49 @@ class HakoniwaMapHud(QWidget):
         earned_lines.append(f"已達成 {len(state.achievements)}／{len(ACHIEVEMENTS)}")
         earned_lines.append(f"成就加成：每回合資金收支 +{extra}")
         self._profile_achievement_text = "\n".join(earned_lines)
-        active_policy = state.policy_key()
-        for key, btn in self._policy_choice_buttons.items():
-            btn.setChecked(key == active_policy)
         self.show_island_profile_page(self._profile_page)
+
+    def _sync_policy_panel(self, state: IslandState) -> None:
+        used = state.policy_slots_used()
+        slots = state.policy_slot_count()
+        self._policy_header.setText(
+            f"方針欄位 {used}／{slots}　"
+            f"更換費用 {POLICY_SWAP_COST} 資金，緩衝 {POLICY_LEAD_TURNS} 回合\n"
+            f"人口未滿{VILLAGE_TO_TOWN_POP}為1欄，"
+            f"滿{VILLAGE_TO_TOWN_POP}為3欄，滿{TOWN_TO_CITY_POP}為4欄"
+        )
+        full = used >= slots
+        for pid, btn in self._policy_buttons.items():
+            turns = state.policy_turns(pid)
+            label = str(POLICY_SPECS[pid]["label"])
+            if turns is None:
+                title = label
+            elif turns > 0:
+                title = f"{label}　實施中　剩餘 {turns} 回合"
+            else:
+                title = f"{label}　生效中"
+            btn.setText(f"{title}\n{policy_effect_text(pid)}")
+            btn.blockSignals(True)
+            btn.setChecked(turns is not None)
+            btn.setEnabled(turns is not None or not full)
+            btn.blockSignals(False)
+
+    def policy_page_text(self) -> str:
+        lines = [self._policy_header.text()]
+        for lab in self._policy_group_labels:
+            lines.append(lab.text())
+        for btn in self._policy_buttons.values():
+            lines.append(btn.text())
+        return "\n".join(lines)
 
     def _choose_policy(self, key: str) -> None:
         state = self.map.state
-        state.policy = "" if state.policy_key() == key else key
-        self.refresh_island_profile(state)
+        state.toggle_policy(key)
+        refresh = getattr(self, "_refresh_profile", None)
+        if refresh is not None:
+            refresh()
+        else:
+            self.refresh_island_profile(state)
         persist = getattr(self, "_persist_profile", None)
         if persist is not None:
             persist()
@@ -1010,19 +1071,20 @@ class HakoniwaMapHud(QWidget):
         btn = self._profile_tab_buttons[key]
         if not btn.isChecked():
             btn.setChecked(True)
-        self._policy_choice_row.setVisible(key == "policy")
         basic = key == "basic"
         self._profile_scroll.setVisible(basic)
-        self.island_profile_body.setVisible(not basic)
+        self._policy_panel.setVisible(key == "policy")
+        self.island_profile_body.setVisible(key not in ("basic", "policy"))
         if basic:
             self._profile_accordion.set_sections(self._profile_sections)
             self.island_profile_body.setText(self._profile_accordion.plain_text())
         elif key == "policy":
-            self.island_profile_body.setText(self._profile_policy_text)
+            self.island_profile_body.setText(self.policy_page_text())
         elif key == "secretary":
             self.island_profile_body.setText(self._profile_secretary_text)
         else:
             self.island_profile_body.setText(self._profile_achievement_text)
+        self._layout_overlays()
 
     def _show_notify_menu(self) -> None:
         """Popup: checkable 歷史記錄框 / 警報 / 方格資訊 under the bell."""
@@ -1219,7 +1281,10 @@ class HakoniwaMapHud(QWidget):
         # settings／island profile stay compact above the icon bar.
         build_w = min(460, max(320, w // 2))
         settings_w = min(280, max(200, w // 3))
-        profile_w = min(360, max(300, w // 3))
+        if getattr(self, "_profile_page", "") == "policy":
+            profile_w = min(480, max(440, w // 2))
+        else:
+            profile_w = min(360, max(300, w // 3))
         gap_above_bar = 6
         full_h = max(220, btn_y - gap_above_bar - margin)
 
@@ -1548,6 +1613,7 @@ class HakoniwaIslandDialog(QDialog):
         self.map.cell_clicked.connect(self._on_cell_clicked)
         self.hud = HakoniwaMapHud(self.map)
         self.hud._persist_profile = self._cache_local
+        self.hud._refresh_profile = self._refresh_ui
         self.stats = self.hud.stats
         self.sel_label = self.hud.sel_label
         self.log_view = self.hud.log_view

@@ -120,7 +120,7 @@ FUNDS_PER_FOOD_BUY = 8
 # Defense / missile-base interaction stubs (hex radius; catalog 周圍 2).
 DEFENSE_RADIUS = 2
 DEFENSE_SPAWN_FACTOR = 0.25   # spawn chance × this when any land near a defense
-MILITARY_SPAWN_FACTOR = 0.5   # 重軍備：怪物出現率減半（乘在既有機率上）
+MILITARY_SPAWN_FACTOR = 0.5   # 先發制人威嚇學說：怪物出現率減半
 DEFENSE_STOMP_SAVE_CHANCE = 0.65  # near defense: chance stomp skips building/terrain wipe
 
 # Placeable building kinds on 平地（港灣／造船所另須臨海）.
@@ -466,27 +466,164 @@ BUILDABLE = frozenset({"grass"})  # 平地 only（村／町／都市請先整地
 # 17 covers both migrations that previously each claimed this number:
 # legacy terrain village/town/city → grass + building (Cell.from_dict), and
 # island profile player_name / created_at (missing values default on load).
-# Policy and achievements are optional keys; missing values stay empty, so
-# this version does not move.
+# The policies list and achievements are optional keys; missing values stay
+# empty, so this version does not move.
 SAVE_VERSION = 17
 
-# 島嶼方針。空字串是未選，三個加成互斥，預設全 0。
-POLICY_TOURISM = "tourism"
-POLICY_GREEN = "green"
-POLICY_MILITARY = "military"
-ISLAND_POLICIES = frozenset({POLICY_TOURISM, POLICY_GREEN, POLICY_MILITARY})
-POLICY_LABELS = {
-    "": "未選擇",
-    POLICY_TOURISM: "重觀光",
-    POLICY_GREEN: "重環保",
-    POLICY_MILITARY: "重軍備",
+# Older saves stored one of these. The string is kept, and it no longer
+# changes any number. The live set is POLICY_SPECS.
+_LEGACY_POLICIES = frozenset({"tourism", "green", "military"})
+
+# Adopting or dropping a policy. The new one stays 實施中 for this many
+# turns, then becomes 生效中. A pending row still occupies a slot.
+POLICY_SWAP_COST = 20
+POLICY_LEAD_TURNS = 2
+
+# id → label and modifiers. Missing keys are 0. spawn is a multiplier on
+# the real monster chance (missing means ×1). Only 生效中 rows apply.
+POLICY_SPECS: Dict[str, Dict[str, Any]] = {
+    "ration": {
+        "label": "緊急糧食配給制",
+        "food": 10,
+        "people": -2,
+        "crime": 2,
+    },
+    "intensive": {
+        "label": "集約化農業扶持",
+        "food": 14,
+        "funds": -6,
+        "green": -2,
+        "water": 2,
+    },
+    "immigration": {
+        "label": "對外開放移民",
+        "people": 8,
+        "unemployment": 3,
+        "crime": 1,
+        "funds": 4,
+    },
+    "freeport": {
+        "label": "自由貿易免稅港",
+        "funds": 14,
+        "unemployment": -2,
+        "crime": 3,
+        "air": 2,
+    },
+    "industry": {
+        "label": "重工業衝刺指令",
+        "funds": 10,
+        "air": 5,
+        "water": 3,
+        "green": -4,
+        "unemployment": -3,
+    },
+    "austerity": {
+        "label": "財政緊縮政策",
+        "funds": 6,
+        "people": -4,
+        "unemployment": 4,
+        "crime": 1,
+    },
+    "green_isle": {
+        "label": "綠色島嶼宣言",
+        "air": -4,
+        "water": -4,
+        "green": 5,
+        "funds": -8,
+        "disaster": -2,
+    },
+    "seawall": {
+        "label": "全面海防加固令",
+        "disaster": -5,
+        "funds": -6,
+        "defense": 3,
+    },
+    "martial": {
+        "label": "防空戰備戒嚴",
+        "defense": 5,
+        "spawn": 0.7,
+        "people": -2,
+        "crime": -2,
+        "funds": -5,
+    },
+    "lure": {
+        "label": "怪獸誘捕與引流協議",
+        "spawn": 1.5,
+        "funds": 8,
+        "people": -3,
+        "defense": -1,
+    },
+    "deter": {
+        "label": "先發制人威嚇學說",
+        "spawn": MILITARY_SPAWN_FACTOR,
+        "defense": 4,
+        "funds": -10,
+        "disaster": 1,
+    },
 }
-# Display modifiers only. Not a pollution simulation.
-POLICY_INCOME = {POLICY_TOURISM: 10, POLICY_GREEN: -5, POLICY_MILITARY: 0}
-POLICY_AIR = {POLICY_TOURISM: 3, POLICY_GREEN: -3, POLICY_MILITARY: 0}
-POLICY_WATER = {POLICY_TOURISM: 0, POLICY_GREEN: -3, POLICY_MILITARY: 0}
-POLICY_DISASTER = {POLICY_TOURISM: 0, POLICY_GREEN: -3, POLICY_MILITARY: 0}
-POLICY_DEFENSE = {POLICY_TOURISM: 0, POLICY_GREEN: 0, POLICY_MILITARY: 3}
+POLICY_GROUPS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
+    ("糧食與民生方針", ("ration", "intensive", "immigration")),
+    ("工商與經濟方針", ("freeport", "industry", "austerity")),
+    ("環保與災害方針", ("green_isle", "seawall")),
+    ("國防與對外戰備方針", ("martial", "lure", "deter")),
+)
+POLICY_MODIFIER_LABELS: Tuple[Tuple[str, str], ...] = (
+    ("funds", "資金收支"),
+    ("food", "糧食收支"),
+    ("people", "人口變化"),
+    ("air", "空氣污染"),
+    ("water", "水源污染"),
+    ("disaster", "天災機會率"),
+    ("unemployment", "失業率"),
+    ("crime", "犯罪率"),
+    ("green", "綠化率"),
+    ("defense", "防衛評級"),
+)
+
+
+def policy_effect_text(pid: str) -> str:
+    """One line of the numbers this policy moves once it is 生效中."""
+    spec = POLICY_SPECS[pid]
+    parts: List[str] = []
+    for key, label in POLICY_MODIFIER_LABELS:
+        value = int(spec.get(key, 0))
+        if not value:
+            continue
+        sign = f"+{value}" if value > 0 else str(value)
+        parts.append(f"{label} {sign}")
+    spawn = spec.get("spawn")
+    if spawn is not None and float(spawn) != 1.0:
+        parts.append(f"怪物出現率 ×{float(spawn):g}")
+    return "，".join(parts)
+
+
+def _parse_policy_orders(raw: Any) -> List[Tuple[str, int]]:
+    """Saved rows are {id, turns}. Unknown ids drop out. Turns stay in 0..lead."""
+    out: List[Tuple[str, int]] = []
+    if not isinstance(raw, list):
+        return out
+    seen = set()
+    for item in raw:
+        if isinstance(item, dict):
+            pid = str(item.get("id") or "")
+            turns = item.get("turns", 0)
+        elif isinstance(item, (list, tuple)) and len(item) >= 2:
+            pid = str(item[0])
+            turns = item[1]
+        else:
+            continue
+        if pid not in POLICY_SPECS or pid in seen:
+            continue
+        try:
+            turns_i = int(turns)
+        except (TypeError, ValueError):
+            turns_i = 0
+        turns_i = max(0, min(POLICY_LEAD_TURNS, turns_i))
+        out.append((pid, turns_i))
+        seen.add(pid)
+    return out
+
+
 SECRETARY_INCOME = 2  # the one starter secretary's bonus
 # id, label, one-time score. 溫泉開村 also unlocks placing 溫泉村.
 ACHIEVEMENTS = (
@@ -833,7 +970,10 @@ class IslandState:
     name: str = "箱庭島"
     player_name: str = "島主"  # 本島玩家／島主顯示名
     created_at: str = ""  # 建島時間（UTC ISO）；空則於 __post_init__ 填入
-    policy: str = ""  # 島嶼方針："" | tourism | green | military
+    policy: str = ""  # legacy single choice; effects ignore it
+    # (id, turns left). 0 means 生效中. A row with turns left is 實施中 and
+    # still occupies a slot.
+    policy_orders: List[Tuple[str, int]] = field(default_factory=list)
     achievements: List[str] = field(default_factory=list)
     cells: List[List[Cell]] = field(default_factory=list)
     log: List[str] = field(default_factory=list)
@@ -1188,12 +1328,91 @@ class IslandState:
         return False, reason
 
     def policy_key(self) -> str:
-        return self.policy if self.policy in ISLAND_POLICIES else ""
+        """Legacy single choice. Unknown values read as empty. Effects ignore it."""
+        return self.policy if self.policy in _LEGACY_POLICIES else ""
+
+    def policy_slot_count(self) -> int:
+        """Slots follow population: 1, then 3 at 町, then 4 at 都市.
+
+        A smaller population later does not drop policies already in force.
+        """
+        if self.population >= TOWN_TO_CITY_POP:
+            return 4
+        if self.population >= VILLAGE_TO_TOWN_POP:
+            return 3
+        return 1
+
+    def policy_slots_used(self) -> int:
+        return len(self.policy_orders)
+
+    def policy_turns(self, pid: str) -> Optional[int]:
+        for key, turns in self.policy_orders:
+            if key == pid:
+                return turns
+        return None
+
+    def active_policy_ids(self) -> List[str]:
+        """生效中 only. 實施中 rows occupy a slot and do not move numbers."""
+        return [
+            pid
+            for pid, turns in self.policy_orders
+            if turns <= 0 and pid in POLICY_SPECS
+        ]
+
+    def policy_modifier_sum(self, key: str) -> int:
+        total = 0
+        for pid in self.active_policy_ids():
+            total += int(POLICY_SPECS[pid].get(key, 0))
+        return total
+
+    def policy_spawn_factor(self) -> float:
+        factor = 1.0
+        for pid in self.active_policy_ids():
+            factor *= float(POLICY_SPECS[pid].get("spawn", 1.0))
+        return factor
+
+    def toggle_policy(self, pid: str) -> bool:
+        """Adopt or drop one policy.
+
+        Either change costs POLICY_SWAP_COST and does nothing when funds are
+        short. Adopting into a full slot list also does nothing. A new row
+        starts 實施中 and counts toward the slot immediately.
+        """
+        if pid not in POLICY_SPECS or self.funds < POLICY_SWAP_COST:
+            return False
+        kept = [item for item in self.policy_orders if item[0] != pid]
+        if len(kept) == len(self.policy_orders):
+            if len(self.policy_orders) >= self.policy_slot_count():
+                return False
+            self.funds -= POLICY_SWAP_COST
+            self.policy_orders.append((pid, POLICY_LEAD_TURNS))
+            return True
+        self.funds -= POLICY_SWAP_COST
+        self.policy_orders = kept
+        return True
+
+    def advance_policies(self) -> List[str]:
+        """Count 實施中 down by one turn. Reaching 0 makes the row 生效中."""
+        notes: List[str] = []
+        updated: List[Tuple[str, int]] = []
+        for pid, turns in self.policy_orders:
+            if pid not in POLICY_SPECS:
+                continue
+            if turns > 0:
+                turns -= 1
+                if turns == 0:
+                    notes.append(f"方針生效：{POLICY_SPECS[pid]['label']}")
+            updated.append((pid, turns))
+        self.policy_orders = updated
+        return notes
 
     def shown_income(self) -> int:
         """Policy, secretary, and achievement modifiers for 每回合資金收支."""
-        policy = POLICY_INCOME.get(self.policy_key(), 0)
-        return policy + SECRETARY_INCOME + ACHIEVEMENT_INCOME_EACH * len(self.achievements)
+        return (
+            self.policy_modifier_sum("funds")
+            + SECRETARY_INCOME
+            + ACHIEVEMENT_INCOME_EACH * len(self.achievements)
+        )
 
     def shown_turn_balances(self) -> Tuple[int, int, int]:
         """Signed 資金 / 糧食 / 人口 for the next turn.
@@ -1259,20 +1478,33 @@ class IslandState:
         else:
             food = -self.food
             people = -min(self.population, max(10, self.population // 10))
+        food += self.policy_modifier_sum("food")
+        people += self.policy_modifier_sum("people")
+        if people > 0:
+            people = min(max(0, 20000 - self.population), people)
         return funds, food, people
 
     def shown_air(self) -> int:
-        return POLICY_AIR.get(self.policy_key(), 0)
+        return self.policy_modifier_sum("air")
 
     def shown_water(self) -> int:
-        return POLICY_WATER.get(self.policy_key(), 0)
+        return self.policy_modifier_sum("water")
 
     def shown_disaster(self) -> int:
-        return POLICY_DISASTER.get(self.policy_key(), 0)
+        return self.policy_modifier_sum("disaster")
 
     def shown_defense(self) -> int:
-        """重軍備 raises this. It is a shown modifier, not a new combat stat."""
-        return POLICY_DEFENSE.get(self.policy_key(), 0)
+        """Active 防衛評級 modifiers. Not a separate combat stat."""
+        return self.policy_modifier_sum("defense")
+
+    def shown_unemployment(self) -> int:
+        return self.policy_modifier_sum("unemployment")
+
+    def shown_crime(self) -> int:
+        return self.policy_modifier_sum("crime")
+
+    def shown_green(self) -> int:
+        return self.policy_modifier_sum("green")
 
     def shown_housing(self) -> int:
         """住宅需求 stays 0. No policy moves it."""
@@ -1851,10 +2083,9 @@ class IslandState:
         # Any 防衛設施 covering land → lower island spawn pressure (simple).
         if self.defense_positions():
             chance *= DEFENSE_SPAWN_FACTOR
-        # 重軍備 lowers the real spawn chance. Other policies do not.
-        if self.policy_key() == POLICY_MILITARY:
-            chance *= MILITARY_SPAWN_FACTOR
-        return chance
+        # 生效中 policies multiply the real chance. 實施中 does not.
+        chance *= self.policy_spawn_factor()
+        return min(MONSTER_MAX_CHANCE, chance)
 
     def _spawn_candidate_cells(self) -> List[Coord]:
         """Land cells for monster spawn; prefer cells not under defense cover."""
@@ -2437,6 +2668,7 @@ class IslandState:
             + (f"（{'／'.join(score_bits)}）" if score_bits else "")
         )
         notes.extend(self.collect_achievements())
+        notes.extend(self.advance_policies())
 
         self.turn += 1
         for n in notes:
@@ -2498,6 +2730,9 @@ class IslandState:
             "attract_pending": bool(self.attract_pending),
             "satellite_active": bool(self.satellite_active),
             "policy": self.policy_key(),
+            "policies": [
+                {"id": pid, "turns": int(turns)} for pid, turns in self.policy_orders
+            ],
             "achievements": list(self.achievements),
             "cells": [[c.to_dict() for c in row] for row in self.cells],
             "log": list(self.log[-40:]),
@@ -2529,8 +2764,9 @@ class IslandState:
         raw_player = data.get("player_name") or data.get("owner_name") or ""
         raw_created = data.get("created_at") or data.get("created") or ""
         raw_policy = str(data.get("policy") or "")
-        if raw_policy not in ISLAND_POLICIES:
+        if raw_policy not in _LEGACY_POLICIES:
             raw_policy = ""
+        raw_orders = _parse_policy_orders(data.get("policies"))
         raw_achievements = [
             str(item)
             for item in (data.get("achievements") or [])
@@ -2553,6 +2789,7 @@ class IslandState:
             player_name=str(raw_player).strip() or "島主",
             created_at=str(raw_created).strip(),
             policy=raw_policy,
+            policy_orders=raw_orders,
             achievements=raw_achievements,
             cells=parsed if ok else [],
             log=[str(x) for x in (data.get("log") or [])][-80:],
