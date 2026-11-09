@@ -214,6 +214,15 @@ SCORE_PER_TOWN = 80
 SCORE_PER_CITY = 150
 SCORE_FUNDS_DIV = 20
 SCORE_FOOD_DIV = 10
+# 綜合評分 from 島嶼總資產. No separate asset total is stored, so the
+# number is island_score(). Floors are highest first; below the last is E.
+ASSET_GRADE_FLOORS = (
+    (10000, "S"),
+    (4000, "A"),
+    (1500, "B"),
+    (600, "C"),
+    (200, "D"),
+)
 # Soft happiness／安穩：每座紀念碑／神社／公園餵飽時人口成長加成（輕量）.
 HAPPINESS_POP_PER_MONUMENT = 5
 HAPPINESS_POP_PER_SHRINE = 8
@@ -489,6 +498,15 @@ ACHIEVEMENTS = (
 ACHIEVEMENT_INCOME_EACH = 1
 ACHIEVEMENT_IDS = frozenset(item[0] for item in ACHIEVEMENTS)
 _ACHIEVEMENT_BY_ID = {item[0]: item for item in ACHIEVEMENTS}
+
+
+def asset_grade(assets: int) -> str:
+    """Letter grade for an asset total. S is highest."""
+    value = int(assets)
+    for floor, letter in ASSET_GRADE_FLOORS:
+        if value >= floor:
+            return letter
+    return "E"
 
 
 def timber_funds(trees: int) -> int:

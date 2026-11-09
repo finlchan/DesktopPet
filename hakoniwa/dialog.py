@@ -73,6 +73,7 @@ from .timeline_draw import TimelineDrawPanel, TimelineNodeData
 
 from .demos import island_summary, local_demo_islands
 from .model import (
+    asset_grade,
     BANK_TRANSFER_LOT,
     BUILDABLE,
     BUILDINGS,
@@ -942,9 +943,12 @@ class HakoniwaMapHud(QWidget):
             "飛彈自動迎擊成功率：0",
             "被攻擊／受損次數：0",
         ]
+        # No separate 總資產 is stored. The number is island_score().
+        assets = state.island_score()
         standing = [
-            f"島嶼總資產／綜合評分：{state.island_score()}",
+            f"島嶼總資產：{assets}",
             "伺服器排名：0",
+            f"綜合評分：{asset_grade(assets)}",
         ]
         self._profile_sections = [
             ("島嶼身分", identity),

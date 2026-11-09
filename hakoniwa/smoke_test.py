@@ -2945,8 +2945,9 @@ def test_dialog_import_offscreen():
         "飛彈自動迎擊成功率：0",
         "軍事防衛力評級：0",
         "被攻擊／受損次數：0",
-        f"島嶼總資產／綜合評分：{dlg.state.island_score()}",
+        f"島嶼總資產：{dlg.state.island_score()}",
         "伺服器排名：0",
+        "綜合評分：D",
         "住宅需求：0",
         "商店需求：0",
         "工廠需求：0",
@@ -2958,6 +2959,8 @@ def test_dialog_import_offscreen():
         "擊退其他島怪物數次：0",
     ):
         assert row in basic, row
+    assert "島嶼總資產／綜合評分" not in basic
+    assert basic.index("島嶼總資產：") < basic.index("伺服器排名：0") < basic.index("綜合評分：D")
     titles = ("島嶼身分", "資源收益", "居民", "需求", "環境", "軍事", "評價")
     for earlier, later in zip(titles, titles[1:]):
         assert basic.index(earlier) < basic.index(later), (earlier, later)
