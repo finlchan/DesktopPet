@@ -2935,6 +2935,18 @@ def test_dialog_import_offscreen():
         "每回合資金收支：+2",
         "每回合糧食收支：-20",
         "每回合人口變化：+0",
+        "居民滿意度：0",
+        "稅率：0",
+        "失業率：0",
+        "犯罪率：0",
+        "電力供需：0",
+        "綠化率：0",
+        "淺灘及防波堤等級：0",
+        "飛彈自動迎擊成功率：0",
+        "軍事防衛力評級：0",
+        "被攻擊／受損次數：0",
+        f"島嶼總資產／綜合評分：{dlg.state.island_score()}",
+        "伺服器排名：0",
         "住宅需求：0",
         "商店需求：0",
         "工廠需求：0",
@@ -2946,6 +2958,11 @@ def test_dialog_import_offscreen():
         "擊退其他島怪物數次：0",
     ):
         assert row in basic, row
+    assert basic.startswith("────────\n島名：")
+    assert basic.index("糧食：") < basic.index("每回合資金收支")
+    assert basic.index("每回合人口變化") < basic.index("居民滿意度")
+    assert basic.index("伺服器排名：0") < basic.index("住宅需求：0")
+    assert basic.strip().endswith("────────")
     from hakoniwa.dialog import _format_percent
 
     assert f"怪物出現率：{_format_percent(dlg.state._monster_spawn_chance())}" in basic

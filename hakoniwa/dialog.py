@@ -254,6 +254,7 @@ QLabel#hakoniwaIslandProfileBody {{
     color: {_HUD_TEXT_DIM};
     background: transparent;
     border: none;
+    font-size: 8pt;
 }}
 QLineEdit#hakoniwaHudInput {{
     background-color: rgba(14, 28, 32, 180);
@@ -644,7 +645,9 @@ class HakoniwaMapHud(QWidget):
         player = str(getattr(state, "player_name", "") or "").strip() or "—"
         spawn = _format_percent(state._monster_spawn_chance())
         funds_delta, food_delta, people_delta = state.shown_turn_balances()
-        lines = [
+        # 居民滿意度 is happiness_bonus. 綜合評分 is island_score.
+        # Tax, crime, power, rank, and the other new rows have no model number.
+        identity = [
             f"島名：{state.name}",
             f"玩家：{player}",
             f"建島：{created}",
@@ -655,9 +658,27 @@ class HakoniwaMapHud(QWidget):
             f"人口：{state.population}",
             f"資金：{state.funds}",
             f"糧食：{state.food}",
+        ]
+        balances = [
             f"每回合資金收支：{_format_signed(funds_delta)}",
             f"每回合糧食收支：{_format_signed(food_delta)}",
             f"每回合人口變化：{_format_signed(people_delta)}",
+        ]
+        survey = [
+            f"居民滿意度：{state.happiness_bonus()}",
+            "稅率：0",
+            "失業率：0",
+            "犯罪率：0",
+            "電力供需：0",
+            "綠化率：0",
+            "淺灘及防波堤等級：0",
+            "飛彈自動迎擊成功率：0",
+            "軍事防衛力評級：0",
+            "被攻擊／受損次數：0",
+            f"島嶼總資產／綜合評分：{state.island_score()}",
+            "伺服器排名：0",
+        ]
+        rates = [
             "住宅需求：0",
             "商店需求：0",
             "工廠需求：0",
@@ -669,6 +690,12 @@ class HakoniwaMapHud(QWidget):
             "擊退本島怪物數次：0",
             "擊退其他島怪物數次：0",
         ]
+        rule = "────────"
+        blocks = (identity, balances, survey, rates)
+        lines = [rule]
+        for block in blocks:
+            lines.extend(block)
+            lines.append(rule)
         self._profile_basic_text = "\n".join(lines)
         active = POLICY_LABELS.get(state.policy_key(), "未選擇")
         self._profile_policy_text = (
@@ -938,7 +965,7 @@ class HakoniwaMapHud(QWidget):
                 settings_w, settings_h,
             )
         if not self.island_profile.isHidden():
-            profile_h = min(520, full_h)
+            profile_h = full_h
             self.island_profile.setGeometry(
                 margin, max(margin, btn_y - gap_above_bar - profile_h),
                 profile_w, profile_h,
