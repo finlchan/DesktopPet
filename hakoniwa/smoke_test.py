@@ -372,6 +372,20 @@ def test_catalog_costs():
     assert scaled_yield(10, 0, 1000) == 0
 
 
+def _alice_funds(gained: int) -> int:
+    """Alice takes 8% of a positive yield, then her 15 upkeep."""
+    bonus = int(gained) * 8 // 100 if gained > 0 else 0
+    return int(gained) + bonus - 15
+
+
+def _guided_food(produced: int) -> int:
+    """農務指導：10% of production, and at least +2."""
+    bonus = int(produced) * 10 // 100
+    if bonus < 2:
+        bonus = 2
+    return int(produced) + bonus
+
+
 def test_new_island_and_loop():
     state = IslandState.new_game()
     assert state.land_count() == 7
@@ -493,8 +507,8 @@ def test_new_island_and_loop():
     # Food rose by farm yield then fell by need; net should reflect production.
     assert farms == 1
     # pop=100 fills 1 farm (100 slots) → full food yield.
-    assert state.food == food_before + farms * FOOD_PER_FARM - 20  # pop < 500 → min need
-    assert state.funds == funds_before + factories * FUNDS_PER_FACTORY
+    assert state.food == food_before + _guided_food(farms * FOOD_PER_FARM) - 20
+    assert state.funds == funds_before + _alice_funds(factories * FUNDS_PER_FACTORY)
     assert state.food > 0
 
 
@@ -970,15 +984,15 @@ def test_mountain_quarry_labor():
         funds_before = state.funds
         notes = state.next_turn()
         assert any("勞動：" in n and "採掘場 0/" in n for n in notes)
-        assert state.food == food_before + FOOD_PER_FARM - 20  # pop < 500 → min need
-        assert state.funds == funds_before  # quarry/factory unstaffed
+        assert state.food == food_before + _guided_food(FOOD_PER_FARM) - 20
+        assert state.funds == funds_before + _alice_funds(0)
 
         # With spare labor after farm, quarry produces full funds.
         state.population = LABOR_PER_FARM + LABOR_PER_QUARRY  # 600
         funds_before = state.funds
         notes = state.next_turn()
         assert any("採掘場 500/500" in n for n in notes)
-        assert state.funds == funds_before + FUNDS_PER_QUARRY
+        assert state.funds == funds_before + _alice_funds(FUNDS_PER_QUARRY)
     finally:
         (
             model_mod.FIRE_BASE_CHANCE,
@@ -1119,7 +1133,7 @@ def test_breakwater_oilfield_tsunami():
         funds_before = state.funds
         notes = state.next_turn()
         assert any(f"海底油田×{oils}" in n for n in notes)
-        assert state.funds == funds_before + oils * FUNDS_PER_OILFIELD
+        assert state.funds == funds_before + _alice_funds(oils * FUNDS_PER_OILFIELD)
     finally:
         (
             model_mod.FIRE_BASE_CHANCE,
@@ -1575,7 +1589,7 @@ def test_airport_and_tourism_buffs():
         notes = state.next_turn()
         assert any("觀光收入" in n for n in notes)
         assert state.airport_count() == 1
-        assert state.funds == funds_before_turn + expected_tour
+        assert state.funds == funds_before_turn + _alice_funds(expected_tour)
 
         # Attract + airport inbound extra.
         state.funds = COST_ATTRACT + 30
@@ -1823,7 +1837,7 @@ def test_hotel_casino_tourism():
         assert "賭場" in " ".join(notes) or any("賭場" in n for n in notes)
         assert state.hotel_count() == 1
         assert state.casino_count() == 1
-        assert state.funds == funds_before_turn + expected_tour
+        assert state.funds == funds_before_turn + _alice_funds(expected_tour)
     finally:
         model_mod.FIRE_BASE_CHANCE = old_fire
         model_mod.TYPHOON_BASE_CHANCE = old_ty
@@ -2066,13 +2080,13 @@ def test_aquafarm_amusement_power():
         assert "工場供電" in joined  # factory funds × (1 + POWER_FACTORY_BONUS)
         assert "遊樂園×1" in joined and "觀光收入" in joined
         # Food: 農場 0 + 養殖場 30；人口 5000 消耗 (5000//500)×100 = 1000.
-        assert state.food == food_before + FOOD_PER_AQUAFARM - 1000
+        assert state.food == food_before + _guided_food(FOOD_PER_AQUAFARM) - 1000
         # Funds: 工場滿產 10 × 1.2 = 12、發電廠 15、遊樂園觀光（依人口）.
         expected_tour = tourism_funds(0, 5000, amusement_parks=1)
         assert expected_tour == (
             AMUSEMENT_TOURISM_BASE + 50 * AMUSEMENT_TOURISM_PER_100_POP
         )
-        assert state.funds == funds_before + (
+        assert state.funds == funds_before + _alice_funds(
             int(FUNDS_PER_FACTORY * (1 + POWER_FACTORY_BONUS))
             + FUNDS_PER_POWER_PLANT
             + expected_tour
@@ -2932,19 +2946,65 @@ def test_dialog_import_offscreen():
     assert dlg.hud._profile_page == "basic"
     basic = dlg.hud.island_profile_body.text()
     for row in (
-        "每回合收入：0",
-        "每回合支出：0",
+        "每回合資金收支：-15",
+        "每回合糧食收支：-18",
+        "每回合人口變化：+0",
+        "居民滿意度：0",
+        "稅率：0",
+        "失業率：0",
+        "犯罪率：0",
+        "電力供需：0",
+        "綠化率：0",
+        "淺灘及防波堤等級：0",
+        "飛彈自動迎擊成功率：0",
+        "軍事防衛力評級：0",
+        "被攻擊／受損次數：0",
+        f"島嶼總資產：{dlg.state.island_score()}",
+        "伺服器排名：0",
+        "綜合評分：D",
         "住宅需求：0",
         "商店需求：0",
         "工廠需求：0",
         "空氣污染指數：0",
         "水源污染指數：0",
         "天災機會率：0",
-        "發射飛機數目：0",
+        "發射飛彈數目：0",
         "擊退本島怪物數次：0",
         "擊退其他島怪物數次：0",
     ):
         assert row in basic, row
+    assert "島嶼總資產／綜合評分" not in basic
+    assert basic.index("島嶼總資產：") < basic.index("伺服器排名：0") < basic.index("綜合評分：D")
+    titles = ("島嶼身分", "資源收益", "居民", "需求", "環境", "軍事", "評價")
+    for earlier, later in zip(titles, titles[1:]):
+        assert basic.index(earlier) < basic.index(later), (earlier, later)
+    assert dlg.hud._profile_accordion.open_title() == "島嶼身分"
+    assert dlg.hud._profile_accordion.open_count() == 1
+    dlg.hud._profile_accordion.toggle_title("資源收益")
+    assert dlg.hud._profile_accordion.open_title() == "資源收益"
+    assert dlg.hud._profile_accordion.open_count() == 1
+    opened = dlg.hud._profile_accordion.section("資源收益")
+    from PySide6.QtCore import QEasingCurve
+
+    assert opened._height_anim.duration() == 450
+    assert opened._angle_anim.duration() == 450
+    assert opened._height_anim.easingCurve().type() == QEasingCurve.Type.InOutCubic
+    assert opened._angle_anim.easingCurve().type() == QEasingCurve.Type.InOutCubic
+    assert basic.index("資源收益") < basic.index("每回合資金收支")
+    assert basic.index("糧食：") < basic.index("每回合資金收支")
+    military_rows = (
+        "軍事防衛力評級：0",
+        "發射飛彈數目：0",
+        "擊退本島怪物數次：0",
+        "擊退其他島怪物數次：0",
+        "飛彈自動迎擊成功率：0",
+        "被攻擊／受損次數：0",
+    )
+    assert basic.index("軍事") < basic.index(military_rows[0])
+    for row in military_rows:
+        assert basic.count(row) == 1
+    for earlier, later in zip(military_rows, military_rows[1:]):
+        assert basic.index(earlier) < basic.index(later)
     from hakoniwa.dialog import _format_percent
 
     assert f"怪物出現率：{_format_percent(dlg.state._monster_spawn_chance())}" in basic
@@ -2962,11 +3022,38 @@ def test_dialog_import_offscreen():
     dlg.hud.refresh_island_profile(dlg.state)
     dlg.hud.show_island_profile_page("policy")
     assert dlg.hud._profile_tab_buttons["policy"].isChecked()
-    assert dlg.hud.island_profile_body.text() == "尚未決定。"
+    page = dlg.hud.policy_page_text()
+    for title in (
+        "糧食與民生方針",
+        "工商與經濟方針",
+        "環保與災害方針",
+        "國防與對外戰備方針",
+    ):
+        assert title in page
+    assert "緊急糧食配給制" in page
+    assert "更換費用 20" in page
+    assert "緩衝 2 回合" in page
+    assert "重觀光" not in page
+    assert "重軍備" not in page
+    dlg.state.policy_orders = [("ration", 2)]
+    dlg.hud.refresh_island_profile(dlg.state)
+    page = dlg.hud.policy_page_text()
+    assert "實施中" in page
+    assert "剩餘 2 回合" in page
+    assert "1／1" in page
+    assert dlg.hud._policy_buttons["ration"].isChecked()
+    assert not dlg.hud._policy_buttons["intensive"].isEnabled()
+    assert not dlg.hud._policy_buttons["deter"].isEnabled()
+    dlg.state.policy_orders = []
+    dlg.hud.refresh_island_profile(dlg.state)
     dlg.hud.show_island_profile_page("secretary")
-    assert dlg.hud.island_profile_body.text() == "尚未決定。"
+    assert "艾莉絲" in dlg.hud.island_profile_body.text()
+    assert "治安良好" in dlg.hud.island_profile_body.text()
+    assert "執行建議政策" in dlg.hud.island_profile_body.text()
+    assert "人才市場／行政總署人才招募" in dlg.hud.island_profile_body.text()
     dlg.hud.show_island_profile_page("achievements")
-    assert dlg.hud.island_profile_body.text() == "尚未決定。"
+    assert "初村：未達成" in dlg.hud.island_profile_body.text()
+    assert "溫泉開村：未達成" in dlg.hud.island_profile_body.text()
     dlg.hud.show_island_profile_page("basic")
     assert "玩家" in dlg.hud.island_profile_body.text()
     assert "住宅需求：0" in dlg.hud.island_profile_body.text()
@@ -4530,6 +4617,272 @@ def test_odometer_status_seen_skip():
         assert seen2 is not None and seen2["turn"] != state.turn
 
 
+def test_info_policy_secretary_achievements():
+    """Eleven policies, one secretary, and four achievements. Save stays 17."""
+    from hakoniwa.model import (
+        ACHIEVEMENT_INCOME_EACH,
+        MILITARY_SPAWN_FACTOR,
+        POLICY_GROUPS,
+        POLICY_LEAD_TURNS,
+        POLICY_SPECS,
+        POLICY_SWAP_COST,
+        SAVE_VERSION,
+        SECRETARY_INCOME,
+        START_FUNDS,
+        Secretary,
+        TOWN_TO_CITY_POP,
+        VILLAGE_TO_TOWN_POP,
+        policy_effect_text,
+    )
+
+    assert SAVE_VERSION == 17
+    state = IslandState.new_game()
+    assert state.policy == ""
+    assert state.policy_orders == []
+    assert state.policy_slot_count() == 1
+    assert state.achievements == []
+    assert state.shown_income() == SECRETARY_INCOME
+    assert state.shown_turn_balances() == (SECRETARY_INCOME, -18, 0)
+    assert state.shown_air() == 0
+    assert state.shown_water() == 0
+    assert state.shown_disaster() == 0
+    assert state.shown_defense() == 0
+    assert state.shown_unemployment() == 0
+    assert state.shown_crime() == 0
+    assert state.shown_green() == 0
+    assert "治安良好" in state.secretary_line()
+    state.food = 40
+    assert "緊急糧食配給制" in state.secretary_line()
+    state.food = 500
+
+    ids = [pid for _title, group in POLICY_GROUPS for pid in group]
+    assert ids == [
+        "ration",
+        "intensive",
+        "immigration",
+        "freeport",
+        "industry",
+        "austerity",
+        "green_isle",
+        "seawall",
+        "martial",
+        "lure",
+        "deter",
+    ]
+    assert [title for title, _group in POLICY_GROUPS] == [
+        "糧食與民生方針",
+        "工商與經濟方針",
+        "環保與災害方針",
+        "國防與對外戰備方針",
+    ]
+    sigs = []
+    for pid in ids:
+        spec = POLICY_SPECS[pid]
+        moved = [
+            (key, spec[key])
+            for key in spec
+            if key != "label" and spec[key] not in (0, 1, 1.0)
+        ]
+        assert moved, pid
+        assert policy_effect_text(pid)
+        sigs.append(tuple(sorted(moved)))
+    assert len(set(sigs)) == len(ids)
+
+    assert state.toggle_policy("ration") is True
+    assert state.funds == START_FUNDS - POLICY_SWAP_COST
+    assert state.policy_orders == [("ration", POLICY_LEAD_TURNS)]
+    assert state.shown_turn_balances() == (SECRETARY_INCOME, -18, 0)
+    assert state.shown_crime() == 0
+    assert state.toggle_policy("intensive") is False
+    assert state.funds == START_FUNDS - POLICY_SWAP_COST
+    assert state.policy_orders == [("ration", POLICY_LEAD_TURNS)]
+    assert state.advance_policies() == []
+    assert state.policy_orders == [("ration", 1)]
+    assert state.advance_policies() == ["方針生效：緊急糧食配給制"]
+    assert state.policy_orders == [("ration", 0)]
+    assert state.shown_crime() == 2
+    assert state.shown_turn_balances() == (SECRETARY_INCOME, -8, -2)
+    state.population = VILLAGE_TO_TOWN_POP - 1
+    assert state.policy_slot_count() == 1
+    state.population = VILLAGE_TO_TOWN_POP
+    assert state.policy_slot_count() == 3
+    state.population = TOWN_TO_CITY_POP
+    assert state.policy_slot_count() == 4
+    assert state.toggle_policy("freeport") is True
+    state.policy_orders = [("ration", 0), ("freeport", 0)]
+    assert state.shown_crime() == 5
+    assert state.policy_modifier_sum("funds") == 14
+
+    state.policy = "tourism"
+    assert state.policy_key() == "tourism"
+    assert state.shown_air() == 2
+    state.policy_orders = []
+    state.policy = "tourism"
+    assert state.shown_air() == 0
+    assert state.shown_income() == SECRETARY_INCOME
+
+    state.population = 400
+    state.turn = 6
+    state.policy_orders = [("deter", POLICY_LEAD_TURNS)]
+    bare = state._monster_spawn_chance()
+    assert bare > 0
+    state.policy_orders = []
+    assert state._monster_spawn_chance() == bare
+    state.policy_orders = [("deter", 0)]
+    assert state._monster_spawn_chance() == bare * MILITARY_SPAWN_FACTOR
+    state.policy_orders = [("lure", 0)]
+    assert state._monster_spawn_chance() == bare * 1.5
+    state.policy_orders = [("martial", 0)]
+    assert abs(state._monster_spawn_chance() - bare * 0.7) < 1e-9
+
+    state.funds = POLICY_SWAP_COST - 1
+    state.policy_orders = []
+    assert state.toggle_policy("ration") is False
+    state.funds = POLICY_SWAP_COST
+    assert state.toggle_policy("ration") is True
+    assert state.funds == 0
+    assert state.toggle_policy("ration") is False
+    state.funds = POLICY_SWAP_COST
+    assert state.toggle_policy("ration") is True
+    assert state.policy_orders == []
+
+    state.policy = ""
+    state.policy_orders = []
+    state.population = 100
+    state.turn = 1
+    state.funds = START_FUNDS
+    grass = next(
+        (i, j)
+        for i in range(state.size)
+        for j in range(state.size)
+        if state.cell(i, j).terrain == "grass"
+    )
+    assert state.place_building(*grass, "onsen_village") != "ok"
+    state.cell(*grass).building = "village"
+    before = state.island_score()
+    notes = state.collect_achievements()
+    assert any("初村" in n for n in notes)
+    assert state.island_score() == before + 40
+    assert state.place_building(*grass, "onsen_village") != "ok"
+    state.cell(*grass).building = "onsen_village"
+    state.collect_achievements()
+    assert "onsen_village" in state.achievements
+    other = next(
+        (i, j)
+        for i in range(state.size)
+        for j in range(state.size)
+        if state.cell(i, j).terrain == "grass" and state.cell(i, j).building is None
+    )
+    assert state.place_building(*other, "onsen_village") == "ok"
+    state.population = VILLAGE_TO_TOWN_POP
+    state.turn = 10
+    state.collect_achievements()
+    assert set(state.achievements) == {
+        "first_village",
+        "pop_town",
+        "onsen_village",
+        "tenth_turn",
+    }
+    assert state.shown_income() == SECRETARY_INCOME + 4 * ACHIEVEMENT_INCOME_EACH
+    state.policy_orders = [("seawall", 0)]
+    blob = state.to_dict()
+    assert blob["version"] == 17
+    assert blob["policy"] == ""
+    assert blob["policies"] == [{"id": "seawall", "turns": 0}]
+    loaded = IslandState.from_dict(blob)
+    assert loaded.achievements == state.achievements
+    assert loaded.policy_orders == [("seawall", 0)]
+    assert loaded.shown_defense() == 3
+    assert loaded.shown_disaster() == -5
+    loaded.policy = "nope"
+    assert loaded.policy_key() == ""
+    clamped = IslandState.from_dict(
+        {
+            **blob,
+            "policies": [
+                {"id": "ration", "turns": 9},
+                {"id": "nope", "turns": 0},
+            ],
+        }
+    )
+    assert clamped.policy_orders == [("ration", POLICY_LEAD_TURNS)]
+    old = state.to_dict()
+    old["policy"] = "tourism"
+    old.pop("policies")
+    legacy = IslandState.from_dict(old)
+    assert legacy.policy == "tourism"
+    assert legacy.policy_orders == []
+    assert legacy.shown_air() == 0
+    assert legacy.shown_income() == SECRETARY_INCOME + 4 * ACHIEVEMENT_INCOME_EACH
+    missing = state.to_dict()
+    del missing["policy"]
+    del missing["policies"]
+    del missing["achievements"]
+    bare_load = IslandState.from_dict(missing)
+    assert bare_load.policy == ""
+    assert bare_load.policy_orders == []
+    assert bare_load.achievements == []
+    assert bare_load.active_secretary() is not None
+    assert bare_load.active_secretary().name() == "艾莉絲"
+
+    desk = IslandState.new_game()
+    assert desk.secretary_food_bonus(0) == 2
+    assert desk.secretary_food_bonus(100) == 10
+    assert desk.secretary_upkeep() == -15
+    assert desk.policy_unlocked("martial") is False
+    assert desk.toggle_policy("martial") is False
+    desk.population = 400
+    desk.turn = 6
+    with_radar = desk._monster_spawn_chance()
+    desk.secretaries.append(
+        Secretary(id="mark-1", template="mark", level=1, rarity="SR")
+    )
+    desk.active_secretary_id = "mark-1"
+    assert abs(desk._monster_spawn_chance() - with_radar / 0.8) < 1e-9
+    desk.active_secretary_id = "alice"
+    assert desk.start_research("drone").startswith("研發中")
+    assert desk.funds == START_FUNDS - 1000
+    for _ in range(3):
+        desk.advance_research()
+    assert desk.policy_unlocked("martial")
+    assert desk.research_status("lure_lab") == "未開放"
+    desk.secretaries.append(
+        Secretary(id="chris-1", template="chris", level=3, rarity="SR")
+    )
+    assert desk.research_status("lure_lab") == "可研發"
+    assert desk.start_research("lure_lab").startswith("研發中")
+    desk.advance_research()
+    assert desk.policy_unlocked("lure")
+    desk.funds = 800
+    desk.food = 400
+    assert desk.start_research("greenhouse").startswith("研發中")
+    assert desk.food == 100
+    for _ in range(3):
+        desk.advance_research()
+    assert desk.greenhouse_food() == 8
+    desk.funds = 2000
+    desk.secretary_slots = 8
+    assert "小莎" in desk.recruit("interview")
+    assert desk.funds == 1700
+    assert "宿舍" in desk.recruit("ten")
+    while not desk.roster_full():
+        desk.funds = 1000
+        desk.recruit("interview")
+    assert desk.recruit("headhunt") == "秘書宿舍空間不足，請先擴充。"
+    newbie = next(sec for sec in desk.secretaries if sec.template == "xiao")
+    desk.funds = 50
+    assert desk.appoint(newbie.id).startswith("已任命")
+    assert desk.funds == 0
+    desk.food = 40
+    desk.funds = 1000
+    assert desk.dialogue_state()["policy"] == "ration"
+    assert desk.apply_dialogue_policy() is True
+    assert desk.policy_orders[0][0] == "ration"
+    desk.dismiss_dialogue()
+    assert desk.dialogue_state()["dismissed"] is True
+    print("info policy / secretary / achievements OK")
+
+
 def main():
     test_grid_geometry()
     test_oblique_foreshortening_invariant()
@@ -4539,6 +4892,7 @@ def main():
     test_mountain_sprite_building_placement()
     test_oilfield_and_crater_tiles()
     test_onsen_mountain_and_village()
+    test_info_policy_secretary_achievements()
     test_catalog_costs()
     test_new_island_and_loop()
     test_guestbook_local()

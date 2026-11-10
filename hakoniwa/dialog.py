@@ -11,13 +11,27 @@ Action log + guestbook frames are ~70% transparent.
 
 from __future__ import annotations
 
+import html
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from PySide6.QtCore import QEvent, QPoint, Qt, QTimer
+from PySide6.QtCore import (
+    Property,
+    QAbstractAnimation,
+    QEasingCurve,
+    QEvent,
+    QPoint,
+    QPropertyAnimation,
+    Qt,
+    QTimer,
+    QVariantAnimation,
+)
 from PySide6.QtGui import (
     QAction,
+    QColor,
     QKeySequence,
+    QPainter,
+    QPen,
     QResizeEvent,
     QShortcut,
     QShowEvent,
@@ -59,6 +73,7 @@ from .timeline_draw import TimelineDrawPanel, TimelineNodeData
 
 from .demos import island_summary, local_demo_islands
 from .model import (
+    asset_grade,
     BANK_TRANSFER_LOT,
     BUILDABLE,
     BUILDINGS,
@@ -104,7 +119,24 @@ from .model import (
     GuestbookEntry,
     MAX_GUEST_NAME,
     MAX_GUEST_TEXT,
+    ACHIEVEMENT_INCOME_EACH,
+    ACHIEVEMENTS,
     HARD_LOCKED_BUILDINGS,
+    POLICY_GROUPS,
+    POLICY_LEAD_TURNS,
+    POLICY_SPECS,
+    POLICY_SWAP_COST,
+    RESEARCH_DRONE,
+    RESEARCH_GREENHOUSE,
+    RESEARCH_LURE,
+    SECRETARY_EXPAND_COST,
+    SECRETARY_HEADHUNT_COST,
+    SECRETARY_INTERVIEW_COST,
+    SECRETARY_SWITCH_COST,
+    SECRETARY_TEN_COST,
+    TOWN_TO_CITY_POP,
+    VILLAGE_TO_TOWN_POP,
+    policy_effect_text,
     MOUNTAIN_FAMILY,
     MOUNTAIN_ONLY_BUILDINGS,
     PLACEABLE_BUILDINGS,
@@ -152,6 +184,16 @@ _PROFILE_PAGES: Tuple[Tuple[str, str], ...] = (
     ("achievements", "成就系統"),
 )
 _PROFILE_BLANK = "尚未決定。"
+
+
+def _format_signed(value: int) -> str:
+    """Show a balance as +2, +0, or -1."""
+    value = int(value)
+    if value > 0:
+        return f"+{value}"
+    if value < 0:
+        return str(value)
+    return "+0"
 
 
 def _format_percent(chance: float) -> str:
@@ -233,10 +275,88 @@ QPushButton#hakoniwaIslandProfileTab:checked {{
 QPushButton#hakoniwaIslandProfileTab:hover:!checked {{
     background-color: rgba(28, 52, 56, 220);
 }}
-QLabel#hakoniwaIslandProfileBody {{
+QPushButton#hakoniwaIslandProfileTab[policyChoice="true"] {{
+    text-align: left;
+    padding: 1px 6px;
+}}
+QPushButton#hakoniwaIslandProfileTab:disabled {{
+    background-color: rgba(14, 32, 36, 140);
+    color: rgba(168, 208, 200, 120);
+    border: 1px solid rgba(90, 200, 190, 90);
+}}
+QLabel#hakoniwaIslandProfileBody,
+QLabel#hakoniwaProfileSectionTitle {{
     color: {_HUD_TEXT_DIM};
     background: transparent;
     border: none;
+    font-size: 9pt;
+}}
+QLabel#hakoniwaProfileSectionTitle {{
+    color: {_HUD_TEXT};
+    font-weight: bold;
+}}
+QWidget#hakoniwaProfileHeader {{
+    background: transparent;
+    border: none;
+}}
+QScrollArea#hakoniwaProfileScroll {{
+    background: transparent;
+    border: none;
+}}
+QFrame#hakoniwaSecretaryPanel {{
+    background-color: #1a232a;
+    border: 1px solid #4ae3ff;
+    border-radius: 3px;
+}}
+QLabel#hakoniwaSecretaryTitle {{
+    color: #ffffff;
+    background: transparent;
+    border: none;
+    font-size: 9pt;
+    font-weight: bold;
+}}
+QLabel#hakoniwaSecretaryBody {{
+    color: #ffffff;
+    background: transparent;
+    border: none;
+    font-size: 9pt;
+}}
+QLabel#hakoniwaSecretaryValue {{
+    color: #4ae3ff;
+    background: transparent;
+    border: none;
+    font-size: 9pt;
+}}
+QLabel#hakoniwaSecretaryGood {{
+    color: #53e685;
+    background: transparent;
+    border: none;
+    font-size: 9pt;
+}}
+QPushButton#hakoniwaSecretaryBtn {{
+    background-color: #1a232a;
+    color: #ffffff;
+    border: 1px solid #4ae3ff;
+    border-radius: 3px;
+    padding: 2px 6px;
+    font-size: 9pt;
+    text-align: left;
+}}
+QPushButton#hakoniwaSecretaryBtn:checked {{
+    background-color: #d46b18;
+    color: #ffffff;
+    border: 1px solid #d46b18;
+}}
+QPushButton#hakoniwaSecretaryBtn:disabled {{
+    color: #4ae3ff;
+    border: 1px solid #4ae3ff;
+}}
+QScrollArea#hakoniwaSecretaryScroll, QWidget#hakoniwaSecretaryPage {{
+    background: #1a232a;
+    border: none;
+}}
+QWidget#hakoniwaProfileAccordion {{
+    background: transparent;
 }}
 QLineEdit#hakoniwaHudInput {{
     background-color: rgba(14, 28, 32, 180);
@@ -313,6 +433,264 @@ QPushButton#hakoniwaDrawerAction:hover {{
     background-color: rgba(28, 52, 56, 230);
 }}
 """
+
+
+_ACCORDION_MS = 450  # ease-in-out, about 0.45s
+
+
+class _RotatingPlus(QWidget):
+    """Plus mark. A 135° turn reads as a times mark."""
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._angle = 0.0
+        self.setFixedSize(18, 18)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+    def get_angle(self) -> float:
+        return self._angle
+
+    def set_angle(self, value: float) -> None:
+        self._angle = float(value)
+        self.update()
+
+    angle = Property(float, get_angle, set_angle)
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.translate(self.width() / 2, self.height() / 2)
+        painter.rotate(self._angle)
+        pen = QPen(QColor(_HUD_TEXT))
+        pen.setWidthF(1.8)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.drawLine(-5, 0, 5, 0)
+        painter.drawLine(0, -5, 0, 5)
+        painter.end()
+
+
+class _AccordionSection(QWidget):
+    """One FAQ block. The clip height animates 0 → content.
+
+    Outer fixed height is the grid row (0fr → 1fr). The inner label stays
+    at full height and is clipped, which is overflow:hidden.
+    """
+
+    def __init__(self, title: str, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.title_text = title
+        self._open = False
+        self._full = 0
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 4)
+        lay.setSpacing(0)
+        self.header = QWidget(self)
+        self.header.setObjectName("hakoniwaProfileHeader")
+        self.header.setCursor(Qt.CursorShape.PointingHandCursor)
+        head = QHBoxLayout(self.header)
+        head.setContentsMargins(0, 3, 0, 3)
+        head.setSpacing(6)
+        self.title = QLabel(self.header)
+        self.title.setObjectName("hakoniwaProfileSectionTitle")
+        self.title.setTextFormat(Qt.TextFormat.RichText)
+        self.title.setText(
+            '<span style="color:#5ac8be;">── </span>'
+            f'<span style="color:{_HUD_TEXT};">{html.escape(title)}</span>'
+            '<span style="color:#5ac8be;"> ──</span>'
+        )
+        head.addWidget(self.title, stretch=1)
+        self.plus = _RotatingPlus(self.header)
+        head.addWidget(self.plus, stretch=0, alignment=Qt.AlignmentFlag.AlignRight)
+        lay.addWidget(self.header)
+        # Outer wrapper: animated row size. Inner: full text, clipped.
+        self.clip = QWidget(self)
+        self.clip.setFixedHeight(0)
+        self.body = QLabel(self.clip)
+        self.body.setObjectName("hakoniwaIslandProfileBody")
+        self.body.setWordWrap(True)
+        self.body.setAlignment(
+            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
+        )
+        lay.addWidget(self.clip)
+        self.header.mouseReleaseEvent = self._header_mouse  # type: ignore[method-assign]
+        self._height_anim = QVariantAnimation(self)
+        self._height_anim.setDuration(_ACCORDION_MS)
+        self._height_anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        self._height_anim.valueChanged.connect(self._apply_height)
+        self._angle_anim = QPropertyAnimation(self.plus, b"angle", self)
+        self._angle_anim.setDuration(_ACCORDION_MS)
+        self._angle_anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+
+    def _header_mouse(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            host = self.parent()
+            toggle = getattr(host, "toggle_section", None)
+            if toggle is not None:
+                toggle(self)
+        QWidget.mouseReleaseEvent(self.header, event)
+
+    def set_rows(self, lines: List[str]) -> None:
+        self.body.setText("\n".join(lines))
+        self._place_body()
+        if self._open and self._height_anim.state() != QAbstractAnimation.State.Running:
+            self.clip.setFixedHeight(self._full)
+
+    def _place_body(self) -> None:
+        width = max(self.clip.width(), self.width() - 4, 80)
+        self.body.setFixedWidth(width)
+        height = max(self.body.sizeHint().height(), 0)
+        self.body.setFixedHeight(height)
+        self.body.move(0, 0)
+        self._full = height
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._place_body()
+        if self._height_anim.state() == QAbstractAnimation.State.Running:
+            self._height_anim.setEndValue(self._full if self._open else 0)
+        elif self._open:
+            self.clip.setFixedHeight(self._full)
+
+    def is_open(self) -> bool:
+        return self._open
+
+    def set_open(self, open_: bool, *, animate: bool) -> None:
+        self._open = bool(open_)
+        self._place_body()
+        target = self._full if self._open else 0
+        angle = 135.0 if self._open else 0.0
+        if not animate:
+            self._height_anim.stop()
+            self._angle_anim.stop()
+            self.clip.setFixedHeight(target)
+            self.plus.set_angle(angle)
+            return
+        self._run(self._height_anim, self.clip.height(), target)
+        self._run(self._angle_anim, self.plus.get_angle(), angle)
+
+    def _run(self, anim, start: float, end: float) -> None:
+        anim.stop()
+        anim.setStartValue(start)
+        anim.setEndValue(end)
+        anim.start()
+
+    def _apply_height(self, value) -> None:
+        self.clip.setFixedHeight(max(0, int(value)))
+
+
+class _ProfileAccordion(QWidget):
+    """FAQ list. Opening one section closes whichever was open."""
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("hakoniwaProfileAccordion")
+        self._lay = QVBoxLayout(self)
+        self._lay.setContentsMargins(0, 0, 0, 0)
+        self._lay.setSpacing(0)
+        self._sections: List[_AccordionSection] = []
+        self._open: Optional[_AccordionSection] = None
+        self._ready = False
+
+    def set_sections(self, sections: List[Tuple[str, List[str]]]) -> None:
+        if not self._ready:
+            for title, rows in sections:
+                sec = _AccordionSection(title, self)
+                sec.set_rows(rows)
+                self._lay.addWidget(sec)
+                self._sections.append(sec)
+            self._lay.addStretch(1)
+            self._ready = True
+            if self._sections:
+                self.toggle_section(self._sections[0], animate=False)
+            return
+        for sec, (_title, rows) in zip(self._sections, sections):
+            sec.set_rows(rows)
+
+    def toggle_section(self, section: _AccordionSection, animate: bool = True) -> None:
+        if section is self._open:
+            section.set_open(False, animate=animate)
+            self._open = None
+            return
+        if self._open is not None:
+            self._open.set_open(False, animate=animate)
+        section.set_open(True, animate=animate)
+        self._open = section
+
+    def toggle_title(self, title: str) -> None:
+        for sec in self._sections:
+            if sec.title_text == title:
+                self.toggle_section(sec, animate=True)
+                return
+
+    def open_title(self) -> str:
+        return self._open.title_text if self._open is not None else ""
+
+    def open_count(self) -> int:
+        return sum(1 for sec in self._sections if sec.is_open())
+
+    def plain_text(self) -> str:
+        chunks: List[str] = []
+        for sec in self._sections:
+            chunks.append(sec.title_text)
+            chunks.append(sec.body.text())
+        return "\n".join(chunks)
+
+    def section(self, title: str) -> _AccordionSection:
+        for sec in self._sections:
+            if sec.title_text == title:
+                return sec
+        raise KeyError(title)
+
+
+class _PixelPortrait(QWidget):
+    """點陣占位。用戶日後提供 2D 動態角色圖，再換掉這個方框。"""
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._mood = "開心"
+        self.setFixedSize(52, 60)
+
+    def set_mood(self, mood: str) -> None:
+        self._mood = mood or "開心"
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        painter.scale(self.width() / 52.0, self.height() / 60.0)
+        painter.setPen(QPen(QColor("#4ae3ff"), 2))
+        painter.setBrush(QColor("#1a232a"))
+        painter.drawRect(1, 1, 49, 57)
+        skin = QColor("#d46b18")
+        ice = QColor("#4ae3ff")
+        good = QColor("#53e685")
+        white = QColor("#ffffff")
+
+        def px(x: int, y: int, color: QColor, n: int = 1) -> None:
+            painter.fillRect(6 + x * 4, 8 + y * 4, 4 * n, 4, color)
+
+        for x in range(1, 9):
+            px(x, 0, ice)
+        for y in range(2, 7):
+            for x in range(2, 8):
+                px(x, y, skin)
+        if self._mood == "開心":
+            px(3, 3, white)
+            px(6, 3, white)
+            px(3, 5, good, 4)
+        elif self._mood == "警告":
+            px(3, 3, white)
+            px(6, 3, white)
+            px(2, 2, white)
+            px(7, 2, white)
+            px(4, 5, white, 2)
+        else:
+            px(3, 4, white)
+            px(6, 4, white)
+            px(3, 6, ice, 4)
+        painter.end()
 
 
 class HakoniwaMapHud(QWidget):
@@ -453,8 +831,8 @@ class HakoniwaMapHud(QWidget):
         self.island_profile.setObjectName("hakoniwaIslandProfile")
         self.island_profile.setVisible(False)
         profile_lay = QVBoxLayout(self.island_profile)
-        profile_lay.setContentsMargins(8, 6, 8, 6)
-        profile_lay.setSpacing(4)
+        profile_lay.setContentsMargins(6, 4, 6, 2)
+        profile_lay.setSpacing(2)
         self._profile_page = "basic"
         self._profile_basic_text = ""
         self._profile_tab_buttons: Dict[str, QPushButton] = {}
@@ -477,13 +855,75 @@ class HakoniwaMapHud(QWidget):
             )
             tab_row.addWidget(btn)
         profile_lay.addLayout(tab_row)
+        self._profile_secretary_text = ""
+        self._profile_achievement_text = ""
+        self._profile_sections: List[Tuple[str, List[str]]] = []
+        self._profile_accordion = _ProfileAccordion()
+        self._profile_scroll = QScrollArea(self.island_profile)
+        self._profile_scroll.setObjectName("hakoniwaProfileScroll")
+        self._profile_scroll.setWidgetResizable(True)
+        self._profile_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._profile_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self._profile_scroll.setWidget(self._profile_accordion)
+        profile_lay.addWidget(self._profile_scroll, stretch=1)
         self.island_profile_body = QLabel("")
         self.island_profile_body.setObjectName("hakoniwaIslandProfileBody")
         self.island_profile_body.setWordWrap(True)
         self.island_profile_body.setAlignment(
             Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
         )
+        self.island_profile_body.setVisible(False)
         profile_lay.addWidget(self.island_profile_body, stretch=1)
+        self._policy_panel = QScrollArea(self.island_profile)
+        self._policy_panel.setObjectName("hakoniwaProfileScroll")
+        self._policy_panel.setWidgetResizable(True)
+        self._policy_panel.setFrameShape(QFrame.Shape.NoFrame)
+        self._policy_panel.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self._policy_body = QWidget()
+        self._policy_body.setObjectName("hakoniwaProfileAccordion")
+        policy_col = QVBoxLayout(self._policy_body)
+        policy_col.setContentsMargins(0, 0, 0, 0)
+        policy_col.setSpacing(0)
+        self._policy_header = QLabel("")
+        self._policy_header.setObjectName("hakoniwaIslandProfileBody")
+        self._policy_header.setWordWrap(True)
+        self._policy_header.setAlignment(
+            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
+        )
+        policy_col.addWidget(self._policy_header)
+        self._policy_group_labels: List[QLabel] = []
+        self._policy_buttons: Dict[str, QPushButton] = {}
+        for title, ids in POLICY_GROUPS:
+            group = QLabel(title)
+            group.setObjectName("hakoniwaProfileSectionTitle")
+            group.setAlignment(
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+            )
+            self._policy_group_labels.append(group)
+            policy_col.addWidget(group)
+            for pid in ids:
+                choice = QPushButton(POLICY_SPECS[pid]["label"])
+                choice.setObjectName("hakoniwaIslandProfileTab")
+                choice.setProperty("policyChoice", "true")
+                choice.setCheckable(True)
+                choice.setSizePolicy(
+                    QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
+                )
+                choice.clicked.connect(
+                    lambda _checked=False, policy=pid: self._choose_policy(policy)
+                )
+                self._policy_buttons[pid] = choice
+                policy_col.addWidget(choice)
+        policy_col.addStretch(1)
+        self._policy_panel.setWidget(self._policy_body)
+        self._policy_panel.setVisible(False)
+        profile_lay.addWidget(self._policy_panel, stretch=1)
+        self._switch_armed = ""
+        self._build_secretary_panel(profile_lay)
 
         # Guestbook cluster (view + form) — closed by default; open via 留言.
         self.guestbook_frame = QFrame(self)
@@ -596,13 +1036,15 @@ class HakoniwaMapHud(QWidget):
         self._layout_overlays()
 
     def refresh_island_profile(self, state: IslandState) -> None:
-        """Fill 基本資料 from fields the model already has. Other pages stay blank."""
+        """Fill the four 資訊 pages from the island's policy, secretary, and achievements."""
         created = str(getattr(state, "created_at", "") or "").strip() or "—"
         player = str(getattr(state, "player_name", "") or "").strip() or "—"
-        # Only 怪物出現率 is already a model query. The other added rows are
-        # not tracked (no income ledger, demand, pollution, flights, or kills).
         spawn = _format_percent(state._monster_spawn_chance())
-        lines = [
+        funds_delta, food_delta, people_delta = state.shown_turn_balances()
+        # 居民滿意度 is happiness_bonus. 綜合評分 is island_score.
+        # 失業率、犯罪率、綠化率、軍事防衛力評級 sum 生效中 policies.
+        # Tax, power, coastal grade, intercept, damage, and rank stay 0.
+        identity = [
             f"島名：{state.name}",
             f"玩家：{player}",
             f"建島：{created}",
@@ -613,34 +1055,457 @@ class HakoniwaMapHud(QWidget):
             f"人口：{state.population}",
             f"資金：{state.funds}",
             f"糧食：{state.food}",
-            "每回合收入：0",
-            "每回合支出：0",
+        ]
+        balances = [
+            f"每回合資金收支：{_format_signed(funds_delta)}",
+            f"每回合糧食收支：{_format_signed(food_delta)}",
+            f"每回合人口變化：{_format_signed(people_delta)}",
+        ]
+        residents = [
+            f"居民滿意度：{state.happiness_bonus()}",
+            "稅率：0",
+            f"失業率：{state.shown_unemployment()}",
+            f"犯罪率：{state.shown_crime()}",
+        ]
+        demands = [
             "住宅需求：0",
             "商店需求：0",
             "工廠需求：0",
-            "空氣污染指數：0",
-            "水源污染指數：0",
-            "天災機會率：0",
+        ]
+        environment = [
+            "電力供需：0",
+            f"綠化率：{state.shown_green()}",
+            "淺灘及防波堤等級：0",
+            f"空氣污染指數：{state.shown_air()}",
+            f"水源污染指數：{state.shown_water()}",
+            f"天災機會率：{state.shown_disaster()}",
             f"怪物出現率：{spawn}",
-            "發射飛機數目：0",
+        ]
+        military = [
+            f"軍事防衛力評級：{state.shown_defense()}",
+            "發射飛彈數目：0",
             "擊退本島怪物數次：0",
             "擊退其他島怪物數次：0",
+            "飛彈自動迎擊成功率：0",
+            "被攻擊／受損次數：0",
         ]
-        self._profile_basic_text = "\n".join(lines)
+        # No separate 總資產 is stored. The number is island_score().
+        assets = state.island_score()
+        standing = [
+            f"島嶼總資產：{assets}",
+            "伺服器排名：0",
+            f"綜合評分：{asset_grade(assets)}",
+        ]
+        self._profile_sections = [
+            ("島嶼身分", identity),
+            ("資源收益", balances),
+            ("居民", residents),
+            ("需求", demands),
+            ("環境", environment),
+            ("軍事", military),
+            ("評價", standing),
+        ]
+        self._profile_basic_text = ""
+        self._sync_policy_panel(state)
+        self._sync_secretary_panel(state)
+        have = set(state.achievements)
+        earned_lines = []
+        for key, label, funds in ACHIEVEMENTS:
+            if key in have:
+                earned_lines.append(f"{label}：已達成（分數 +{funds}）")
+            else:
+                earned_lines.append(f"{label}：未達成")
+        extra = ACHIEVEMENT_INCOME_EACH * len(state.achievements)
+        if state.achievement_unlocks("onsen_village"):
+            earned_lines.append("溫泉村已可直接建設")
+        else:
+            earned_lines.append("溫泉開村達成後，溫泉村解鎖建設")
+        earned_lines.append(f"已達成 {len(state.achievements)}／{len(ACHIEVEMENTS)}")
+        earned_lines.append(f"成就加成：每回合資金收支 +{extra}")
+        self._profile_achievement_text = "\n".join(earned_lines)
         self.show_island_profile_page(self._profile_page)
 
+    def _sync_policy_panel(self, state: IslandState) -> None:
+        used = state.policy_slots_used()
+        slots = state.policy_slot_count()
+        self._policy_header.setText(
+            f"方針欄位 {used}／{slots}　"
+            f"更換費用 {POLICY_SWAP_COST} 資金，緩衝 {POLICY_LEAD_TURNS} 回合\n"
+            f"人口未滿{VILLAGE_TO_TOWN_POP}為1欄，"
+            f"滿{VILLAGE_TO_TOWN_POP}為3欄，滿{TOWN_TO_CITY_POP}為4欄"
+        )
+        full = used >= slots
+        for pid, btn in self._policy_buttons.items():
+            turns = state.policy_turns(pid)
+            label = str(POLICY_SPECS[pid]["label"])
+            locked = not state.policy_unlocked(pid)
+            if turns is None and locked:
+                title = f"{label}　未解鎖"
+            elif turns is None:
+                title = label
+            elif turns > 0:
+                title = f"{label}　實施中　剩餘 {turns} 回合"
+            else:
+                title = f"{label}　生效中"
+            btn.setText(f"{title}\n{policy_effect_text(pid)}")
+            btn.blockSignals(True)
+            btn.setChecked(turns is not None)
+            btn.setEnabled(turns is not None or (not full and not locked))
+            btn.blockSignals(False)
+
+    def policy_page_text(self) -> str:
+        lines = [self._policy_header.text()]
+        for lab in self._policy_group_labels:
+            lines.append(lab.text())
+        for btn in self._policy_buttons.values():
+            lines.append(btn.text())
+        return "\n".join(lines)
+
+    def _secretary_label(self, text: str, kind: str) -> QLabel:
+        lab = QLabel(text)
+        lab.setObjectName(kind)
+        lab.setWordWrap(True)
+        lab.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        return lab
+
+    def _secretary_button(self, text: str) -> QPushButton:
+        btn = QPushButton(text)
+        btn.setObjectName("hakoniwaSecretaryBtn")
+        btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        return btn
+
+    def _secretary_frame(self, title: str) -> Tuple[QFrame, QVBoxLayout]:
+        frame = QFrame()
+        frame.setObjectName("hakoniwaSecretaryPanel")
+        lay = QVBoxLayout(frame)
+        lay.setContentsMargins(6, 4, 6, 4)
+        lay.setSpacing(2)
+        lay.addWidget(self._secretary_label(title, "hakoniwaSecretaryTitle"))
+        return frame, lay
+
+    def _build_secretary_panel(self, profile_lay: QVBoxLayout) -> None:
+        self._secretary_panel = QScrollArea(self.island_profile)
+        self._secretary_panel.setObjectName("hakoniwaSecretaryScroll")
+        self._secretary_panel.setWidgetResizable(True)
+        self._secretary_panel.setFrameShape(QFrame.Shape.NoFrame)
+        self._secretary_panel.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        page = QWidget()
+        page.setObjectName("hakoniwaSecretaryPage")
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        columns = QHBoxLayout()
+        columns.setSpacing(4)
+        left = QVBoxLayout()
+        right = QVBoxLayout()
+        left.setSpacing(2)
+        right.setSpacing(2)
+
+        card, card_lay = self._secretary_frame("執勤中祕書資訊")
+        head = QHBoxLayout()
+        self._sec_portrait = _PixelPortrait()
+        head.addWidget(self._sec_portrait, 0, Qt.AlignmentFlag.AlignTop)
+        head_text = QVBoxLayout()
+        self._sec_name = self._secretary_label("", "hakoniwaSecretaryTitle")
+        self._sec_level = self._secretary_label("", "hakoniwaSecretaryValue")
+        self._sec_art = self._secretary_label(
+            "2D 動態角色圖待島主提供", "hakoniwaSecretaryBody"
+        )
+        head_text.addWidget(self._sec_name)
+        head_text.addWidget(self._sec_level)
+        head_text.addWidget(self._sec_art)
+        head.addLayout(head_text, 1)
+        card_lay.addLayout(head)
+        self._sec_perk_radar = self._secretary_label("", "hakoniwaSecretaryGood")
+        self._sec_perk_farm = self._secretary_label("", "hakoniwaSecretaryGood")
+        self._sec_upkeep = self._secretary_label("", "hakoniwaSecretaryValue")
+        card_lay.addWidget(self._sec_perk_radar)
+        card_lay.addWidget(self._sec_perk_farm)
+        card_lay.addWidget(self._sec_upkeep)
+        left.addWidget(card)
+
+        talk, talk_lay = self._secretary_frame("建議與實時對話")
+        mood_row = QHBoxLayout()
+        self._sec_mini = _PixelPortrait()
+        self._sec_mini.setFixedSize(36, 42)
+        mood_row.addWidget(self._sec_mini, 0, Qt.AlignmentFlag.AlignTop)
+        self._sec_mood = self._secretary_label("", "hakoniwaSecretaryValue")
+        mood_row.addWidget(self._sec_mood, 1)
+        talk_lay.addLayout(mood_row)
+        self._sec_dialogue = self._secretary_label("", "hakoniwaSecretaryBody")
+        talk_lay.addWidget(self._sec_dialogue)
+        actions = QHBoxLayout()
+        self._sec_apply = self._secretary_button("執行建議政策")
+        self._sec_ignore = self._secretary_button("忽略")
+        self._sec_apply.clicked.connect(self._apply_dialogue)
+        self._sec_ignore.clicked.connect(self._ignore_dialogue)
+        actions.addWidget(self._sec_apply)
+        actions.addWidget(self._sec_ignore)
+        talk_lay.addLayout(actions)
+        left.addWidget(talk)
+
+        market, market_lay = self._secretary_frame("人才市場／行政總署人才招募")
+        market_lay.addWidget(
+            self._secretary_label("優秀的顧問是島嶼繁榮的基石。", "hakoniwaSecretaryBody")
+        )
+        self._sec_interview = self._secretary_button(
+            f"普通面試 {SECRETARY_INTERVIEW_COST}　C～R"
+        )
+        self._sec_headhunt = self._secretary_button(
+            f"獵頭招聘 {SECRETARY_HEADHUNT_COST}　SR 以上"
+        )
+        self._sec_ten = self._secretary_button(
+            f"十連聘僱 {SECRETARY_TEN_COST}　9 折"
+        )
+        self._sec_interview.clicked.connect(lambda: self._recruit("interview"))
+        self._sec_headhunt.clicked.connect(lambda: self._recruit("headhunt"))
+        self._sec_ten.clicked.connect(lambda: self._recruit("ten"))
+        market_lay.addWidget(self._sec_interview)
+        market_lay.addWidget(self._sec_headhunt)
+        market_lay.addWidget(self._sec_ten)
+        market_lay.addWidget(
+            self._secretary_label(
+                "剩餘免費次數 0　普通面試 C 70%／R 30%　獵頭 SSR 10%，其餘 SR（含克里斯）",
+                "hakoniwaSecretaryValue",
+            )
+        )
+        self._sec_result = self._secretary_label("", "hakoniwaSecretaryValue")
+        market_lay.addWidget(self._sec_result)
+        right.addWidget(market)
+
+        lab, lab_lay = self._secretary_frame("行政研究院／政策研發中心")
+        self._sec_research_buttons: Dict[str, QPushButton] = {}
+        self._sec_research_notes: Dict[str, QLabel] = {}
+        research_rows = (
+            (
+                RESEARCH_DRONE,
+                "科技　智慧型無人機防禦網",
+                "資金 1,000、3 回合。完成後解鎖『防空戰備戒嚴』。",
+            ),
+            (
+                RESEARCH_GREENHOUSE,
+                "經濟　氣候溫室農業發展",
+                "資金 800、糧食 300、3 回合。本島沒有寒冬減產，完成後每回合糧食 +8。",
+            ),
+            (
+                RESEARCH_LURE,
+                "特別　怪獸引誘與生態研究",
+                "需要秘書克里斯 LV.3。完成後可實施『怪獸誘捕與引流協議』。",
+            ),
+        )
+        for key, title, blurb in research_rows:
+            lab_lay.addWidget(self._secretary_label(title, "hakoniwaSecretaryTitle"))
+            note = self._secretary_label(blurb, "hakoniwaSecretaryBody")
+            self._sec_research_notes[key] = note
+            lab_lay.addWidget(note)
+            btn = self._secretary_button("可研發")
+            btn.clicked.connect(lambda _checked=False, project=key: self._start_research(project))
+            self._sec_research_buttons[key] = btn
+            lab_lay.addWidget(btn)
+        right.addWidget(lab)
+
+        columns.addLayout(left, 1)
+        columns.addLayout(right, 1)
+        outer.addLayout(columns)
+
+        roster, roster_lay = self._secretary_frame("內閣秘書處／換崗調配")
+        roster_lay.addWidget(
+            self._secretary_label(
+                f"交接費 {SECRETARY_SWITCH_COST} 資金，再點一次確認。",
+                "hakoniwaSecretaryBody",
+            )
+        )
+        self._sec_roster_host = QWidget()
+        self._sec_roster_row = QHBoxLayout(self._sec_roster_host)
+        self._sec_roster_row.setContentsMargins(0, 0, 0, 0)
+        self._sec_roster_row.setSpacing(4)
+        roster_lay.addWidget(self._sec_roster_host)
+        self._sec_expand = self._secretary_button(
+            f"+擴充欄位 {SECRETARY_EXPAND_COST}"
+        )
+        self._sec_expand.clicked.connect(self._expand_roster)
+        roster_lay.addWidget(self._sec_expand)
+        outer.addWidget(roster)
+        outer.addStretch(1)
+        self._secretary_panel.setWidget(page)
+        self._secretary_panel.setVisible(False)
+        profile_lay.addWidget(self._secretary_panel, stretch=1)
+        self._sec_notice = ""
+
+    def _sync_secretary_panel(self, state: IslandState) -> None:
+        sec = state.active_secretary()
+        if sec is None:
+            return
+        spec = sec.spec()
+        self._sec_portrait.set_mood(str(state.dialogue_state()["mood"]))
+        self._sec_name.setText(f"{sec.name()} · {sec.title()}")
+        efficiency = int(spec.get("efficiency") or 0)
+        self._sec_level.setText(f"LV.{sec.level}（政務效率 +{efficiency}%）")
+        if "radar" in sec.perks():
+            cut = int(round((1.0 - float(spec.get("spawn") or 1.0)) * 100))
+            self._sec_perk_radar.setText(
+                f"專長：防災雷達 怪物出現率 -{cut}%、天災警告提前 1 回合"
+            )
+        elif "efficiency" in sec.perks():
+            self._sec_perk_radar.setText(f"專長：政務效率 +{efficiency}%")
+        else:
+            self._sec_perk_radar.setText("專長：見習事務")
+        if "farming" in sec.perks():
+            self._sec_perk_farm.setText("被動：農務指導 糧食產量 +10%（無產量時 +2）")
+        else:
+            self._sec_perk_farm.setText("被動：無農業指導")
+        self._sec_upkeep.setText(f"維護成本：資金 -{int(spec['upkeep'])}／回合")
+        info = state.dialogue_state()
+        self._sec_mini.set_mood(str(info["mood"]))
+        self._sec_mood.setText(f"表情：{info['mood']}")
+        if info["dismissed"]:
+            self._sec_dialogue.setText("已忽略，下回合再看。")
+            self._sec_apply.setEnabled(False)
+            self._sec_ignore.setEnabled(False)
+        else:
+            self._sec_dialogue.setText(str(info["text"]))
+            policy = str(info["policy"] or "")
+            can_apply = bool(policy) and state.policy_unlocked(policy)
+            self._sec_apply.setEnabled(can_apply)
+            self._sec_ignore.setEnabled(True)
+        self._sec_result.setText(self._sec_notice)
+        for key, btn in self._sec_research_buttons.items():
+            status = state.research_status(key)
+            btn.setText(status)
+            btn.setEnabled(status == "可研發")
+        while self._sec_roster_row.count():
+            item = self._sec_roster_row.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        for member in state.secretaries:
+            if member.id == state.active_secretary_id:
+                label = f"{member.name()} 上陣中"
+            elif self._switch_armed == member.id:
+                label = f"{member.name()} 確認 {SECRETARY_SWITCH_COST}"
+            else:
+                label = f"{member.name()} 待命"
+            btn = self._secretary_button(label)
+            btn.setCheckable(True)
+            btn.setChecked(member.id == state.active_secretary_id)
+            btn.clicked.connect(
+                lambda _checked=False, sid=member.id: self._pick_secretary(sid)
+            )
+            self._sec_roster_row.addWidget(btn)
+        self._sec_roster_row.addStretch(1)
+        self._sec_expand.setEnabled(state.secretary_slots < 12)
+
+    def secretary_page_text(self) -> str:
+        parts = [
+            self._sec_name.text(),
+            self._sec_level.text(),
+            self._sec_perk_radar.text(),
+            self._sec_perk_farm.text(),
+            self._sec_upkeep.text(),
+            self._sec_mood.text(),
+            self._sec_dialogue.text(),
+            self._sec_result.text(),
+            "人才市場／行政總署人才招募",
+            "行政研究院／政策研發中心",
+            "內閣秘書處／換崗調配",
+            "執行建議政策",
+            "忽略",
+        ]
+        parts.extend(btn.text() for btn in self._sec_research_buttons.values())
+        return "\n".join(parts)
+
+    def _after_secretary(self, state: IslandState) -> None:
+        self.refresh_island_profile(state)
+        refresh = getattr(self, "_refresh_profile", None)
+        if refresh is not None:
+            refresh()
+        persist = getattr(self, "_persist_profile", None)
+        if persist is not None:
+            persist()
+
+    def _recruit(self, kind: str) -> None:
+        state = self.map.state
+        self._sec_notice = state.recruit(kind)
+        self._switch_armed = ""
+        self._after_secretary(state)
+
+    def _pick_secretary(self, sid: str) -> None:
+        state = self.map.state
+        spend = False
+        if sid == state.active_secretary_id:
+            self._switch_armed = ""
+        elif self._switch_armed != sid:
+            self._switch_armed = sid
+        else:
+            self._sec_notice = state.appoint(sid)
+            self._switch_armed = ""
+            spend = True
+        if spend:
+            QTimer.singleShot(0, lambda: self._after_secretary(state))
+        else:
+            QTimer.singleShot(0, lambda: self._sync_secretary_panel(state))
+
+    def _expand_roster(self) -> None:
+        state = self.map.state
+        self._sec_notice = state.expand_secretary_slots()
+        self._after_secretary(state)
+
+    def _start_research(self, key: str) -> None:
+        state = self.map.state
+        self._sec_notice = state.start_research(key)
+        self._after_secretary(state)
+
+    def _apply_dialogue(self) -> None:
+        state = self.map.state
+        if state.apply_dialogue_policy():
+            self._sec_notice = "已交給島嶼方針。"
+        else:
+            self._sec_notice = "現在不能實施這條方針。"
+        self._after_secretary(state)
+
+    def _ignore_dialogue(self) -> None:
+        state = self.map.state
+        state.dismiss_dialogue()
+        self._sec_notice = "已忽略。"
+        self._after_secretary(state)
+
+    def _choose_policy(self, key: str) -> None:
+        state = self.map.state
+        state.toggle_policy(key)
+        refresh = getattr(self, "_refresh_profile", None)
+        if refresh is not None:
+            refresh()
+        else:
+            self.refresh_island_profile(state)
+        persist = getattr(self, "_persist_profile", None)
+        if persist is not None:
+            persist()
+
     def show_island_profile_page(self, key: str) -> None:
-        """Switch the 資訊 drawer. Only 基本資料 has rows."""
+        """Switch the 資訊 drawer among the four pages."""
         if key not in self._profile_tab_buttons:
             key = "basic"
         self._profile_page = key
         btn = self._profile_tab_buttons[key]
         if not btn.isChecked():
             btn.setChecked(True)
-        if key == "basic":
-            self.island_profile_body.setText(self._profile_basic_text)
+        basic = key == "basic"
+        self._profile_scroll.setVisible(basic)
+        self._policy_panel.setVisible(key == "policy")
+        self._secretary_panel.setVisible(key == "secretary")
+        self.island_profile_body.setVisible(key not in ("basic", "policy", "secretary"))
+        if basic:
+            self._profile_accordion.set_sections(self._profile_sections)
+            self.island_profile_body.setText(self._profile_accordion.plain_text())
+        elif key == "policy":
+            self.island_profile_body.setText(self.policy_page_text())
+        elif key == "secretary":
+            self.island_profile_body.setText(self.secretary_page_text())
         else:
-            self.island_profile_body.setText(_PROFILE_BLANK)
+            self.island_profile_body.setText(self._profile_achievement_text)
+        self._layout_overlays()
 
     def _show_notify_menu(self) -> None:
         """Popup: checkable 歷史記錄框 / 警報 / 方格資訊 under the bell."""
@@ -837,7 +1702,13 @@ class HakoniwaMapHud(QWidget):
         # settings／island profile stay compact above the icon bar.
         build_w = min(460, max(320, w // 2))
         settings_w = min(280, max(200, w // 3))
-        profile_w = min(360, max(300, w // 3))
+        page = getattr(self, "_profile_page", "")
+        if page == "policy":
+            profile_w = min(480, max(440, w // 2))
+        elif page == "secretary":
+            profile_w = min(680, max(600, (w * 2) // 3))
+        else:
+            profile_w = min(360, max(300, w // 3))
         gap_above_bar = 6
         full_h = max(220, btn_y - gap_above_bar - margin)
 
@@ -850,10 +1721,10 @@ class HakoniwaMapHud(QWidget):
                 settings_w, settings_h,
             )
         if not self.island_profile.isHidden():
-            profile_h = min(520, full_h)
+            profile_top = below + 4
+            profile_h = max(220, btn_y - gap_above_bar - profile_top)
             self.island_profile.setGeometry(
-                margin, max(margin, btn_y - gap_above_bar - profile_h),
-                profile_w, profile_h,
+                margin, profile_top, profile_w, profile_h,
             )
 
         # Action log — bottom-right (~70% transparent frame)
@@ -936,8 +1807,8 @@ def tool_enabled(
     Returns (enabled, reason). Reason is empty when enabled; otherwise a short
     tip for the button tooltip (can't afford / wrong terrain / no selection).
     """
-    # 溫泉村在目錄裡，但永遠不可點選建造.
-    if kind in HARD_LOCKED_BUILDINGS:
+    # 溫泉村 stays locked until 溫泉開村.
+    if state.placement_hard_locked(kind):
         return False, "鎖定：只能在溫泉山旁的平地自然出現"
 
     # 觀望：島上有怪獸即可（不必選格）.
@@ -1011,7 +1882,7 @@ def tool_enabled(
             return False, f"資金不足（需 {cost}）"
         return True, ""
 
-    if kind in PLACEABLE_BUILDINGS:
+    if kind in PLACEABLE_BUILDINGS or state.achievement_unlocks(kind):
         unlocked, lock_reason = state.building_unlock_met(kind)
         if not unlocked:
             return False, lock_reason
@@ -1165,6 +2036,8 @@ class HakoniwaIslandDialog(QDialog):
         self.map = HakoniwaMapWidget(self.state)
         self.map.cell_clicked.connect(self._on_cell_clicked)
         self.hud = HakoniwaMapHud(self.map)
+        self.hud._persist_profile = self._cache_local
+        self.hud._refresh_profile = self._refresh_ui
         self.stats = self.hud.stats
         self.sel_label = self.hud.sel_label
         self.log_view = self.hud.log_view
@@ -1509,7 +2382,8 @@ class HakoniwaIslandDialog(QDialog):
         if shown_cost is None:
             cost_lab.setText("費用: 免費／依指令")
         elif shown_cost == 0 and (
-            key in settlement_keys_for_tree() or key in HARD_LOCKED_BUILDINGS
+            key in settlement_keys_for_tree()
+            or self.state.placement_hard_locked(key)
         ):
             cost_lab.setText("費用: 0（非點選建造）")
         else:
@@ -1517,7 +2391,7 @@ class HakoniwaIslandDialog(QDialog):
 
         met, lock_reason = unlock_met(self.state, key)
         prereq = unlock_prereq(key)
-        if key in HARD_LOCKED_BUILDINGS:
+        if self.state.placement_hard_locked(key):
             status_lab.setText(f"狀態: 鎖定 🔒\n前提: {lock_reason}")
         elif key in settlement_keys_for_tree():
             status_lab.setText("狀態: 瀏覽用（人口演進）\n前提: 不可點選建造")
@@ -1536,7 +2410,7 @@ class HakoniwaIslandDialog(QDialog):
         effects_lab.setText("\n".join(f"· {ln}" for ln in lines) if lines else "")
 
         # Action label: 放置 for buildings, otherwise keep tool verb.
-        if key in PLACEABLE_BUILDINGS:
+        if key in PLACEABLE_BUILDINGS or self.state.achievement_unlocks(key):
             place_btn.setText("放置")
         elif key in settlement_keys_for_tree() or key in HARD_LOCKED_BUILDINGS:
             place_btn.setText("不可建造")
@@ -1732,7 +2606,7 @@ class HakoniwaIslandDialog(QDialog):
             btn = self.tool_buttons[key]
             # 飛彈費用隨飛彈基地動態變化。
             shown_cost = self.state.missile_cost() if key == "missile" else cost
-            if key in HARD_LOCKED_BUILDINGS:
+            if self.state.placement_hard_locked(key):
                 label = f"🔒 {name}（鎖定）"
             elif shown_cost is None:
                 label = f"{digit}. {name}"
@@ -1983,7 +2857,7 @@ class HakoniwaIslandDialog(QDialog):
 
     def _do_action(self, kind: str) -> None:
         # 觀望／貿易／銀行存提／超市買糧／誘致／火箭發射不需選格；其餘指令要點選格子。
-        if kind in HARD_LOCKED_BUILDINGS:
+        if self.state.placement_hard_locked(kind):
             label = BUILDINGS[kind]["label"]
             QMessageBox.information(
                 self,
@@ -2055,7 +2929,7 @@ class HakoniwaIslandDialog(QDialog):
                 self._drop_to_local_on_error(e)
                 # Fall through to local action below.
 
-        if kind in PLACEABLE_BUILDINGS:
+        if kind in PLACEABLE_BUILDINGS or self.state.achievement_unlocks(kind):
             msg = self.state.place_building(i, j, kind)
         elif kind == "remove":
             msg = self.state.remove_building(i, j)
