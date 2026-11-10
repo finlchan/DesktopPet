@@ -126,7 +126,14 @@ from .model import (
     POLICY_LEAD_TURNS,
     POLICY_SPECS,
     POLICY_SWAP_COST,
-    SECRETARY_INCOME,
+    RESEARCH_DRONE,
+    RESEARCH_GREENHOUSE,
+    RESEARCH_LURE,
+    SECRETARY_EXPAND_COST,
+    SECRETARY_HEADHUNT_COST,
+    SECRETARY_INTERVIEW_COST,
+    SECRETARY_SWITCH_COST,
+    SECRETARY_TEN_COST,
     TOWN_TO_CITY_POP,
     VILLAGE_TO_TOWN_POP,
     policy_effect_text,
@@ -294,6 +301,58 @@ QWidget#hakoniwaProfileHeader {{
 }}
 QScrollArea#hakoniwaProfileScroll {{
     background: transparent;
+    border: none;
+}}
+QFrame#hakoniwaSecretaryPanel {{
+    background-color: #1a232a;
+    border: 1px solid #4ae3ff;
+    border-radius: 3px;
+}}
+QLabel#hakoniwaSecretaryTitle {{
+    color: #ffffff;
+    background: transparent;
+    border: none;
+    font-size: 9pt;
+    font-weight: bold;
+}}
+QLabel#hakoniwaSecretaryBody {{
+    color: #ffffff;
+    background: transparent;
+    border: none;
+    font-size: 9pt;
+}}
+QLabel#hakoniwaSecretaryValue {{
+    color: #4ae3ff;
+    background: transparent;
+    border: none;
+    font-size: 9pt;
+}}
+QLabel#hakoniwaSecretaryGood {{
+    color: #53e685;
+    background: transparent;
+    border: none;
+    font-size: 9pt;
+}}
+QPushButton#hakoniwaSecretaryBtn {{
+    background-color: #1a232a;
+    color: #ffffff;
+    border: 1px solid #4ae3ff;
+    border-radius: 3px;
+    padding: 2px 6px;
+    font-size: 9pt;
+    text-align: left;
+}}
+QPushButton#hakoniwaSecretaryBtn:checked {{
+    background-color: #d46b18;
+    color: #ffffff;
+    border: 1px solid #d46b18;
+}}
+QPushButton#hakoniwaSecretaryBtn:disabled {{
+    color: #4ae3ff;
+    border: 1px solid #4ae3ff;
+}}
+QScrollArea#hakoniwaSecretaryScroll, QWidget#hakoniwaSecretaryPage {{
+    background: #1a232a;
     border: none;
 }}
 QWidget#hakoniwaProfileAccordion {{
@@ -584,6 +643,56 @@ class _ProfileAccordion(QWidget):
         raise KeyError(title)
 
 
+class _PixelPortrait(QWidget):
+    """點陣占位。用戶日後提供 2D 動態角色圖，再換掉這個方框。"""
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._mood = "開心"
+        self.setFixedSize(52, 60)
+
+    def set_mood(self, mood: str) -> None:
+        self._mood = mood or "開心"
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        painter.scale(self.width() / 52.0, self.height() / 60.0)
+        painter.setPen(QPen(QColor("#4ae3ff"), 2))
+        painter.setBrush(QColor("#1a232a"))
+        painter.drawRect(1, 1, 49, 57)
+        skin = QColor("#d46b18")
+        ice = QColor("#4ae3ff")
+        good = QColor("#53e685")
+        white = QColor("#ffffff")
+
+        def px(x: int, y: int, color: QColor, n: int = 1) -> None:
+            painter.fillRect(6 + x * 4, 8 + y * 4, 4 * n, 4, color)
+
+        for x in range(1, 9):
+            px(x, 0, ice)
+        for y in range(2, 7):
+            for x in range(2, 8):
+                px(x, y, skin)
+        if self._mood == "開心":
+            px(3, 3, white)
+            px(6, 3, white)
+            px(3, 5, good, 4)
+        elif self._mood == "警告":
+            px(3, 3, white)
+            px(6, 3, white)
+            px(2, 2, white)
+            px(7, 2, white)
+            px(4, 5, white, 2)
+        else:
+            px(3, 4, white)
+            px(6, 4, white)
+            px(3, 6, ice, 4)
+        painter.end()
+
+
 class HakoniwaMapHud(QWidget):
     """Hosts the map and positions HUD overlays inside the map viewport.
 
@@ -813,6 +922,8 @@ class HakoniwaMapHud(QWidget):
         self._policy_panel.setWidget(self._policy_body)
         self._policy_panel.setVisible(False)
         profile_lay.addWidget(self._policy_panel, stretch=1)
+        self._switch_armed = ""
+        self._build_secretary_panel(profile_lay)
 
         # Guestbook cluster (view + form) — closed by default; open via 留言.
         self.guestbook_frame = QFrame(self)
@@ -996,11 +1107,7 @@ class HakoniwaMapHud(QWidget):
         ]
         self._profile_basic_text = ""
         self._sync_policy_panel(state)
-        self._profile_secretary_text = (
-            "秘書：島務助理\n"
-            f"{state.secretary_line()}\n"
-            f"加成：每回合資金收支 +{SECRETARY_INCOME}"
-        )
+        self._sync_secretary_panel(state)
         have = set(state.achievements)
         earned_lines = []
         for key, label, funds in ACHIEVEMENTS:
@@ -1031,7 +1138,10 @@ class HakoniwaMapHud(QWidget):
         for pid, btn in self._policy_buttons.items():
             turns = state.policy_turns(pid)
             label = str(POLICY_SPECS[pid]["label"])
-            if turns is None:
+            locked = not state.policy_unlocked(pid)
+            if turns is None and locked:
+                title = f"{label}　未解鎖"
+            elif turns is None:
                 title = label
             elif turns > 0:
                 title = f"{label}　實施中　剩餘 {turns} 回合"
@@ -1040,7 +1150,7 @@ class HakoniwaMapHud(QWidget):
             btn.setText(f"{title}\n{policy_effect_text(pid)}")
             btn.blockSignals(True)
             btn.setChecked(turns is not None)
-            btn.setEnabled(turns is not None or not full)
+            btn.setEnabled(turns is not None or (not full and not locked))
             btn.blockSignals(False)
 
     def policy_page_text(self) -> str:
@@ -1050,6 +1160,316 @@ class HakoniwaMapHud(QWidget):
         for btn in self._policy_buttons.values():
             lines.append(btn.text())
         return "\n".join(lines)
+
+    def _secretary_label(self, text: str, kind: str) -> QLabel:
+        lab = QLabel(text)
+        lab.setObjectName(kind)
+        lab.setWordWrap(True)
+        lab.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        return lab
+
+    def _secretary_button(self, text: str) -> QPushButton:
+        btn = QPushButton(text)
+        btn.setObjectName("hakoniwaSecretaryBtn")
+        btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        return btn
+
+    def _secretary_frame(self, title: str) -> Tuple[QFrame, QVBoxLayout]:
+        frame = QFrame()
+        frame.setObjectName("hakoniwaSecretaryPanel")
+        lay = QVBoxLayout(frame)
+        lay.setContentsMargins(6, 4, 6, 4)
+        lay.setSpacing(2)
+        lay.addWidget(self._secretary_label(title, "hakoniwaSecretaryTitle"))
+        return frame, lay
+
+    def _build_secretary_panel(self, profile_lay: QVBoxLayout) -> None:
+        self._secretary_panel = QScrollArea(self.island_profile)
+        self._secretary_panel.setObjectName("hakoniwaSecretaryScroll")
+        self._secretary_panel.setWidgetResizable(True)
+        self._secretary_panel.setFrameShape(QFrame.Shape.NoFrame)
+        self._secretary_panel.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        page = QWidget()
+        page.setObjectName("hakoniwaSecretaryPage")
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        columns = QHBoxLayout()
+        columns.setSpacing(4)
+        left = QVBoxLayout()
+        right = QVBoxLayout()
+        left.setSpacing(2)
+        right.setSpacing(2)
+
+        card, card_lay = self._secretary_frame("執勤中祕書資訊")
+        head = QHBoxLayout()
+        self._sec_portrait = _PixelPortrait()
+        head.addWidget(self._sec_portrait, 0, Qt.AlignmentFlag.AlignTop)
+        head_text = QVBoxLayout()
+        self._sec_name = self._secretary_label("", "hakoniwaSecretaryTitle")
+        self._sec_level = self._secretary_label("", "hakoniwaSecretaryValue")
+        self._sec_art = self._secretary_label(
+            "2D 動態角色圖待島主提供", "hakoniwaSecretaryBody"
+        )
+        head_text.addWidget(self._sec_name)
+        head_text.addWidget(self._sec_level)
+        head_text.addWidget(self._sec_art)
+        head.addLayout(head_text, 1)
+        card_lay.addLayout(head)
+        self._sec_perk_radar = self._secretary_label("", "hakoniwaSecretaryGood")
+        self._sec_perk_farm = self._secretary_label("", "hakoniwaSecretaryGood")
+        self._sec_upkeep = self._secretary_label("", "hakoniwaSecretaryValue")
+        card_lay.addWidget(self._sec_perk_radar)
+        card_lay.addWidget(self._sec_perk_farm)
+        card_lay.addWidget(self._sec_upkeep)
+        left.addWidget(card)
+
+        talk, talk_lay = self._secretary_frame("建議與實時對話")
+        mood_row = QHBoxLayout()
+        self._sec_mini = _PixelPortrait()
+        self._sec_mini.setFixedSize(36, 42)
+        mood_row.addWidget(self._sec_mini, 0, Qt.AlignmentFlag.AlignTop)
+        self._sec_mood = self._secretary_label("", "hakoniwaSecretaryValue")
+        mood_row.addWidget(self._sec_mood, 1)
+        talk_lay.addLayout(mood_row)
+        self._sec_dialogue = self._secretary_label("", "hakoniwaSecretaryBody")
+        talk_lay.addWidget(self._sec_dialogue)
+        actions = QHBoxLayout()
+        self._sec_apply = self._secretary_button("執行建議政策")
+        self._sec_ignore = self._secretary_button("忽略")
+        self._sec_apply.clicked.connect(self._apply_dialogue)
+        self._sec_ignore.clicked.connect(self._ignore_dialogue)
+        actions.addWidget(self._sec_apply)
+        actions.addWidget(self._sec_ignore)
+        talk_lay.addLayout(actions)
+        left.addWidget(talk)
+
+        market, market_lay = self._secretary_frame("人才市場／行政總署人才招募")
+        market_lay.addWidget(
+            self._secretary_label("優秀的顧問是島嶼繁榮的基石。", "hakoniwaSecretaryBody")
+        )
+        self._sec_interview = self._secretary_button(
+            f"普通面試 {SECRETARY_INTERVIEW_COST}　C～R"
+        )
+        self._sec_headhunt = self._secretary_button(
+            f"獵頭招聘 {SECRETARY_HEADHUNT_COST}　SR 以上"
+        )
+        self._sec_ten = self._secretary_button(
+            f"十連聘僱 {SECRETARY_TEN_COST}　9 折"
+        )
+        self._sec_interview.clicked.connect(lambda: self._recruit("interview"))
+        self._sec_headhunt.clicked.connect(lambda: self._recruit("headhunt"))
+        self._sec_ten.clicked.connect(lambda: self._recruit("ten"))
+        market_lay.addWidget(self._sec_interview)
+        market_lay.addWidget(self._sec_headhunt)
+        market_lay.addWidget(self._sec_ten)
+        market_lay.addWidget(
+            self._secretary_label(
+                "剩餘免費次數 0　普通面試 C 70%／R 30%　獵頭 SSR 10%，其餘 SR（含克里斯）",
+                "hakoniwaSecretaryValue",
+            )
+        )
+        self._sec_result = self._secretary_label("", "hakoniwaSecretaryValue")
+        market_lay.addWidget(self._sec_result)
+        right.addWidget(market)
+
+        lab, lab_lay = self._secretary_frame("行政研究院／政策研發中心")
+        self._sec_research_buttons: Dict[str, QPushButton] = {}
+        self._sec_research_notes: Dict[str, QLabel] = {}
+        research_rows = (
+            (
+                RESEARCH_DRONE,
+                "科技　智慧型無人機防禦網",
+                "資金 1,000、3 回合。完成後解鎖『防空戰備戒嚴』。",
+            ),
+            (
+                RESEARCH_GREENHOUSE,
+                "經濟　氣候溫室農業發展",
+                "資金 800、糧食 300、3 回合。本島沒有寒冬減產，完成後每回合糧食 +8。",
+            ),
+            (
+                RESEARCH_LURE,
+                "特別　怪獸引誘與生態研究",
+                "需要秘書克里斯 LV.3。完成後可實施『怪獸誘捕與引流協議』。",
+            ),
+        )
+        for key, title, blurb in research_rows:
+            lab_lay.addWidget(self._secretary_label(title, "hakoniwaSecretaryTitle"))
+            note = self._secretary_label(blurb, "hakoniwaSecretaryBody")
+            self._sec_research_notes[key] = note
+            lab_lay.addWidget(note)
+            btn = self._secretary_button("可研發")
+            btn.clicked.connect(lambda _checked=False, project=key: self._start_research(project))
+            self._sec_research_buttons[key] = btn
+            lab_lay.addWidget(btn)
+        right.addWidget(lab)
+
+        columns.addLayout(left, 1)
+        columns.addLayout(right, 1)
+        outer.addLayout(columns)
+
+        roster, roster_lay = self._secretary_frame("內閣秘書處／換崗調配")
+        roster_lay.addWidget(
+            self._secretary_label(
+                f"交接費 {SECRETARY_SWITCH_COST} 資金，再點一次確認。",
+                "hakoniwaSecretaryBody",
+            )
+        )
+        self._sec_roster_host = QWidget()
+        self._sec_roster_row = QHBoxLayout(self._sec_roster_host)
+        self._sec_roster_row.setContentsMargins(0, 0, 0, 0)
+        self._sec_roster_row.setSpacing(4)
+        roster_lay.addWidget(self._sec_roster_host)
+        self._sec_expand = self._secretary_button(
+            f"+擴充欄位 {SECRETARY_EXPAND_COST}"
+        )
+        self._sec_expand.clicked.connect(self._expand_roster)
+        roster_lay.addWidget(self._sec_expand)
+        outer.addWidget(roster)
+        outer.addStretch(1)
+        self._secretary_panel.setWidget(page)
+        self._secretary_panel.setVisible(False)
+        profile_lay.addWidget(self._secretary_panel, stretch=1)
+        self._sec_notice = ""
+
+    def _sync_secretary_panel(self, state: IslandState) -> None:
+        sec = state.active_secretary()
+        if sec is None:
+            return
+        spec = sec.spec()
+        self._sec_portrait.set_mood(str(state.dialogue_state()["mood"]))
+        self._sec_name.setText(f"{sec.name()} · {sec.title()}")
+        efficiency = int(spec.get("efficiency") or 0)
+        self._sec_level.setText(f"LV.{sec.level}（政務效率 +{efficiency}%）")
+        if "radar" in sec.perks():
+            cut = int(round((1.0 - float(spec.get("spawn") or 1.0)) * 100))
+            self._sec_perk_radar.setText(
+                f"專長：防災雷達 怪物出現率 -{cut}%、天災警告提前 1 回合"
+            )
+        elif "efficiency" in sec.perks():
+            self._sec_perk_radar.setText(f"專長：政務效率 +{efficiency}%")
+        else:
+            self._sec_perk_radar.setText("專長：見習事務")
+        if "farming" in sec.perks():
+            self._sec_perk_farm.setText("被動：農務指導 糧食產量 +10%（無產量時 +2）")
+        else:
+            self._sec_perk_farm.setText("被動：無農業指導")
+        self._sec_upkeep.setText(f"維護成本：資金 -{int(spec['upkeep'])}／回合")
+        info = state.dialogue_state()
+        self._sec_mini.set_mood(str(info["mood"]))
+        self._sec_mood.setText(f"表情：{info['mood']}")
+        if info["dismissed"]:
+            self._sec_dialogue.setText("已忽略，下回合再看。")
+            self._sec_apply.setEnabled(False)
+            self._sec_ignore.setEnabled(False)
+        else:
+            self._sec_dialogue.setText(str(info["text"]))
+            policy = str(info["policy"] or "")
+            can_apply = bool(policy) and state.policy_unlocked(policy)
+            self._sec_apply.setEnabled(can_apply)
+            self._sec_ignore.setEnabled(True)
+        self._sec_result.setText(self._sec_notice)
+        for key, btn in self._sec_research_buttons.items():
+            status = state.research_status(key)
+            btn.setText(status)
+            btn.setEnabled(status == "可研發")
+        while self._sec_roster_row.count():
+            item = self._sec_roster_row.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        for member in state.secretaries:
+            if member.id == state.active_secretary_id:
+                label = f"{member.name()} 上陣中"
+            elif self._switch_armed == member.id:
+                label = f"{member.name()} 確認 {SECRETARY_SWITCH_COST}"
+            else:
+                label = f"{member.name()} 待命"
+            btn = self._secretary_button(label)
+            btn.setCheckable(True)
+            btn.setChecked(member.id == state.active_secretary_id)
+            btn.clicked.connect(
+                lambda _checked=False, sid=member.id: self._pick_secretary(sid)
+            )
+            self._sec_roster_row.addWidget(btn)
+        self._sec_roster_row.addStretch(1)
+        self._sec_expand.setEnabled(state.secretary_slots < 12)
+
+    def secretary_page_text(self) -> str:
+        parts = [
+            self._sec_name.text(),
+            self._sec_level.text(),
+            self._sec_perk_radar.text(),
+            self._sec_perk_farm.text(),
+            self._sec_upkeep.text(),
+            self._sec_mood.text(),
+            self._sec_dialogue.text(),
+            self._sec_result.text(),
+            "人才市場／行政總署人才招募",
+            "行政研究院／政策研發中心",
+            "內閣秘書處／換崗調配",
+            "執行建議政策",
+            "忽略",
+        ]
+        parts.extend(btn.text() for btn in self._sec_research_buttons.values())
+        return "\n".join(parts)
+
+    def _after_secretary(self, state: IslandState) -> None:
+        self.refresh_island_profile(state)
+        refresh = getattr(self, "_refresh_profile", None)
+        if refresh is not None:
+            refresh()
+        persist = getattr(self, "_persist_profile", None)
+        if persist is not None:
+            persist()
+
+    def _recruit(self, kind: str) -> None:
+        state = self.map.state
+        self._sec_notice = state.recruit(kind)
+        self._switch_armed = ""
+        self._after_secretary(state)
+
+    def _pick_secretary(self, sid: str) -> None:
+        state = self.map.state
+        spend = False
+        if sid == state.active_secretary_id:
+            self._switch_armed = ""
+        elif self._switch_armed != sid:
+            self._switch_armed = sid
+        else:
+            self._sec_notice = state.appoint(sid)
+            self._switch_armed = ""
+            spend = True
+        if spend:
+            QTimer.singleShot(0, lambda: self._after_secretary(state))
+        else:
+            QTimer.singleShot(0, lambda: self._sync_secretary_panel(state))
+
+    def _expand_roster(self) -> None:
+        state = self.map.state
+        self._sec_notice = state.expand_secretary_slots()
+        self._after_secretary(state)
+
+    def _start_research(self, key: str) -> None:
+        state = self.map.state
+        self._sec_notice = state.start_research(key)
+        self._after_secretary(state)
+
+    def _apply_dialogue(self) -> None:
+        state = self.map.state
+        if state.apply_dialogue_policy():
+            self._sec_notice = "已交給島嶼方針。"
+        else:
+            self._sec_notice = "現在不能實施這條方針。"
+        self._after_secretary(state)
+
+    def _ignore_dialogue(self) -> None:
+        state = self.map.state
+        state.dismiss_dialogue()
+        self._sec_notice = "已忽略。"
+        self._after_secretary(state)
 
     def _choose_policy(self, key: str) -> None:
         state = self.map.state
@@ -1074,14 +1494,15 @@ class HakoniwaMapHud(QWidget):
         basic = key == "basic"
         self._profile_scroll.setVisible(basic)
         self._policy_panel.setVisible(key == "policy")
-        self.island_profile_body.setVisible(key not in ("basic", "policy"))
+        self._secretary_panel.setVisible(key == "secretary")
+        self.island_profile_body.setVisible(key not in ("basic", "policy", "secretary"))
         if basic:
             self._profile_accordion.set_sections(self._profile_sections)
             self.island_profile_body.setText(self._profile_accordion.plain_text())
         elif key == "policy":
             self.island_profile_body.setText(self.policy_page_text())
         elif key == "secretary":
-            self.island_profile_body.setText(self._profile_secretary_text)
+            self.island_profile_body.setText(self.secretary_page_text())
         else:
             self.island_profile_body.setText(self._profile_achievement_text)
         self._layout_overlays()
@@ -1281,8 +1702,11 @@ class HakoniwaMapHud(QWidget):
         # settings／island profile stay compact above the icon bar.
         build_w = min(460, max(320, w // 2))
         settings_w = min(280, max(200, w // 3))
-        if getattr(self, "_profile_page", "") == "policy":
+        page = getattr(self, "_profile_page", "")
+        if page == "policy":
             profile_w = min(480, max(440, w // 2))
+        elif page == "secretary":
+            profile_w = min(680, max(600, (w * 2) // 3))
         else:
             profile_w = min(360, max(300, w // 3))
         gap_above_bar = 6

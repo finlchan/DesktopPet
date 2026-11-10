@@ -466,8 +466,9 @@ BUILDABLE = frozenset({"grass"})  # 平地 only（村／町／都市請先整地
 # 17 covers both migrations that previously each claimed this number:
 # legacy terrain village/town/city → grass + building (Cell.from_dict), and
 # island profile player_name / created_at (missing values default on load).
-# The policies list and achievements are optional keys; missing values stay
-# empty, so this version does not move.
+# The policies list, secretary roster, research, and achievements are optional
+# keys. Missing values stay empty or fall back to 艾莉絲, so this version
+# does not move.
 SAVE_VERSION = 17
 
 # Older saves stored one of these. The string is kept, and it no longer
@@ -624,7 +625,193 @@ def _parse_policy_orders(raw: Any) -> List[Tuple[str, int]]:
     return out
 
 
-SECRETARY_INCOME = 2  # the one starter secretary's bonus
+# On-duty secretary. The old flat +2 is gone; Alice's upkeep is the funds
+# number a new island shows. A future 2D animated portrait replaces the
+# pixel placeholder in the dialog.
+SECRETARY_SWITCH_COST = 50
+SECRETARY_EXPAND_COST = 500
+SECRETARY_SLOT_START = 3
+SECRETARY_SLOT_CAP = 12
+SECRETARY_INTERVIEW_COST = 300
+SECRETARY_HEADHUNT_COST = 1500
+SECRETARY_TEN_COST = 13500  # ten headhunts at 9 折
+SECRETARY_FOOD_PERCENT = 10
+SECRETARY_FOOD_FLOOR = 2  # 沒有產量時，農務指導仍讓糧食收支移動
+SECRETARY_LEVEL_TURNS = 3
+SECRETARY_LEVEL_CAP = 5
+GREENHOUSE_FOOD = 8  # 沒有寒冬結算，溫室完成後的實際糧食加成
+RESEARCH_DRONE = "drone"
+RESEARCH_GREENHOUSE = "greenhouse"
+RESEARCH_LURE = "lure_lab"
+RESEARCH_TURNS = {
+    RESEARCH_DRONE: 3,
+    RESEARCH_GREENHOUSE: 3,
+    RESEARCH_LURE: 1,
+}
+# template id → card. spawn is the radar multiplier. efficiency is percent
+# of this turn's positive funds yield. upkeep is deducted every turn.
+SECRETARY_TEMPLATES: Dict[str, Dict[str, Any]] = {
+    "alice": {
+        "name": "艾莉絲",
+        "title": "災害防務特務",
+        "rarity": "SR",
+        "perks": ("radar", "farming"),
+        "upkeep": 15,
+        "efficiency": 8,
+        "spawn": 0.8,
+    },
+    "hilda": {
+        "name": "希爾達",
+        "title": "極致精英",
+        "rarity": "SSR",
+        "perks": ("radar", "efficiency"),
+        "upkeep": 25,
+        "efficiency": 12,
+        "spawn": 0.7,
+    },
+    "mark": {
+        "name": "馬克",
+        "title": "專業人才",
+        "rarity": "SR",
+        "perks": ("efficiency",),
+        "upkeep": 12,
+        "efficiency": 10,
+        "spawn": 1.0,
+    },
+    "xiao": {
+        "name": "小莎",
+        "title": "實習人員",
+        "rarity": "R",
+        "perks": ("farming",),
+        "upkeep": 5,
+        "efficiency": 0,
+        "spawn": 1.0,
+    },
+    "chris": {
+        "name": "克里斯",
+        "title": "生態研究員",
+        "rarity": "SR",
+        "perks": ("radar",),
+        "upkeep": 10,
+        "efficiency": 0,
+        "spawn": 0.9,
+    },
+}
+# Starter funds modifier. Kept so older call sites can name the Alice upkeep.
+SECRETARY_INCOME = -int(SECRETARY_TEMPLATES["alice"]["upkeep"])
+ROSTER_FULL_TEXT = "秘書宿舍空間不足，請先擴充。"
+
+
+def secretary_result_line(template: str, rarity: str) -> str:
+    """Recruit banner. The three published lines stay word for word."""
+    if template == "hilda":
+        return (
+            "SSR【極致精英】獲得 SSR 秘書 [希爾達]！"
+            "「這座島嶼的未來，由我為您導航。」"
+        )
+    if template == "mark":
+        return (
+            "SR【專業人才】獲得 SR 秘書 [馬克]！"
+            "「隨時準備好為島主處理各項政務。」"
+        )
+    if template == "chris":
+        return (
+            "SR【專業人才】獲得 SR 秘書 [克里斯]！"
+            "「怪獸的習性，交給我來追。」"
+        )
+    rank = "C" if rarity == "C" else "R"
+    return (
+        f"R/C【實習人員】獲得 {rank} 秘書 [小莎]！"
+        "「會、會努力不給島上添麻煩的！」"
+    )
+
+
+@dataclass
+class Secretary:
+    id: str
+    template: str
+    level: int = 1
+    duty: int = 0
+    rarity: str = ""
+
+    def spec(self) -> Dict[str, Any]:
+        return SECRETARY_TEMPLATES.get(self.template) or SECRETARY_TEMPLATES["xiao"]
+
+    def name(self) -> str:
+        return str(self.spec()["name"])
+
+    def title(self) -> str:
+        return str(self.spec()["title"])
+
+    def rarity_label(self) -> str:
+        return self.rarity or str(self.spec()["rarity"])
+
+    def perks(self) -> Tuple[str, ...]:
+        raw = self.spec().get("perks") or ()
+        return tuple(str(item) for item in raw)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "template": self.template,
+            "level": int(self.level),
+            "duty": int(self.duty),
+            "rarity": self.rarity_label(),
+        }
+
+    @classmethod
+    def from_dict(cls, raw: Any) -> Optional["Secretary"]:
+        if not isinstance(raw, dict):
+            return None
+        template = str(raw.get("template") or "")
+        if template not in SECRETARY_TEMPLATES:
+            return None
+        try:
+            level = int(raw.get("level") or 1)
+        except (TypeError, ValueError):
+            level = 1
+        try:
+            duty = int(raw.get("duty") or 0)
+        except (TypeError, ValueError):
+            duty = 0
+        rarity = str(raw.get("rarity") or "")
+        sid = str(raw.get("id") or "").strip() or uuid.uuid4().hex[:8]
+        return cls(
+            id=sid,
+            template=template,
+            level=max(1, min(SECRETARY_LEVEL_CAP, level)),
+            duty=max(0, duty),
+            rarity=rarity,
+        )
+
+
+def _parse_secretaries(raw: Any) -> List[Secretary]:
+    if not isinstance(raw, list):
+        return []
+    out: List[Secretary] = []
+    seen = set()
+    for item in raw:
+        sec = Secretary.from_dict(item)
+        if sec is None or sec.id in seen:
+            continue
+        out.append(sec)
+        seen.add(sec.id)
+    return out
+
+
+def _parse_research(raw: Any) -> Dict[str, int]:
+    out = {RESEARCH_DRONE: -1, RESEARCH_GREENHOUSE: -1, RESEARCH_LURE: -1}
+    if not isinstance(raw, dict):
+        return out
+    for key in out:
+        if key not in raw:
+            continue
+        try:
+            value = int(raw[key])
+        except (TypeError, ValueError):
+            value = -1
+        out[key] = value if value >= 0 else -1
+    return out
 # id, label, one-time score. 溫泉開村 also unlocks placing 溫泉村.
 ACHIEVEMENTS = (
     ("first_village", "初村", 40),
@@ -975,6 +1162,11 @@ class IslandState:
     # still occupies a slot.
     policy_orders: List[Tuple[str, int]] = field(default_factory=list)
     achievements: List[str] = field(default_factory=list)
+    secretaries: List[Secretary] = field(default_factory=list)
+    active_secretary_id: str = ""
+    secretary_slots: int = SECRETARY_SLOT_START
+    research: Dict[str, int] = field(default_factory=dict)
+    dialogue_dismissed: str = ""
     cells: List[List[Cell]] = field(default_factory=list)
     log: List[str] = field(default_factory=list)
     comments: List[GuestbookEntry] = field(default_factory=list)
@@ -989,6 +1181,7 @@ class IslandState:
         if not self.cells:
             self.cells = self._new_map()
             self._log("島已生成：中央 7 格陸地（泥／草），沿岸淺灘，其餘為海。")
+        self._ensure_secretary()
 
     def _new_map(self) -> List[List[Cell]]:
         grid = [[Cell("sea") for _ in range(self.size)] for _ in range(self.size)]
@@ -1382,6 +1575,8 @@ class IslandState:
             return False
         kept = [item for item in self.policy_orders if item[0] != pid]
         if len(kept) == len(self.policy_orders):
+            if not self.policy_unlocked(pid):
+                return False
             if len(self.policy_orders) >= self.policy_slot_count():
                 return False
             self.funds -= POLICY_SWAP_COST
@@ -1406,11 +1601,296 @@ class IslandState:
         self.policy_orders = updated
         return notes
 
+    def _ensure_secretary(self) -> None:
+        """Old saves and a new island both start with 艾莉絲 on duty."""
+        if not self.research:
+            self.research = _parse_research(None)
+        else:
+            self.research = _parse_research(self.research)
+        if self.secretary_slots < 1:
+            self.secretary_slots = SECRETARY_SLOT_START
+        self.secretary_slots = max(
+            SECRETARY_SLOT_START,
+            min(SECRETARY_SLOT_CAP, int(self.secretary_slots)),
+        )
+        if not self.secretaries:
+            self.secretaries = [
+                Secretary(id="alice", template="alice", level=4, duty=0, rarity="SR")
+            ]
+            self.active_secretary_id = "alice"
+        if self.secretary_slots < len(self.secretaries):
+            self.secretary_slots = len(self.secretaries)
+        ids = {sec.id for sec in self.secretaries}
+        if self.active_secretary_id not in ids:
+            self.active_secretary_id = self.secretaries[0].id
+
+    def active_secretary(self) -> Optional[Secretary]:
+        for sec in self.secretaries:
+            if sec.id == self.active_secretary_id:
+                return sec
+        return self.secretaries[0] if self.secretaries else None
+
+    def secretary_upkeep(self) -> int:
+        """Negative funds per turn for the secretary on duty."""
+        sec = self.active_secretary()
+        if sec is None:
+            return 0
+        return -int(sec.spec()["upkeep"])
+
+    def secretary_efficiency_bonus(self, positive: int) -> int:
+        """政務效率：a percent of this turn's positive funds yield.
+
+        Alice carries it as her LV.4 line. Other cards need the efficiency perk.
+        """
+        sec = self.active_secretary()
+        if sec is None or positive <= 0:
+            return 0
+        if sec.template != "alice" and "efficiency" not in sec.perks():
+            return 0
+        percent = int(sec.spec().get("efficiency") or 0)
+        if percent <= 0:
+            return 0
+        return int(positive) * percent // 100
+
+    def secretary_food_bonus(self, produced: int) -> int:
+        """農務指導：+10% of food produced, or +2 when nothing was produced."""
+        sec = self.active_secretary()
+        if sec is None or "farming" not in sec.perks():
+            return 0
+        percent = int(produced) * SECRETARY_FOOD_PERCENT // 100
+        if percent >= SECRETARY_FOOD_FLOOR:
+            return percent
+        return SECRETARY_FOOD_FLOOR
+
+    def secretary_spawn_factor(self) -> float:
+        """防災雷達 multiplies the real monster chance. 1.0 when she has no radar."""
+        sec = self.active_secretary()
+        if sec is None or "radar" not in sec.perks():
+            return 1.0
+        return float(sec.spec().get("spawn") or 1.0)
+
+    def greenhouse_food(self) -> int:
+        if self.research_done(RESEARCH_GREENHOUSE):
+            return GREENHOUSE_FOOD
+        return 0
+
+    def research_done(self, key: str) -> bool:
+        return int(self.research.get(key, -1)) == 0
+
+    def policy_unlocked(self, pid: str) -> bool:
+        """防空戰備戒嚴 waits on the drone net. 誘捕 waits on the ecology lab."""
+        if pid == "martial":
+            return self.research_done(RESEARCH_DRONE)
+        if pid == "lure":
+            return self.research_done(RESEARCH_LURE)
+        return pid in POLICY_SPECS
+
+    def roster_full(self) -> bool:
+        return len(self.secretaries) >= self.secretary_slots
+
+    def _add_secretary(self, template: str, rarity: str) -> str:
+        sec = Secretary(
+            id=uuid.uuid4().hex[:8],
+            template=template,
+            level=1,
+            duty=0,
+            rarity=rarity,
+        )
+        self.secretaries.append(sec)
+        return secretary_result_line(template, rarity)
+
+    def _roll_headhunt_card(self) -> Tuple[str, str]:
+        roll = random.random()
+        if roll < 0.10:
+            return "hilda", "SSR"
+        if roll < 0.30:
+            return "chris", "SR"
+        return "mark", "SR"
+
+    def recruit(self, kind: str) -> str:
+        """Spend funds and roll. A full dorm spends nothing."""
+        if kind == "ten":
+            need = 10
+            cost = SECRETARY_TEN_COST
+        elif kind == "headhunt":
+            need = 1
+            cost = SECRETARY_HEADHUNT_COST
+        else:
+            kind = "interview"
+            need = 1
+            cost = SECRETARY_INTERVIEW_COST
+        if len(self.secretaries) + need > self.secretary_slots:
+            return ROSTER_FULL_TEXT
+        if self.funds < cost:
+            return "資金不足。"
+        self.funds -= cost
+        lines: List[str] = []
+        pulls = 10 if kind == "ten" else 1
+        for _ in range(pulls):
+            if kind == "interview":
+                rarity = "C" if random.random() < 0.7 else "R"
+                lines.append(self._add_secretary("xiao", rarity))
+            else:
+                template, rarity = self._roll_headhunt_card()
+                lines.append(self._add_secretary(template, rarity))
+        return "\n".join(lines)
+
+    def appoint(self, sid: str) -> str:
+        """Switch the secretary on duty. Costs 50. Perks apply immediately."""
+        target = next((sec for sec in self.secretaries if sec.id == sid), None)
+        if target is None:
+            return ""
+        if target.id == self.active_secretary_id:
+            return f"已任命 [{target.name()}] 為現任總助理，加成即時生效。"
+        if self.funds < SECRETARY_SWITCH_COST:
+            return "資金不足。"
+        self.funds -= SECRETARY_SWITCH_COST
+        self.active_secretary_id = target.id
+        return f"已任命 [{target.name()}] 為現任總助理，加成即時生效。"
+
+    def expand_secretary_slots(self) -> str:
+        if self.secretary_slots >= SECRETARY_SLOT_CAP:
+            return "宿舍已經不能再擴。"
+        if self.funds < SECRETARY_EXPAND_COST:
+            return "資金不足。"
+        self.funds -= SECRETARY_EXPAND_COST
+        self.secretary_slots += 1
+        return f"宿舍擴充完成，現有 {self.secretary_slots} 欄。"
+
+    def has_chris_level(self, level: int) -> bool:
+        return any(
+            sec.template == "chris" and sec.level >= level for sec in self.secretaries
+        )
+
+    def start_research(self, key: str) -> str:
+        if key not in RESEARCH_TURNS:
+            return ""
+        state = int(self.research.get(key, -1))
+        if state == 0:
+            return "已解鎖"
+        if state > 0:
+            return f"研發中　剩餘 {state} 回合"
+        if key == RESEARCH_LURE and not self.has_chris_level(3):
+            return "未開放"
+        cost = 0
+        food_cost = 0
+        if key == RESEARCH_DRONE:
+            cost = 1000
+        elif key == RESEARCH_GREENHOUSE:
+            cost = 800
+            food_cost = 300
+        if self.funds < cost or self.food < food_cost:
+            return "資金或糧食不足。"
+        self.funds -= cost
+        self.food -= food_cost
+        turns = RESEARCH_TURNS[key]
+        if turns <= 0:
+            self.research[key] = 0
+            return "已解鎖"
+        self.research[key] = turns
+        return f"研發中　剩餘 {turns} 回合"
+
+    def research_status(self, key: str) -> str:
+        state = int(self.research.get(key, -1))
+        if state == 0:
+            return "已解鎖"
+        if state > 0:
+            return f"研發中　剩餘 {state} 回合"
+        if key == RESEARCH_LURE and not self.has_chris_level(3):
+            return "未開放"
+        return "可研發"
+
+    def advance_research(self) -> List[str]:
+        notes: List[str] = []
+        labels = {
+            RESEARCH_DRONE: "智慧型無人機防禦網",
+            RESEARCH_GREENHOUSE: "氣候溫室農業發展",
+            RESEARCH_LURE: "怪獸引誘與生態研究",
+        }
+        for key in (RESEARCH_DRONE, RESEARCH_GREENHOUSE, RESEARCH_LURE):
+            left = int(self.research.get(key, -1))
+            if left <= 0:
+                continue
+            left -= 1
+            self.research[key] = left
+            if left == 0:
+                notes.append(f"研發完成：{labels[key]}")
+        return notes
+
+    def advance_secretary(self) -> List[str]:
+        sec = self.active_secretary()
+        if sec is None or sec.level >= SECRETARY_LEVEL_CAP:
+            return []
+        sec.duty += 1
+        if sec.duty < SECRETARY_LEVEL_TURNS:
+            return []
+        sec.duty = 0
+        sec.level += 1
+        return [f"秘書 {sec.name()} 升到 LV.{sec.level}"]
+
+    def dialogue_state(self) -> Dict[str, Any]:
+        """One line from food, a monster threat, low funds, or a quiet turn."""
+        if self.food < 100:
+            key = "food"
+            text = (
+                f"島主！糧食庫存僅剩 {self.food}，現有人口可能面臨饑荒！"
+                "建議立即實施『緊急糧食配給制』。"
+            )
+            policy = "ration"
+            mood = "緊張"
+        elif (
+            self.monsters
+            or self._monster_spawn_chance() >= 0.2
+            or self.shown_disaster() >= 3
+        ):
+            key = "threat"
+            text = (
+                "報告島主！預測下回合周圍海域將有怪獸出現／暴風雨！"
+                "建議啟用『防空戰備戒嚴』或開啟雷達防護！"
+            )
+            policy = "martial"
+            mood = "警告"
+        elif self.funds < 300:
+            key = "funds"
+            text = (
+                "島主……國庫資金快要見底了！"
+                "是否考慮頒佈『自由貿易免稅港』或暫停部分昂貴的軍備項目？"
+            )
+            policy = "freeport"
+            mood = "緊張"
+        else:
+            key = "idle"
+            text = "島上這回合治安良好，人口持續增長中！請繼續保持這份卓越的執政方針～"
+            policy = ""
+            mood = "開心"
+        return {
+            "key": key,
+            "text": text,
+            "policy": policy,
+            "mood": mood,
+            "dismissed": self.dialogue_dismissed == key,
+        }
+
+    def dismiss_dialogue(self) -> None:
+        self.dialogue_dismissed = str(self.dialogue_state()["key"])
+
+    def apply_dialogue_policy(self) -> bool:
+        """Adopt the suggested 島嶼方針 when it is unlocked and a slot is free."""
+        info = self.dialogue_state()
+        pid = str(info.get("policy") or "")
+        if not pid or info.get("dismissed"):
+            return False
+        if not self.policy_unlocked(pid):
+            return False
+        if self.policy_turns(pid) is not None:
+            return True
+        return self.toggle_policy(pid)
+
     def shown_income(self) -> int:
-        """Policy, secretary, and achievement modifiers for 每回合資金收支."""
+        """Policy, secretary upkeep, and achievement modifiers for 每回合資金收支."""
         return (
             self.policy_modifier_sum("funds")
-            + SECRETARY_INCOME
+            + self.secretary_upkeep()
             + ACHIEVEMENT_INCOME_EACH * len(self.achievements)
         )
 
@@ -1457,6 +1937,19 @@ class IslandState:
                 amusement_parks=self.amusement_park_count(),
             )
             + self.shown_income()
+            + self.secretary_efficiency_bonus(
+                factory_funds
+                + quarry_funds
+                + power_funds
+                + self.terrain_count("oilfield") * FUNDS_PER_OILFIELD
+                + tourism_funds(
+                    self.airport_count(),
+                    self.population,
+                    hotels=self.hotel_count(),
+                    casinos=self.casino_count(),
+                    amusement_parks=self.amusement_park_count(),
+                )
+            )
         )
         food_gain += self.aquafarm_count() * FOOD_PER_AQUAFARM
         food_need = max(0, (self.population // 500) * FOOD_PER_500_POP)
@@ -1479,6 +1972,8 @@ class IslandState:
             food = -self.food
             people = -min(self.population, max(10, self.population // 10))
         food += self.policy_modifier_sum("food")
+        food += self.secretary_food_bonus(food_gain)
+        food += self.greenhouse_food()
         people += self.policy_modifier_sum("people")
         if people > 0:
             people = min(max(0, 20000 - self.population), people)
@@ -1511,14 +2006,8 @@ class IslandState:
         return 0
 
     def secretary_line(self) -> str:
-        # A future pool of 2D animated secretaries replaces this single one.
-        if self.shown_housing() >= 5:
-            return "住宅需求偏高，先把住處補上。"
-        if self.shown_disaster() >= 5:
-            return "天災機會偏高，先把風險壓下來。"
-        if self.food < 100:
-            return "糧食偏低，先把肚子顧好。"
-        return "島上平靜，照現在的步調就可以。"
+        # 用戶日後提供 2D 動態角色圖。對白依糧食、怪獸、資金或平靜回合。
+        return str(self.dialogue_state()["text"])
 
     def achievement_score(self) -> int:
         total = 0
@@ -2083,9 +2572,10 @@ class IslandState:
         # Any 防衛設施 covering land → lower island spawn pressure (simple).
         if self.defense_positions():
             chance *= DEFENSE_SPAWN_FACTOR
-        # 生效中 policies multiply the real chance. 實施中 does not.
+        # 生效中 policies, then the on-duty secretary's radar.
         chance *= self.policy_spawn_factor()
-        return min(MONSTER_MAX_CHANCE, chance)
+        chance *= self.secretary_spawn_factor()
+        return min(MONSTER_MAX_CHANCE, max(0.0, chance))
 
     def _spawn_candidate_cells(self) -> List[Coord]:
         """Land cells for monster spawn; prefer cells not under defense cover."""
@@ -2517,7 +3007,12 @@ class IslandState:
         if food_need == 0 and self.population > 0:
             food_need = MIN_FOOD_NEED
 
+        funds_at_economy = self.funds
         self.food += food_gain
+        bonus_food = self.secretary_food_bonus(food_gain) + self.greenhouse_food()
+        if bonus_food:
+            self.food += bonus_food
+            notes.append(f"秘書與農業研發 糧食 +{bonus_food}")
         self.funds += funds_gain
         notes.append(
             f"農場×{farms} 產糧 +{food_gain - aqua_food}；"
@@ -2557,6 +3052,17 @@ class IslandState:
             if amusements:
                 tour_bits.append(f"遊樂園×{amusements}")
             notes.append(f"{'／'.join(tour_bits)} 觀光收入 +{tour_gain}")
+
+        # Secretary efficiency is a cut of the funds gained this turn, then upkeep.
+        gained = self.funds - funds_at_economy
+        efficiency = self.secretary_efficiency_bonus(gained)
+        if efficiency:
+            self.funds += efficiency
+            notes.append(f"秘書政務效率 +{efficiency}")
+        upkeep = self.secretary_upkeep()
+        if upkeep:
+            self.funds += upkeep
+            notes.append(f"秘書維護 {upkeep}")
 
         # 流動資金軟上限：有銀行緩衝／無銀行捨棄.
         notes.extend(self._apply_funds_cap())
@@ -2669,6 +3175,9 @@ class IslandState:
         )
         notes.extend(self.collect_achievements())
         notes.extend(self.advance_policies())
+        notes.extend(self.advance_research())
+        notes.extend(self.advance_secretary())
+        self.dialogue_dismissed = ""
 
         self.turn += 1
         for n in notes:
@@ -2734,6 +3243,11 @@ class IslandState:
                 {"id": pid, "turns": int(turns)} for pid, turns in self.policy_orders
             ],
             "achievements": list(self.achievements),
+            "secretaries": [sec.to_dict() for sec in self.secretaries],
+            "active_secretary": self.active_secretary_id,
+            "secretary_slots": int(self.secretary_slots),
+            "research": {key: int(value) for key, value in self.research.items()},
+            "dialogue_dismissed": self.dialogue_dismissed,
             "cells": [[c.to_dict() for c in row] for row in self.cells],
             "log": list(self.log[-40:]),
             "comments": [c.to_dict() for c in self.comments],
@@ -2772,6 +3286,14 @@ class IslandState:
             for item in (data.get("achievements") or [])
             if str(item) in ACHIEVEMENT_IDS
         ]
+        raw_secretaries = _parse_secretaries(data.get("secretaries"))
+        raw_active = str(data.get("active_secretary") or "")
+        try:
+            raw_slots = int(data.get("secretary_slots") or SECRETARY_SLOT_START)
+        except (TypeError, ValueError):
+            raw_slots = SECRETARY_SLOT_START
+        raw_research = _parse_research(data.get("research"))
+        raw_dismissed = str(data.get("dialogue_dismissed") or "")
         state = cls(
             size=size,
             turn=int(data.get("turn") or 1),
@@ -2791,6 +3313,11 @@ class IslandState:
             policy=raw_policy,
             policy_orders=raw_orders,
             achievements=raw_achievements,
+            secretaries=raw_secretaries,
+            active_secretary_id=raw_active,
+            secretary_slots=raw_slots,
+            research=raw_research,
+            dialogue_dismissed=raw_dismissed,
             cells=parsed if ok else [],
             log=[str(x) for x in (data.get("log") or [])][-80:],
             comments=_parse_comments(data.get("comments")),

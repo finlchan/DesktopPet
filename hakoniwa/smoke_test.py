@@ -372,6 +372,20 @@ def test_catalog_costs():
     assert scaled_yield(10, 0, 1000) == 0
 
 
+def _alice_funds(gained: int) -> int:
+    """Alice takes 8% of a positive yield, then her 15 upkeep."""
+    bonus = int(gained) * 8 // 100 if gained > 0 else 0
+    return int(gained) + bonus - 15
+
+
+def _guided_food(produced: int) -> int:
+    """農務指導：10% of production, and at least +2."""
+    bonus = int(produced) * 10 // 100
+    if bonus < 2:
+        bonus = 2
+    return int(produced) + bonus
+
+
 def test_new_island_and_loop():
     state = IslandState.new_game()
     assert state.land_count() == 7
@@ -493,8 +507,8 @@ def test_new_island_and_loop():
     # Food rose by farm yield then fell by need; net should reflect production.
     assert farms == 1
     # pop=100 fills 1 farm (100 slots) → full food yield.
-    assert state.food == food_before + farms * FOOD_PER_FARM - 20  # pop < 500 → min need
-    assert state.funds == funds_before + factories * FUNDS_PER_FACTORY
+    assert state.food == food_before + _guided_food(farms * FOOD_PER_FARM) - 20
+    assert state.funds == funds_before + _alice_funds(factories * FUNDS_PER_FACTORY)
     assert state.food > 0
 
 
@@ -970,15 +984,15 @@ def test_mountain_quarry_labor():
         funds_before = state.funds
         notes = state.next_turn()
         assert any("勞動：" in n and "採掘場 0/" in n for n in notes)
-        assert state.food == food_before + FOOD_PER_FARM - 20  # pop < 500 → min need
-        assert state.funds == funds_before  # quarry/factory unstaffed
+        assert state.food == food_before + _guided_food(FOOD_PER_FARM) - 20
+        assert state.funds == funds_before + _alice_funds(0)
 
         # With spare labor after farm, quarry produces full funds.
         state.population = LABOR_PER_FARM + LABOR_PER_QUARRY  # 600
         funds_before = state.funds
         notes = state.next_turn()
         assert any("採掘場 500/500" in n for n in notes)
-        assert state.funds == funds_before + FUNDS_PER_QUARRY
+        assert state.funds == funds_before + _alice_funds(FUNDS_PER_QUARRY)
     finally:
         (
             model_mod.FIRE_BASE_CHANCE,
@@ -1119,7 +1133,7 @@ def test_breakwater_oilfield_tsunami():
         funds_before = state.funds
         notes = state.next_turn()
         assert any(f"海底油田×{oils}" in n for n in notes)
-        assert state.funds == funds_before + oils * FUNDS_PER_OILFIELD
+        assert state.funds == funds_before + _alice_funds(oils * FUNDS_PER_OILFIELD)
     finally:
         (
             model_mod.FIRE_BASE_CHANCE,
@@ -1575,7 +1589,7 @@ def test_airport_and_tourism_buffs():
         notes = state.next_turn()
         assert any("觀光收入" in n for n in notes)
         assert state.airport_count() == 1
-        assert state.funds == funds_before_turn + expected_tour
+        assert state.funds == funds_before_turn + _alice_funds(expected_tour)
 
         # Attract + airport inbound extra.
         state.funds = COST_ATTRACT + 30
@@ -1823,7 +1837,7 @@ def test_hotel_casino_tourism():
         assert "賭場" in " ".join(notes) or any("賭場" in n for n in notes)
         assert state.hotel_count() == 1
         assert state.casino_count() == 1
-        assert state.funds == funds_before_turn + expected_tour
+        assert state.funds == funds_before_turn + _alice_funds(expected_tour)
     finally:
         model_mod.FIRE_BASE_CHANCE = old_fire
         model_mod.TYPHOON_BASE_CHANCE = old_ty
@@ -2066,13 +2080,13 @@ def test_aquafarm_amusement_power():
         assert "工場供電" in joined  # factory funds × (1 + POWER_FACTORY_BONUS)
         assert "遊樂園×1" in joined and "觀光收入" in joined
         # Food: 農場 0 + 養殖場 30；人口 5000 消耗 (5000//500)×100 = 1000.
-        assert state.food == food_before + FOOD_PER_AQUAFARM - 1000
+        assert state.food == food_before + _guided_food(FOOD_PER_AQUAFARM) - 1000
         # Funds: 工場滿產 10 × 1.2 = 12、發電廠 15、遊樂園觀光（依人口）.
         expected_tour = tourism_funds(0, 5000, amusement_parks=1)
         assert expected_tour == (
             AMUSEMENT_TOURISM_BASE + 50 * AMUSEMENT_TOURISM_PER_100_POP
         )
-        assert state.funds == funds_before + (
+        assert state.funds == funds_before + _alice_funds(
             int(FUNDS_PER_FACTORY * (1 + POWER_FACTORY_BONUS))
             + FUNDS_PER_POWER_PLANT
             + expected_tour
@@ -2932,8 +2946,8 @@ def test_dialog_import_offscreen():
     assert dlg.hud._profile_page == "basic"
     basic = dlg.hud.island_profile_body.text()
     for row in (
-        "每回合資金收支：+2",
-        "每回合糧食收支：-20",
+        "每回合資金收支：-15",
+        "每回合糧食收支：-18",
         "每回合人口變化：+0",
         "居民滿意度：0",
         "稅率：0",
@@ -3033,8 +3047,10 @@ def test_dialog_import_offscreen():
     dlg.state.policy_orders = []
     dlg.hud.refresh_island_profile(dlg.state)
     dlg.hud.show_island_profile_page("secretary")
-    assert "島務助理" in dlg.hud.island_profile_body.text()
-    assert "島上平靜" in dlg.hud.island_profile_body.text()
+    assert "艾莉絲" in dlg.hud.island_profile_body.text()
+    assert "治安良好" in dlg.hud.island_profile_body.text()
+    assert "執行建議政策" in dlg.hud.island_profile_body.text()
+    assert "人才市場／行政總署人才招募" in dlg.hud.island_profile_body.text()
     dlg.hud.show_island_profile_page("achievements")
     assert "初村：未達成" in dlg.hud.island_profile_body.text()
     assert "溫泉開村：未達成" in dlg.hud.island_profile_body.text()
@@ -4613,6 +4629,7 @@ def test_info_policy_secretary_achievements():
         SAVE_VERSION,
         SECRETARY_INCOME,
         START_FUNDS,
+        Secretary,
         TOWN_TO_CITY_POP,
         VILLAGE_TO_TOWN_POP,
         policy_effect_text,
@@ -4625,7 +4642,7 @@ def test_info_policy_secretary_achievements():
     assert state.policy_slot_count() == 1
     assert state.achievements == []
     assert state.shown_income() == SECRETARY_INCOME
-    assert state.shown_turn_balances() == (SECRETARY_INCOME, -20, 0)
+    assert state.shown_turn_balances() == (SECRETARY_INCOME, -18, 0)
     assert state.shown_air() == 0
     assert state.shown_water() == 0
     assert state.shown_disaster() == 0
@@ -4633,9 +4650,9 @@ def test_info_policy_secretary_achievements():
     assert state.shown_unemployment() == 0
     assert state.shown_crime() == 0
     assert state.shown_green() == 0
-    assert "平靜" in state.secretary_line()
+    assert "治安良好" in state.secretary_line()
     state.food = 40
-    assert "糧食偏低" in state.secretary_line()
+    assert "緊急糧食配給制" in state.secretary_line()
     state.food = 500
 
     ids = [pid for _title, group in POLICY_GROUPS for pid in group]
@@ -4674,7 +4691,7 @@ def test_info_policy_secretary_achievements():
     assert state.toggle_policy("ration") is True
     assert state.funds == START_FUNDS - POLICY_SWAP_COST
     assert state.policy_orders == [("ration", POLICY_LEAD_TURNS)]
-    assert state.shown_turn_balances() == (SECRETARY_INCOME, -20, 0)
+    assert state.shown_turn_balances() == (SECRETARY_INCOME, -18, 0)
     assert state.shown_crime() == 0
     assert state.toggle_policy("intensive") is False
     assert state.funds == START_FUNDS - POLICY_SWAP_COST
@@ -4684,7 +4701,7 @@ def test_info_policy_secretary_achievements():
     assert state.advance_policies() == ["方針生效：緊急糧食配給制"]
     assert state.policy_orders == [("ration", 0)]
     assert state.shown_crime() == 2
-    assert state.shown_turn_balances() == (SECRETARY_INCOME, -10, -2)
+    assert state.shown_turn_balances() == (SECRETARY_INCOME, -8, -2)
     state.population = VILLAGE_TO_TOWN_POP - 1
     assert state.policy_slot_count() == 1
     state.population = VILLAGE_TO_TOWN_POP
@@ -4716,7 +4733,7 @@ def test_info_policy_secretary_achievements():
     state.policy_orders = [("lure", 0)]
     assert state._monster_spawn_chance() == bare * 1.5
     state.policy_orders = [("martial", 0)]
-    assert state._monster_spawn_chance() == bare * 0.7
+    assert abs(state._monster_spawn_chance() - bare * 0.7) < 1e-9
 
     state.funds = POLICY_SWAP_COST - 1
     state.policy_orders = []
@@ -4805,6 +4822,64 @@ def test_info_policy_secretary_achievements():
     assert bare_load.policy == ""
     assert bare_load.policy_orders == []
     assert bare_load.achievements == []
+    assert bare_load.active_secretary() is not None
+    assert bare_load.active_secretary().name() == "艾莉絲"
+
+    desk = IslandState.new_game()
+    assert desk.secretary_food_bonus(0) == 2
+    assert desk.secretary_food_bonus(100) == 10
+    assert desk.secretary_upkeep() == -15
+    assert desk.policy_unlocked("martial") is False
+    assert desk.toggle_policy("martial") is False
+    desk.population = 400
+    desk.turn = 6
+    with_radar = desk._monster_spawn_chance()
+    desk.secretaries.append(
+        Secretary(id="mark-1", template="mark", level=1, rarity="SR")
+    )
+    desk.active_secretary_id = "mark-1"
+    assert abs(desk._monster_spawn_chance() - with_radar / 0.8) < 1e-9
+    desk.active_secretary_id = "alice"
+    assert desk.start_research("drone").startswith("研發中")
+    assert desk.funds == START_FUNDS - 1000
+    for _ in range(3):
+        desk.advance_research()
+    assert desk.policy_unlocked("martial")
+    assert desk.research_status("lure_lab") == "未開放"
+    desk.secretaries.append(
+        Secretary(id="chris-1", template="chris", level=3, rarity="SR")
+    )
+    assert desk.research_status("lure_lab") == "可研發"
+    assert desk.start_research("lure_lab").startswith("研發中")
+    desk.advance_research()
+    assert desk.policy_unlocked("lure")
+    desk.funds = 800
+    desk.food = 400
+    assert desk.start_research("greenhouse").startswith("研發中")
+    assert desk.food == 100
+    for _ in range(3):
+        desk.advance_research()
+    assert desk.greenhouse_food() == 8
+    desk.funds = 2000
+    desk.secretary_slots = 8
+    assert "小莎" in desk.recruit("interview")
+    assert desk.funds == 1700
+    assert "宿舍" in desk.recruit("ten")
+    while not desk.roster_full():
+        desk.funds = 1000
+        desk.recruit("interview")
+    assert desk.recruit("headhunt") == "秘書宿舍空間不足，請先擴充。"
+    newbie = next(sec for sec in desk.secretaries if sec.template == "xiao")
+    desk.funds = 50
+    assert desk.appoint(newbie.id).startswith("已任命")
+    assert desk.funds == 0
+    desk.food = 40
+    desk.funds = 1000
+    assert desk.dialogue_state()["policy"] == "ration"
+    assert desk.apply_dialogue_policy() is True
+    assert desk.policy_orders[0][0] == "ration"
+    desk.dismiss_dialogue()
+    assert desk.dialogue_state()["dismissed"] is True
     print("info policy / secretary / achievements OK")
 
 
