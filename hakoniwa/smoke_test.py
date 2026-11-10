@@ -2923,6 +2923,53 @@ def test_dialog_import_offscreen():
     dlg.hud.refresh_island_profile(dlg.state)
     assert "玩家" in dlg.hud.island_profile_body.text()
     assert "建島" in dlg.hud.island_profile_body.text()
+    assert [b.text() for b in dlg.hud._profile_tab_buttons.values()] == [
+        "基本資料",
+        "島嶼方針",
+        "秘書助理",
+        "成就系統",
+    ]
+    assert dlg.hud._profile_page == "basic"
+    basic = dlg.hud.island_profile_body.text()
+    for row in (
+        "每回合收入：0",
+        "每回合支出：0",
+        "住宅需求：0",
+        "商店需求：0",
+        "工廠需求：0",
+        "空氣污染指數：0",
+        "水源污染指數：0",
+        "天災機會率：0",
+        "發射飛機數目：0",
+        "擊退本島怪物數次：0",
+        "擊退其他島怪物數次：0",
+    ):
+        assert row in basic, row
+    from hakoniwa.dialog import _format_percent
+
+    assert f"怪物出現率：{_format_percent(dlg.state._monster_spawn_chance())}" in basic
+    saved_pop, saved_turn = dlg.state.population, dlg.state.turn
+    dlg.state.population = 400
+    dlg.state.turn = 6
+    dlg.hud.refresh_island_profile(dlg.state)
+    assert dlg.state._monster_spawn_chance() > 0
+    assert (
+        f"怪物出現率：{_format_percent(dlg.state._monster_spawn_chance())}"
+        in dlg.hud.island_profile_body.text()
+    )
+    dlg.state.population = saved_pop
+    dlg.state.turn = saved_turn
+    dlg.hud.refresh_island_profile(dlg.state)
+    dlg.hud.show_island_profile_page("policy")
+    assert dlg.hud._profile_tab_buttons["policy"].isChecked()
+    assert dlg.hud.island_profile_body.text() == "尚未決定。"
+    dlg.hud.show_island_profile_page("secretary")
+    assert dlg.hud.island_profile_body.text() == "尚未決定。"
+    dlg.hud.show_island_profile_page("achievements")
+    assert dlg.hud.island_profile_body.text() == "尚未決定。"
+    dlg.hud.show_island_profile_page("basic")
+    assert "玩家" in dlg.hud.island_profile_body.text()
+    assert "住宅需求：0" in dlg.hud.island_profile_body.text()
 
     # No top instruction banner (「點選格子…」/ shortcut strip) on open.
     from PySide6.QtWidgets import QLabel

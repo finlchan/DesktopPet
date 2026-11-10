@@ -23,6 +23,7 @@ from PySide6.QtGui import (
     QShowEvent,
 )
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QDialog,
     QFrame,
     QHBoxLayout,
@@ -143,6 +144,24 @@ _ACCENT_BORDER = "rgba(220, 140, 60, 230)"
 _HUD_TEXT = "#e6f8f5"
 _HUD_TEXT_DIM = "#a8d0c8"
 
+# 資訊 drawer pages. Only the first has rows; the rest stay blank on purpose.
+_PROFILE_PAGES: Tuple[Tuple[str, str], ...] = (
+    ("basic", "基本資料"),
+    ("policy", "島嶼方針"),
+    ("secretary", "秘書助理"),
+    ("achievements", "成就系統"),
+)
+_PROFILE_BLANK = "尚未決定。"
+
+
+def _format_percent(chance: float) -> str:
+    """Show a model rate as a percent. Whole numbers stay whole."""
+    pct = max(0.0, float(chance)) * 100.0
+    nearest = round(pct)
+    if abs(pct - nearest) < 0.05:
+        return f"{int(nearest)}%"
+    return f"{pct:.1f}%"
+
 # In-map HUD styles (status / tile / log / guestbook / tools).
 # Status strip: fully frameless over the map (no green box); digit cells
 # carry their own dark fill in odometer.DigitReel.
@@ -197,12 +216,22 @@ QLabel#hakoniwaHudCaption {{
     border: none;
     padding: 0;
 }}
-QLabel#hakoniwaIslandProfileTitle {{
-    color: {_HUD_TEXT};
-    font-size: 12pt;
+QPushButton#hakoniwaIslandProfileTab {{
+    background-color: rgba(14, 32, 36, 180);
+    color: {_HUD_TEXT_DIM};
+    border: 1px solid {_DRAWER_BORDER};
+    border-radius: 3px;
+    padding: 4px 2px;
+    font-size: 9pt;
     font-weight: bold;
-    background: transparent;
-    border: none;
+}}
+QPushButton#hakoniwaIslandProfileTab:checked {{
+    background-color: {_ACCENT_BG};
+    color: #fff8f0;
+    border: 1px solid {_ACCENT_BORDER};
+}}
+QPushButton#hakoniwaIslandProfileTab:hover:!checked {{
+    background-color: rgba(28, 52, 56, 220);
 }}
 QLabel#hakoniwaIslandProfileBody {{
     color: {_HUD_TEXT_DIM};
@@ -299,7 +328,7 @@ class HakoniwaMapHud(QWidget):
       - tools / settings / island-profile drawers → above icon bar when open
 
     「通知」opens a small menu: 歷史記錄框 / 警報 / 方格資訊 (independent).
-    「資訊」shows 本島基本資料 (player／created／name／turn／size…) — not tile info.
+    「資訊」shows four pages. 基本資料 is the island profile; the other three stay blank.
     """
 
     def __init__(self, map_widget: HakoniwaMapWidget, parent=None):
@@ -419,16 +448,35 @@ class HakoniwaMapHud(QWidget):
         self.settings_layout.setSpacing(4)
         settings_outer.addWidget(self.settings_body)
 
-        # 資訊 → 本島基本資料 (not tile info).
+        # 資訊 → four pages. The old title is the tab row (not tile info).
         self.island_profile = QFrame(self)
         self.island_profile.setObjectName("hakoniwaIslandProfile")
         self.island_profile.setVisible(False)
         profile_lay = QVBoxLayout(self.island_profile)
         profile_lay.setContentsMargins(8, 6, 8, 6)
         profile_lay.setSpacing(4)
-        self.island_profile_title = QLabel("本島基本資料")
-        self.island_profile_title.setObjectName("hakoniwaIslandProfileTitle")
-        profile_lay.addWidget(self.island_profile_title)
+        self._profile_page = "basic"
+        self._profile_basic_text = ""
+        self._profile_tab_buttons: Dict[str, QPushButton] = {}
+        self._profile_tabs = QButtonGroup(self.island_profile)
+        self._profile_tabs.setExclusive(True)
+        tab_row = QHBoxLayout()
+        tab_row.setSpacing(4)
+        for key, label in _PROFILE_PAGES:
+            btn = QPushButton(label)
+            btn.setObjectName("hakoniwaIslandProfileTab")
+            btn.setCheckable(True)
+            btn.setChecked(key == "basic")
+            btn.setSizePolicy(
+                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+            )
+            self._profile_tabs.addButton(btn)
+            self._profile_tab_buttons[key] = btn
+            btn.clicked.connect(
+                lambda _checked=False, page=key: self.show_island_profile_page(page)
+            )
+            tab_row.addWidget(btn)
+        profile_lay.addLayout(tab_row)
         self.island_profile_body = QLabel("")
         self.island_profile_body.setObjectName("hakoniwaIslandProfileBody")
         self.island_profile_body.setWordWrap(True)
@@ -548,9 +596,12 @@ class HakoniwaMapHud(QWidget):
         self._layout_overlays()
 
     def refresh_island_profile(self, state: IslandState) -> None:
-        """Fill 資訊 panel from island model fields."""
+        """Fill 基本資料 from fields the model already has. Other pages stay blank."""
         created = str(getattr(state, "created_at", "") or "").strip() or "—"
         player = str(getattr(state, "player_name", "") or "").strip() or "—"
+        # Only 怪物出現率 is already a model query. The other added rows are
+        # not tracked (no income ledger, demand, pollution, flights, or kills).
+        spawn = _format_percent(state._monster_spawn_chance())
         lines = [
             f"島名：{state.name}",
             f"玩家：{player}",
@@ -562,9 +613,34 @@ class HakoniwaMapHud(QWidget):
             f"人口：{state.population}",
             f"資金：{state.funds}",
             f"糧食：{state.food}",
+            "每回合收入：0",
+            "每回合支出：0",
+            "住宅需求：0",
+            "商店需求：0",
+            "工廠需求：0",
+            "空氣污染指數：0",
+            "水源污染指數：0",
+            "天災機會率：0",
+            f"怪物出現率：{spawn}",
+            "發射飛機數目：0",
+            "擊退本島怪物數次：0",
+            "擊退其他島怪物數次：0",
         ]
-        self.island_profile_title.setText(state.name or "本島基本資料")
-        self.island_profile_body.setText("\n".join(lines))
+        self._profile_basic_text = "\n".join(lines)
+        self.show_island_profile_page(self._profile_page)
+
+    def show_island_profile_page(self, key: str) -> None:
+        """Switch the 資訊 drawer. Only 基本資料 has rows."""
+        if key not in self._profile_tab_buttons:
+            key = "basic"
+        self._profile_page = key
+        btn = self._profile_tab_buttons[key]
+        if not btn.isChecked():
+            btn.setChecked(True)
+        if key == "basic":
+            self.island_profile_body.setText(self._profile_basic_text)
+        else:
+            self.island_profile_body.setText(_PROFILE_BLANK)
 
     def _show_notify_menu(self) -> None:
         """Popup: checkable 歷史記錄框 / 警報 / 方格資訊 under the bell."""
@@ -761,7 +837,7 @@ class HakoniwaMapHud(QWidget):
         # settings／island profile stay compact above the icon bar.
         build_w = min(460, max(320, w // 2))
         settings_w = min(280, max(200, w // 3))
-        profile_w = min(260, max(200, w // 3))
+        profile_w = min(360, max(300, w // 3))
         gap_above_bar = 6
         full_h = max(220, btn_y - gap_above_bar - margin)
 
@@ -774,7 +850,7 @@ class HakoniwaMapHud(QWidget):
                 settings_w, settings_h,
             )
         if not self.island_profile.isHidden():
-            profile_h = min(220, full_h)
+            profile_h = min(520, full_h)
             self.island_profile.setGeometry(
                 margin, max(margin, btn_y - gap_above_bar - profile_h),
                 profile_w, profile_h,
