@@ -59,7 +59,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261106.06"
+APP_VERSION = "261114.01"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -2456,12 +2456,13 @@ def _survey_round(value, decimals):
 # ---------------------------------------------------------------------------
 # Free Station Excel import (Free Station sheet → dialog fields)
 #
-# Annotated / 4-BS layout (IMPORT map): standing D12, inst. ht H12; BS1–3
-# Name / E / N / RL at D/E/F/G rows 13–15; BS4 Name/E/N/RL at D/E/F/G 17;
-# face obs C/D/E/F rows 25–32 (BS1..BS4).
+# Annotated layout (IMPORT map): standing D12, inst. ht H12; BS1–3 Name /
+# E/N/RL at D/E/F/G rows 13–15; face obs C/D/E/F rows 25–30.
 # Classic Free_Station_FAI.xls V1.00: standing D10, inst. ht H10; Name /
-# E/N/RL at D/E/F/G rows 14–17 (row 13 is the Station/E/N/RL header);
+# E/N/RL at D/E/F/G rows 14–16 (row 13 is the Station/E/N/RL header);
 # BS1–3 faces at rows 20–21 / 24–25 / 28–29. Auto-detected.
+# BS4 is never imported — left blank for manual entry (D17 on radiation /
+# tacheometry sheets is often "Computed Bearing", not a backsight).
 # Readers: openpyxl for .xlsx/.xlsm, xlrd for .xls (see requirements.txt).
 # ---------------------------------------------------------------------------
 _FS_SHEET_NAMES = ("free station", "freestation")
@@ -2618,23 +2619,25 @@ def parse_free_station_workbook(path):
     else:
         classic = False
 
+    empty_face = {"bearing": "", "va": "", "sd": "", "sh": ""}
+
     if classic:
         station_name = d10
         inst_height = text("H", 10)
-        # Classic obs rows (FL/FR); BS4 unused in V1.00 templates.
-        obs_rows = [(20, 21), (24, 25), (28, 29), (None, None)]
+        # Classic obs rows (FL/FR); BS4 left blank for manual entry.
+        obs_rows = [(20, 21), (24, 25), (28, 29)]
         # Row 13 is the Station/Easting/Northing/RL header on V1.00 sheets.
-        name_rows = (14, 15, 16, 17)
+        name_rows = (14, 15, 16)
     else:
         station_name = d12
         inst_height = text("H", 12)
-        obs_rows = [(25, 26), (27, 28), (29, 30), (31, 32)]
-        # Annotated map: BS1–3 Name at D13–D15; BS4 keeps prior D17 mapping.
-        name_rows = (13, 14, 15, 17)
+        obs_rows = [(25, 26), (27, 28), (29, 30)]
+        # Annotated map: BS1–3 Name at D13–D15 only. Do not read D17 —
+        # on tacheometry/radiation books that cell is Computed Bearing.
+        name_rows = (13, 14, 15)
 
     backsights = []
-    for idx in range(4):
-        row = name_rows[idx]  # Name at D{row}; E/F/G same row for E/N/RL
+    for idx, row in enumerate(name_rows):
         name = text("D", row)
         easting = text("E", row)
         northing = text("F", row)
@@ -2643,7 +2646,7 @@ def parse_free_station_workbook(path):
 
         def face(obs_row):
             if obs_row is None:
-                return {"bearing": "", "va": "", "sd": "", "sh": ""}
+                return dict(empty_face)
             return {
                 "bearing": text("C", obs_row),
                 "va": text("D", obs_row),
@@ -2655,8 +2658,7 @@ def parse_free_station_workbook(path):
         if name:
             f1, f2 = face(f1_row), face(f2_row)
         else:
-            empty = {"bearing": "", "va": "", "sd": "", "sh": ""}
-            f1, f2 = empty, empty
+            f1, f2 = dict(empty_face), dict(empty_face)
         backsights.append(
             {
                 "name": name,
@@ -2667,6 +2669,27 @@ def parse_free_station_workbook(path):
                 "f2": f2,
             }
         )
+
+    # Always expose four slots; BS4 stays empty for manual user entry.
+    while len(backsights) < 4:
+        backsights.append(
+            {
+                "name": "",
+                "easting": "",
+                "northing": "",
+                "rl": "",
+                "f1": dict(empty_face),
+                "f2": dict(empty_face),
+            }
+        )
+    backsights[3] = {
+        "name": "",
+        "easting": "",
+        "northing": "",
+        "rl": "",
+        "f1": dict(empty_face),
+        "f2": dict(empty_face),
+    }
 
     return {
         "station_name": station_name,
