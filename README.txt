@@ -1,415 +1,76 @@
 Desktop Pet
 ==================
 
-Version: 261106.01
-Published: 2026-11-06
+Version: 261114.01
+Published: 2026-11-14
 
 A floating shortcut menu and document record gadget on the Windows desktop.
 
 Note: from version 261027.01 this README is English-only. Earlier releases
 shipped a bilingual (English + Traditional Chinese) README; the Chinese half
-was dropped when the app UI was fully translated to English.
+was dropped when the app UI was fully translated to English. Feature names
+below keep the bilingual UI labels where the menus show them.
 
 Features
 --------
-1. Displays a small icon on the desktop (custom image or auto-rotating image set).
-2. Click the icon to toggle the Folder Shortcuts menu (open if closed,
-   close the whole UI if open).
-3. The top of the menu shows "Folder Shortcuts フォルダー ショートカット"
-   for opening local folders (with search/filter; Float Drift title motion).
-4. Below that, four Social Icon Fill circles: File/URL Shortcuts 指定傳送
-   (arrow), Document Record 文檔紀錄 (paper), Mini Programs 副程式
-   (calculator), Settings (gear). File/URL submenu title uses
-   顫抖穩定／Jitter Settle; soft sky glow on titles.
-5. Document Record 文檔紀錄 submenu: browse/search files; header title uses
-   崩落／Crumble Down motion; "Open folder" opens storage folder(s).
-6. Mini Programs 副程式: Text records and Calculations (Level calc / Slope
-   calc / Free station / Alignment(1) / Alignment(2)), plus Pomodoro, Translate,
-   箱庭島（未完成）／Hakoniwa (WIP) (island sim entry kept; marked unfinished),
-   and 透明魚缸（未完成）／Fish Tank (WIP) (Phase 1 local translucent aquarium
-   below 箱庭島; high top-down / RTS isometric swim — glass stays transparent;
-   marked unfinished). Panel uses 粒子連線／Particle Network ambient.
-7. Drag files, folders, or URLs onto the pet to add shortcuts (prompt for name/description).
-8. Settings circle opens the configuration dialog.
-9. Window level can be set to Normal, Always on top, or Always on bottom.
-10. Optional "Start with Windows" login autostart (Windows only).
+1. Pet — small desktop icon (custom image or rotating set); click toggles
+   Folder Shortcuts; drag to move; drop files/folders/URLs to add shortcuts;
+   Heartbeat Zoom on click.
+2. Folder Shortcuts フォルダー ショートカット — local folders with search/
+   filter; Float Drift title; List Row Fill hover.
+3. File/URL Shortcuts 指定傳送 — file or URL items with search/filter;
+   Jitter Settle title motion.
+4. Document Record 文檔紀錄 — browse/search files in one or more storage
+   folders; Crumble Down title; Open folder; per-file Time / Comment /
+   Publisher / Version.
+5. Mini Programs 副程式 — Text records; Calculations; Pomodoro; Translate;
+   箱庭島（未完成）／Hakoniwa (WIP); 透明魚缸（未完成）／Fish Tank (WIP).
+   Panel ambient: Particle Network.
+6. Calculations — Level calc, Slope calc, Free station (resection IMPORT +
+   pair Prelim/Mirror/Reject/Use mirror; BS4 left blank for manual entry),
+   Alignment(1) (point-list interpolate + 大量運算 batch), Alignment(2)
+   (OSCH design densify, interval, OSCH2_AOut Excel with LEVEL columns).
+7. Pomodoro — Now / Target / Countdown, duration presets and End-at mode.
+8. Translate — auto-detect source; EN / 繁中 / 简中 / 日本語 / 한국어 /
+   Français / Deutsch / Español (public web endpoint; no API key).
+9. 箱庭島／Hakoniwa (WIP) and 透明魚缸／Fish Tank (WIP) — entries kept and
+   marked unfinished.
+10. Settings — pet image, shortcuts, document folders, text records, window
+    level (Normal / Always on top / Always on bottom), Start with Windows.
 11. Remembers pet position across monitors and resolution changes.
 
 Quick Usage
 --------
-- Left-click the pet: toggle Folder Shortcuts (open ↔ close whole UI)
+- Left-click / right-click the pet: toggle Folder Shortcuts (open ↔ close)
 - Drag the pet: move position
 - Double-click the pet: open settings
-- Right-click the pet: toggle Folder Shortcuts
 - Drag-and-drop a file/folder/URL onto the pet: add a shortcut
-- Right-click a file item: edit Time / Comment / Publisher / Version
+- Right-click a Document Record file item: edit Time / Comment / Publisher /
+  Version
 
-Settings
+Latest updates (5)
 --------
-1. Pet Image: choose a single image or an image folder for automatic rotation.
-2. Folder shortcuts: set "Item name", "Folder path", and "Description" (list has search/filter).
-3. File/URL Shortcuts: set Type (File or URL), "Item name", path/URL, and "Description" (list has search/filter).
-4. Document record: set the "Title" and one or more "Data storage folders"
-   (click Add to add additional folders);
-   the app will automatically list all files in those folders.
-5. Text records: add/edit/delete text records (Title + Body); list has search/filter.
-6. System: set window level (Normal / Always on top / Always on bottom);
-   enable/disable "Start with Windows" (registry Run key; Windows only).
+261114.01 (2026-11-14)
+1. Free Station IMPORT: BS4 stays blank for manual entry (no longer maps
+   Computed Bearing / stray cells into BS4).
 
-Free Station calculator
---------
-Mini programs → Calculations → Free station resects the standing station from
-2–4 known backsight stations, mirroring the "Free Station" sheet of the
-Free_Station_FAI.xls / .xlsm survey spreadsheet:
+261106.06 (2026-11-07)
+1. Free Station: soft-fail asin/acos domain errors; keep From/To pair rows
+   with Prelim / Mirror / Dist. check and Reject both / Use mirror.
 
-- Per backsight: name, Easting, Northing, reduced level (optional), observed
-  mean bearing (DD.MMSS, e.g. 330.140182 = 330°14'01.8"), vertical (zenith)
-  angle, slope distance and prism/spot height (face-left / face-right).
-- IMPORT (left of Calculate) loads standing station, instrument height, BS
-  names/coords, and face observations from a Free Station sheet
-  (.xlsm / .xlsx / .xls). Annotated layout: standing D12, HI H12, BS1–3
-  Name/E/N/RL from D/E/F/G13–15, BS4 from D/E/F/G17, faces C25–F32.
-  Measurement cells are filled only for BS rows whose Name is non-empty after
-  import; empty Excel cells (and template placeholders such as "BS name" /
-  "DD.MMSS" / "Distance") clear to blank. Runtime deps: openpyxl + xlrd
-  (bundled in the Windows EXE via PyInstaller --hidden-import /
-  --collect-submodules).
-- Every ordered From→To pair is solved by the sine rule exactly as the sheet's
-  FreeStation / FreeStation_Mirror VBA functions; the sheet's branch rule is
-  kept (preliminary branch unless its distance check exceeds 0.05 m, then the
-  mirror branch when valid).
-- Output: station Easting/Northing, reduced level, and the distance-check
-  residual ΔHD per accepted pair, plus an Average (mean E / N / RL) of those
-  pair results. Copy button copies the result block.
+261106.05 (2026-11-06)
+1. Alignment(1) 大量運算: right-hand Output is chainage, signed plan offset,
+   and diff level (not chainage-only).
 
-What's new in 261106.01 (2026-11-06)
---------
-1. Calculations: Alignment(2) — IMPORT OSCH design workbook (OSCH2_AIn /
-   OSCH2_VIn / OSCH3_LRHS); densify STRAIGHT/R/SC/TS/CS + LIN/PAR levels;
-   chainage→E/N/Lv (+ crossfall); survey N/E/Lv→signed O/S + chainage +
-   level diff.
+261106.04 (2026-11-06)
+1. Alignment(2) Output Excel: CHAINAGE / E / N / LEVEL plus LHS/RHS E·N·Lv
+   columns from vertical + crossfall.
 
-What's new in 261105.04 (2026-11-06)
---------
-1. Calculations: Alignment(1) — IMPORT Excel (chainage/chanage, Easting,
-   Northing, level); chainage→E/N/Lv linear interpolate; E/N/Lv→nearest
-   design chainage with ΔE/ΔN/ΔLv plan deviation.
+261106.03 (2026-11-06)
+1. Alignment(1) section 3 大量運算: Import batch / Compute / Output for the
+   dual Input→Output workbook.
 
-What's new in 261105.03 (2026-11-05)
---------
-1. Integrate latest 箱庭島／Hakoniwa already on main (SAVE_VERSION 16):
-   status odometer digits, bottom icon bar + notify/log/alert marquee,
-   紙糊假設施／觀光偽裝, 海底基地 (deep-sea missile base) + camo rules.
-   Mini programs entry remains 箱庭島（未完成）／Hakoniwa (WIP).
-2. Smoke: decoy cover assert runs before nearby real 防衛 is placed.
-
-What's new in 261105.02 (2026-11-05)
---------
-1. Heartbeat Zoom pulses around the pet center (no top-left jump on HiDPI).
-
-What's new in 261105.01 (2026-11-05)
---------
-1. Mini programs / File-URL / Document ambient polish: List Row Fill +
-   Shine Sweep, Falling Petals, Bokeh Lights.
-
-What's new in 261104.02 (2026-11-04)
---------
-1. Pet image click toggles Folder Shortcuts: first click opens the menu;
-   second click closes the entire Folder Shortcuts UI (main panel +
-   submenus), not only a nested panel.
-
-What's new in 261104.01 (2026-11-04)
---------
-1. Panel titles renamed with soft sky glow (like Folder Shortcuts):
-   「File/URL Shortcuts 指定傳送」, 「Document Record 文檔紀錄」,
-   「Mini Programs 副程式」. Existing title animations kept (Jitter Settle /
-   Crumble Down). Theme steel-blue palette only.
-
-What's new in 261103.07 (2026-11-03)
---------
-1. Mini programs panel: 粒子連線／Particle Network — dozens of drifting
-   particles bounce and link by distance; cursor attracts nearby dots and
-   links. Layering: text > solid program buttons > particle canvas >
-   translucent blue panel. Theme steel-blue palette only (HiDPI canvas).
-
-What's new in 261103.06 (2026-11-03)
---------
-1. Document record submenu title: 崩落／Crumble Down — each character tilts,
-   then falls with gravity + rotate + fade; they drop back from above to
-   reassemble (~3.4s). Theme steel-blue palette only.
-
-What's new in 261103.05 (2026-11-03)
---------
-1. File shortcuts submenu title: 「File/URL Shortcuts」 with
-   顫抖穩定／Jitter Settle — strong per-character XY+rotate shake that damps
-   to rest, pauses, then restarts (~2.4s). Theme steel-blue palette only.
-
-What's new in 261103.04 (2026-11-03)
---------
-1. Main menu: File/URL, Document record, Mini programs, Settings use
-   圖示填滿／Social Icon Fill — circular outlined line icons (shortcut arrow,
-   paper, calculator, gear); hover (~0.45s) fill rises from bottom, idle icon
-   slides up out / inverted icon slides in from below, button lifts; leave
-   reverses. Theme steel-blue palette only.
-
-What's new in 261103.03 (2026-11-03)
---------
-1. Folder shortcuts title: 「Folder Shortcuts フォルダー ショートカット」 with
-   漂浮／Float Drift — each character drifts up/down/left/right at its own
-   ~3–4.5s tempo, slight rotation, soft sky glow. Theme steel-blue palette only.
-
-What's new in 261103.02 (2026-11-03)
---------
-1. Folder shortcuts: 清單列滑入填滿／List Row Fill — numbered rows with name
-   and right arrow, thin dividers; hover (~0.5s) fills from the left, name
-   shifts right, arrow slides in, text inverts; leave exits fill to the right.
-   Theme steel-blue palette only.
-
-What's new in 261103.01 (2026-11-03)
---------
-1. Pet click: 心跳放大／Heartbeat Zoom — one scale thud + two theme-gold
-   circular ripples from center (~1.3s). Colors match existing gilt accents.
-
-What's new in 261102.06 (2026-11-02)
---------
-1. Pomodoro: fix vertically squashed Now/Target and Countdown digits (min-height
-   + size policy so Windows no longer clips the large monospace text).
-
-What's new in 261102.05 (2026-11-02)
---------
-1. Pomodoro: wall-clock mode — enter 目標鐘點／End at; remaining seconds are
-   auto-computed from now until that time. Duration presets kept.
-
-What's new in 261102.04 (2026-11-02)
---------
-1. Pomodoro: show 現在時間／Now, 目標時間／Target (end of active session), and
-   倒數／Countdown toward that target.
-
-What's new in 261102.03 (2026-11-02)
---------
-1. Free Station: fix mean bearing when 正鏡=0 / 倒鏡=180 (TESTDEG now wraps
-   exactly 360→0 so AVERAGE is not 180). General angle wrap; no UI special-case.
-
-What's new in 261102.02 (2026-11-02)
---------
-1. Mini programs: label 透明魚缸 as unfinished —
-   「透明魚缸（未完成）／Fish Tank (WIP)」 (entry kept, like 箱庭島).
-
-What's new in 261102.01 (2026-11-02)
---------
-1. Integrate fish-tank PR #50 work onto main: clean cutouts, multi-species HD
-   sheets, and debacked 大眼雞 trial swim (尾 L/R + 背鰭 open/close; lower fins
-   static). Packaging still uses blank `packaging/config.json` only.
-2. Mini programs: label 箱庭島 as unfinished —
-   「箱庭島（未完成）／Hakoniwa (WIP)」 (entry kept, not removed).
-
-What's new in 261031.11 (2026-11-01)
---------
-1. Transparent Fish Tank: debacked 大眼雞 trial motion simplified after user
-   feedback — **尾 L/R + 背鰭 open/close only**; lower fins static. Alpha kept.
-   Other species unchanged pending trial OK.
-
-What's new in 261031.10 (2026-11-01)
---------
-1. Transparent Fish Tank: trial swim dynamics from user **already-debacked**
-   大眼雞 8-dir sheet (alpha authoritative — no re-key). 4 frames/facing with
-   visible tail L/R, dorsal open/close, lower-fin stretch+swing. Other species
-   unchanged pending user OK on this trial.
-
-What's new in 261031.09 (2026-11-01)
---------
-1. Transparent Fish Tank: 18 user HD 8-dir species sheets → clean transparent
-   cutouts + 4-frame swim cycles (tail + dorsal + lower/pectoral 魚翼). Rare =
-   palette remap. Legacy RTS kept for 獅子魚／金鼓／塘虱 until HD art arrives.
-
-What's new in 261031.08 (2026-11-01)
---------
-1. Transparent Fish Tank: reprocess 青衣 8-dir swim-cycle cutouts — strip navy
-   plate backdrop, sheet labels/frame text, and soft shadows so only the fish
-   remains (transparent PNG). Other species unchanged.
-
-What's new in 261031.07 (2026-11-01)
---------
-1. Transparent Fish Tank: 青衣 swim-cycle from user 8-dir stills — 4 frames per
-   facing (tail sway + pectoral flap), looped in tank by heading. Other species
-   unchanged.
-
-What's new in 261031.06 (2026-10-31)
---------
-1. Transparent Fish Tank: 青衣／grouper swim sheets remade at HD pixel quality
-   (96×80 × 8 dirs; green/blue + yellow accents). Other species keep legacy
-   RTS 48×40 sheets. Rare = palette remap of the same HD silhouettes.
-
-What's new in 261031.05 (2026-10-31)
---------
-1. Transparent Fish Tank: RTS-like isometric pre-rendered pixel swim art with
-   8-direction sheets (N/NE/E/SE/S/SW/W/NW); heading selects facing. Rare =
-   palette remap of same sheets. Side 圖鑑 kept. Assets under fish_tank/assets/.
-
-What's new in 261031.04 (2026-10-31)
---------
-1. Transparent Fish Tank: replace top bilingual text toolbar with bottom-left
-   Social Icon Fill circular buttons (hover fill-rise ~0.45s, comic line icons,
-   existing fish-tank teal-slate colors). Slim top status chip kept.
-
-What's new in 261031.03 (2026-10-31)
---------
-1. Mini programs → 透明魚缸／Fish Tank (below 箱庭島): Phase 1 local translucent
-   aquarium — glass click-through, always-on edge grips + bilingual toolbar,
-   fixed-size ~16% soft-pixel fish (5 HK species + waterweed) with HIGH
-   slightly-oblique swim sprites (bird's-eye tilted; never eye-level side
-   swim), free swim with away stub, feed / decorate / name / catch (local
-   ownership), capture／圖鑑 side cards (scientific name on card only).
-   Phase 2 public server / trade / settlement hooks are stubs only.
-
-What's new in 261031.01 (2026-10-31)
---------
-1. Free Station IMPORT: annotated-layout BS1–3 Name now maps from D13 / D14 /
-   D15 (E/N/RL from E/F/G on the same rows); BS4 Name stays D17; standing D12,
-   Inst. ht H12, and face obs C25–F32 unchanged. Empty cells and template
-   placeholders ("BS name" / "DD.MMSS" / "Distance") clear to blank.
-
-What's new in 261030.01 (2026-10-30)
---------
-1. 箱庭島: oblique diamond projection fix (stable map geometry).
-2. Map HUD / terrain textures (tile tops + ocean backdrop bundled in EXE).
-3. Forest: plant and harvest gameplay.
-4. Harbor / shipyard trade loop.
-5. Monuments and score tracking.
-6. Mountain / quarry production.
-7. Breakwater, oil, and tsunami mitigation.
-8. Bank, supermarket, and shrine buildings.
-9. City park and induction mechanics.
-10. Optional user PNG art overlay on the island map.
-11. Windows CI PyInstaller aligned with build.bat: hakoniwa/assets --add-data
-    plus hidden-imports for hakoniwa.tiles and hakoniwa.user_art.
-
-What's new in 261029.01 (2026-10-29)
---------
-1. Free Station: IMPORT button (left of Calculate) reads the Free Station
-   sheet from .xlsm / .xlsx / .xls into standing station, instrument height,
-   and BS1–BS4 name / E / N / RL / face observations. Face measurement cells
-   are filled only when that BS Name is non-empty after import.
-2. Free Station green results: Average line (mean E, N, RL of accepted pair
-   solutions) after the per-pair coordinate lines.
-3. requirements.txt / PyInstaller / Windows CI: openpyxl + xlrd for Excel
-   import (lazy import at runtime; collected explicitly for the EXE), plus
-   hakoniwa hidden-imports for the Mini programs 箱庭島 entry.
-4. 箱庭島 (Hakoniwa Island) is available under Mini programs → 箱庭島
-   (already on main via earlier merges; included in this combined release EXE).
-
-What's new in 261027.02 (2026-10-27)
---------
-1. Free Station dialog: 4 backsight rows (was 3), each with face-left (F1) and
-   face-right (F2) observations averaged exactly like the sheet's "Mean B/S"
-   formulas (bearing: mean of F1 and F2+180°; vertical angle:
-   (360−F1−F2)/2+F1; slope distance / spot height: plain average).
-2. Per-pair review table like the Excel: From / To, Preliminary E/N,
-   Mirror E/N, chosen Easting/Northing, Reduced Lv., Distance Check, with
-   per-pair "Reject both" and "Use mirror angle" checkboxes; the summary
-   respects the choices.
-3. "<< 1 / 2 >>" pager: page 2 stores backsight records (Name, Easting,
-   Northing, RL) in config as "free_station_stations" (backward compatible);
-   typing a stored name on page 1 auto-fills that row's E/N/RL (still editable).
-
-What's new in 261027.01 (2026-10-27)
---------
-1. Mini programs → Calculations → Free Station: resection calculator porting the
-   Free_Station_FAI.xls sheet math (sine rule with mirror branch and distance
-   check; DD.MMSS angles; zenith-angle verticals). Ornate frame style matching
-   the other calculation dialogs.
-2. Whole user interface translated to English (menus, dialogs, buttons,
-   tooltips, tray notifications, message boxes). Config keys are unchanged.
-3. README is now English-only.
-
-What's new in 261026.08 (2026-10-27)
---------
-1. Mini-program panel fills painted via QPainter ARGB (not QSS rgba). QSS rgba under
-   WA_TranslucentBackground was dropping alpha so 60% vs 80% looked identical.
-   Window center ~70% opaque, gray panel ~80% opaque.
-
-What's new in 261026.07 (2026-10-27)
---------
-1. Mini-program opacity tuning: window center ~70% opaque, gray content panel ~80% opaque
-   (ornate frame ring stays solid).
-
-What's new in 261026.06 (2026-10-27)
---------
-1. Mini-program translucency fix: ornate outer/mid layers paint border rings only
-   (transparent center). Previously a full-rect frame fill sat under the gray panel
-   and blocked see-through. Content panel stays ~60% opaque against the desktop.
-
-What's new in 261026.05 (2026-10-27)
---------
-1. Mini-program dialogs: window drag is limited to the ornate frame border band only
-   (gilt/wood margin). Title row and inner content no longer move the window.
-2. Gray content panel opacity set to ~60% opaque (ornate frame stays solid).
-
-What's new in 261026.04 (2026-10-26)
---------
-1. All mini-program dialogs (平水計算, 坡度運算, 番茄鐘, 翻譯): frameless + ornate frame +
-   ~70% opaque panels; reliable drag on the picture-frame border and the title row.
-   (These tools are now named Level calc, Slope calc, Pomodoro, Translate.)
-2. 番茄鐘 / 翻譯 now match the calc dialogs (no OS title bar, translucent content fill).
-
-What's new in 261026.03 (2026-10-26)
---------
-1. 小程式 → 番茄鐘 (Pomodoro): countdown timer with 25/5/15 minute presets and custom minutes
-   (1–600), Start / Pause / Reset, progress bar, gentle tray notification + beep when done.
-   Last used duration is remembered in config (running state is not saved).
-2. 小程式 → 翻譯 (Translate): text translation with source auto-detect, target languages
-   EN / 繁體中文 / 简体中文 / 日本語 / 한국어 / Français / Deutsch / Español, Translate button
-   plus auto-translate after typing pauses, copy button. Uses Google Translate's public web
-   endpoint (no API key); failures show a friendly inline message; recent translations are
-   cached in memory only (user text is never written to disk or logs).
-3. 平水計算 / 坡度運算: frameless windows (no OS title bar); ornate frame is the chrome.
-4. Dialogs are ~70% opaque (半透明); drag by frame/title/empty areas; Close still available.
-
-What's new in 261026.01 (2026-10-26)
---------
-1. 平水計算 / 坡度運算 dialogs: ornate gilt/wood picture-frame border.
-2. Removed +/− stepper buttons; compact keyboard-editable decimal inputs (validate on calculate).
-3. Removed explanatory help paragraphs under titles; kept section titles, field labels, and radio labels.
-4. Shrunk input boxes and primary action buttons (計算平水 / 計算坡度 / 計算高程).
-
-What's new in 261024.03 (2026-10-24)
---------
-1. Pet menu: new top-level "小程式" section with >> submenu.
-2. Text records moved under 小程式 (English label; config key still "text_records"); Settings tab renamed to "Text records".
-3. 小程式 → 運算 → 平水計算: linear interpolate level at target distance
-   (level = high − (high−low)×(target/full); extrapolation allowed with note).
-4. 小程式 → 運算 → 坡度運算: three tools — 兩點高差求坡度, 坡度推算高程, 坡度單位互相運算
-   (Fall %, 1 in X, angle DMS / DD.MMSS).
-
-What's new in 261024.02 (2026-10-24)
---------
-1. Document record submenu: "Open folder" button in the header opens the storage folder(s) in the OS file manager
-   (one folder opens directly; multiple folders show a picker menu).
-2. Text records: pet-menu section with >> submenu of article titles; click a title to read the body.
-3. Settings tab "Text records" to add/edit/delete/reorder text records; config key "text_records": [{title, body}, …]
-   (backward compatible — older configs omit the key).
-
-What's new in 261024.01 (2026-10-24)
---------
-1. Search/filter for Document record lists, File/URL shortcuts submenu, folder shortcuts in the menu, and Settings lists.
-2. Start with Windows: System tab option (HKCU Run key); hidden/disabled gracefully on non-Windows.
-3. Drag-and-drop files/folders/URLs onto the pet to add shortcuts (name/description prompt).
-4. URL shortcuts: file_shortcuts entries support optional "type": "file"|"url"; Settings Type selector; open in default browser.
-5. Multi-monitor position memory: saves screen name + relative position; restores/clamps on startup and screen changes.
-
-What's new in 261023.01 (2026-10-23)
---------
-1. File shortcuts: Settings tab + pet menu section (header + >> submenu, like Document record).
-2. Document record Settings: 「新增」 button label changed to English "Add".
-3. Config adds "file_shortcuts" (existing "shortcuts" folder list unchanged).
-
-What's new in 261022.01 (2026-10-22)
---------
-1. Document record: multiple storage folders, with Add in Settings to add more.
-2. Document list shows filename and comment.
-3. Hover state on options (slightly darker).
-4. build.bat fixed for Windows cmd; shareable output goes to upload\.
-5. Packaging ignores personal config / save / pics (blank template only).
+Older release notes are on GitHub Releases.
 
 Download
 --------
@@ -437,6 +98,6 @@ Notes
 --------
 - config.json is created automatically on first run if it is missing.
 - Keep DesktopPet.exe and config.json in the same folder.
+- Packaging uses blank packaging/config.json only (no personal data).
 - Contact: chanpofaihk@gmail.com
-- Support me via PayPal: scan the QR code below. 
-
+- Support me via PayPal: scan the QR code below.
