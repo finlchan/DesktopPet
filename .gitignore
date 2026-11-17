@@ -43,3 +43,7 @@ release_upload/
 
 # Built binary at repo root
 DesktopPet.exe
+
+# Gradio / Sync Board web
+.gradio/
+dev_console_web/node_modules/

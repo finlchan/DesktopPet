@@ -1,0 +1,10 @@
+{
+  "name": "desktoppet-sync-board",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Three-pane DesktopPet sync board: instructions, drawable screenshot, live sync packet",
+  "scripts": {
+    "start": "python3 -m http.server 8765 --bind 127.0.0.1",
+    "preview": "python3 -m http.server 8765 --bind 127.0.0.1"
+  }
+}

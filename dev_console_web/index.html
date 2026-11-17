@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DesktopPet Sync Board</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="./sample-logo.png" alt="" class="brand-mark" width="28" height="28" />
+      <div>
+        <h1>DesktopPet Sync Board</h1>
+        <p class="tagline">指示 · 繪圖修正 · 即時同步</p>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <span id="status-pill" class="pill">ready</span>
+    </div>
+  </header>
+
+  <main class="board">
+    <!-- Pane 1: 指示 -->
+    <section class="pane pane-chat" aria-labelledby="pane-chat-title">
+      <header class="pane-head">
+        <h2 id="pane-chat-title">指示</h2>
+        <p>聊天指令與校正備註</p>
+      </header>
+      <div id="chat-log" class="chat-log" role="log" aria-live="polite"></div>
+      <form id="chat-form" class="chat-form">
+        <label class="sr-only" for="chat-input">訊息</label>
+        <textarea
+          id="chat-input"
+          rows="3"
+          placeholder="/help 或輸入中文校正備註…"
+          autocomplete="off"
+        ></textarea>
+        <div class="row-actions">
+          <button type="submit" class="btn primary">Send</button>
+          <button type="button" id="btn-help" class="btn ghost">/help</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- Pane 2: 繪圖修正 -->
+    <section class="pane pane-draw" aria-labelledby="pane-draw-title">
+      <header class="pane-head">
+        <h2 id="pane-draw-title">繪圖修正</h2>
+        <p>在截圖上標註後再同步</p>
+      </header>
+      <div class="toolbar" role="toolbar" aria-label="繪圖工具">
+        <label class="field">
+          <span>Preset</span>
+          <select id="preset-select">
+            <option value="./sample-hud.jpg">sample-hud.jpg</option>
+            <option value="./sample-logo.png">sample-logo.png</option>
+          </select>
+        </label>
+        <button type="button" id="btn-load" class="btn">Load</button>
+        <label class="field compact">
+          <span>Color</span>
+          <input type="color" id="stroke-color" value="#ff4d4f" />
+        </label>
+        <label class="field compact">
+          <span>Size</span>
+          <input type="range" id="stroke-size" min="2" max="28" value="6" />
+        </label>
+        <button type="button" id="btn-undo" class="btn ghost">Undo</button>
+        <button type="button" id="btn-clear" class="btn ghost">Clear</button>
+        <label class="btn ghost file-btn">
+          Upload
+          <input type="file" id="file-input" accept="image/*" hidden />
+        </label>
+      </div>
+      <div class="canvas-wrap">
+        <canvas id="draw-canvas" width="900" height="600" aria-label="Drawable screenshot"></canvas>
+      </div>
+    </section>
+
+    <!-- Pane 3: 即時同步 -->
+    <section class="pane pane-sync" aria-labelledby="pane-sync-title">
+      <header class="pane-head">
+        <h2 id="pane-sync-title">即時同步</h2>
+        <p>Sync packet → localStorage + preview</p>
+      </header>
+      <div class="row-actions">
+        <button type="button" id="btn-sync" class="btn primary">Sync</button>
+        <a id="download-link" class="btn ghost disabled" href="#" download="sync-packet.json" aria-disabled="true">Download JSON</a>
+      </div>
+      <div class="preview-block">
+        <h3>Preview</h3>
+        <img id="sync-preview" alt="Synced annotation preview" class="sync-preview empty" />
+      </div>
+      <div class="packet-block">
+        <h3>Sync packet</h3>
+        <pre id="packet-json" class="packet-json">{ "kind": "ready" }</pre>
+      </div>
+    </section>
+  </main>
+
+  <script src="./app.js" defer></script>
+</body>
+</html>
