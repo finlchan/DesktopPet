@@ -7,6 +7,8 @@
 ```bash
 pip install -r requirements.txt
 python -m dev_console.app
+# optional public link:
+GRADIO_SHARE=1 python -m dev_console.app
 ```
 
 瀏覽器開啟 `http://127.0.0.1:7860`。
@@ -15,9 +17,9 @@ python -m dev_console.app
 
 ## 三欄說明
 
-1. **聊天（左）** — 指令與校正備註；歷史一律為 `{role, content}` 訊息格式。
-2. **截圖編輯（中）** — Gradio `ImageEditor`：載入箱庭 testdata 截圖、塗鴉標記、合成存檔至 `Data/dev_console/`。
-3. **即時面板（右）** — Alignment(2) 平面圖（matplotlib）＋ JSON（投影／對齊 meta／備註）。
+1. **聊天（左）** — 指令與校正備註；歷史一律為 `{role, content}` 訊息格式。**Sync to Agent** 寫入 `Data/dev_console/latest.png`、`latest.json`、`request.md` 供 agent 讀取。
+2. **截圖編輯（中）** — Gradio `ImageEditor`：載入箱庭 testdata 截圖、塗鴉標記、合成存檔至 `Data/dev_console/`（含 `annotations/`）。
+3. **即時面板（右）** — Alignment(2) 平面圖（matplotlib）＋ JSON（投影／對齊 meta／備註／sync_packet）。
 
 ## 聊天指令
 
@@ -28,6 +30,7 @@ python -m dev_console.app
 | `/hakoniwa` 或 `/proj` | 載入 `hakoniwa/testdata/oblique_projection.json` |
 | `/shots` | 列出可用截圖預設（箱庭 testdata） |
 | `/save [note]` | 將 ImageEditor 合成圖存到 `Data/dev_console/` |
+| **Sync to Agent** | `save_annotation` → `annotations/*` + `latest.png` / `latest.json` / `request.md` |
 | （純中文文字） | 視為校正備註：寫入 note 並刷新標記預覽 JSON |
 
 ## 預設截圖

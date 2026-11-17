@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import Any, List, Optional
@@ -51,7 +52,9 @@ def _build_ui():
                     value=wb_default,
                     placeholder="testdata/alignment2_sample.xlsx",
                 )
-                send = gr.Button("Send", variant="primary")
+                with gr.Row():
+                    send = gr.Button("Send", variant="primary")
+                    sync_btn = gr.Button("Sync to Agent", variant="secondary")
             with gr.Column(scale=1):
                 preset = gr.Dropdown(
                     label="Screenshot preset",
@@ -92,6 +95,26 @@ def _build_ui():
             value = bridge.load_preset_editor(label)
             return value, {"kind": "preset", "preset": label}
 
+        def on_sync(editor_value, history, message):
+            history = ensure_messages(history)
+            note = (message or "").strip()
+            meta = bridge.save_annotation(
+                editor_value,
+                note=note,
+                request=note or "Sync from Dev Console",
+            )
+            packet = bridge.read_sync_request()
+            reply = (
+                f"Synced for agent pickup → {meta.get('latest_png')} "
+                f"+ {meta.get('request_md')}"
+            )
+            new_hist = history + [
+                {"role": "user", "content": note or "[Sync to Agent]"},
+                {"role": "assistant", "content": reply},
+            ]
+            payload = {"kind": "sync_packet", **meta, "packet": packet}
+            return new_hist, "", None, payload
+
         send.click(
             on_send,
             inputs=[msg, chatbot, editor, workbook],
@@ -100,6 +123,11 @@ def _build_ui():
         msg.submit(
             on_send,
             inputs=[msg, chatbot, editor, workbook],
+            outputs=[chatbot, msg, plot, live_json],
+        )
+        sync_btn.click(
+            on_sync,
+            inputs=[editor, chatbot, msg],
             outputs=[chatbot, msg, plot, live_json],
         )
         load_btn.click(on_load_preset, inputs=[preset], outputs=[editor, live_json])
@@ -111,10 +139,11 @@ def _build_ui():
 def main(argv: Optional[List[str]] = None) -> int:
     _ = argv
     demo = _build_ui()
+    share = os.environ.get("GRADIO_SHARE", "").strip() in ("1", "true", "True", "yes")
     demo.launch(
         server_name="127.0.0.1",
-        server_port=7860,
-        share=False,
+        server_port=int(os.environ.get("GRADIO_SERVER_PORT", "7860")),
+        share=share,
         inbrowser=False,
     )
     return 0

@@ -19,17 +19,23 @@ def main() -> int:
     from PIL import Image
 
     from .bridge import (
+        ANNOTATIONS_DIR,
         DEFAULT_PRESET_LABEL,
         DevBridge,
         DATA_DIR,
+        LATEST_JSON,
+        LATEST_PNG,
         OBLIQUE_JSON,
+        REQUEST_MD,
         append_turn,
         display_path,
         ensure_messages,
         load_oblique_projection,
         list_screenshot_presets,
+        read_sync_request,
         resolve_preset,
         run_alignment2,
+        save_annotation,
         save_composite,
     )
 
@@ -123,10 +129,55 @@ def main() -> int:
     assert rel == "hakoniwa/testdata/oblique_projection.json", rel
     assert OBLIQUE_JSON.resolve().is_relative_to(REPO_ROOT.resolve())
 
+    # --- sync_packet: save_annotation + read_sync_request ---
+    sync_img = Image.new("RGBA", (80, 60), (255, 99, 71, 255))
+    sync_editor = {
+        "background": sync_img,
+        "layers": [],
+        "composite": sync_img.copy(),
+    }
+    sync_meta = save_annotation(
+        sync_editor,
+        note="smoke-sync",
+        request="please review markup",
+    )
+    assert sync_meta.get("kind") == "sync_packet", sync_meta
+    assert LATEST_PNG.is_file(), LATEST_PNG
+    assert LATEST_JSON.is_file(), LATEST_JSON
+    assert REQUEST_MD.is_file(), REQUEST_MD
+    assert ANNOTATIONS_DIR.is_dir()
+    ann_files = list(ANNOTATIONS_DIR.glob("*.png"))
+    assert ann_files, "expected annotations/*.png"
+    packet = read_sync_request()
+    assert packet.get("kind") == "sync_packet", packet
+    assert packet["exists"]["png"] and packet["exists"]["json"] and packet["exists"]["md"]
+    assert "please review markup" in (packet.get("request") or "")
+    assert (packet.get("meta") or {}).get("note") == "smoke-sync"
+    bridge_sync = DevBridge()
+    via_bridge = bridge_sync.save_annotation(sync_editor, note="via-bridge")
+    assert via_bridge.get("kind") == "sync_packet"
+    assert bridge_sync.read_sync_request()["exists"]["png"]
+
+    # app wiring: Sync button + Gradio components exist
+    from . import app as app_mod
+
+    src = Path(app_mod.__file__).read_text(encoding="utf-8")
+    assert "Sync to Agent" in src
+    assert 'type="messages"' in src or "type='messages'" in src
+    assert "ImageEditor" in src and "gr.Plot" in src and "gr.JSON" in src
+    assert "GRADIO_SHARE" in src
+
     # keep a tiny JSON proof next to Data for local debugging (gitignored Data/)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     (DATA_DIR / "smoke_ok.json").write_text(
-        json.dumps({"ok": True, "y_scale": proj["y_scale"]}, indent=2),
+        json.dumps(
+            {
+                "ok": True,
+                "y_scale": proj["y_scale"],
+                "sync_packet": True,
+            },
+            indent=2,
+        ),
         encoding="utf-8",
     )
 

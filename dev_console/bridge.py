@@ -16,6 +16,10 @@ if str(REPO_ROOT) not in sys.path:
 HAKONIWA_TESTDATA = REPO_ROOT / "hakoniwa" / "testdata"
 ALIGN_TESTDATA = REPO_ROOT / "testdata"
 DATA_DIR = REPO_ROOT / "Data" / "dev_console"
+ANNOTATIONS_DIR = DATA_DIR / "annotations"
+LATEST_PNG = DATA_DIR / "latest.png"
+LATEST_JSON = DATA_DIR / "latest.json"
+REQUEST_MD = DATA_DIR / "request.md"
 OBLIQUE_JSON = HAKONIWA_TESTDATA / "oblique_projection.json"
 DEFAULT_PRESET_LABEL = "hakoniwa/ui_overlay_map_hud.png"
 
@@ -263,6 +267,96 @@ def save_composite(
     return meta
 
 
+def save_annotation(
+    editor_value: Any = None,
+    *,
+    note: str = "",
+    request: str = "",
+    extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Persist markup for agent pickup.
+
+    Writes:
+      - Data/dev_console/annotations/<ts>.png (+ .json sidecar)
+      - Data/dev_console/latest.png
+      - Data/dev_console/latest.json
+      - Data/dev_console/request.md
+    """
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    ANNOTATIONS_DIR.mkdir(parents=True, exist_ok=True)
+
+    img = _pil_from_editor(editor_value)
+    if img is None:
+        label = default_preset_label()
+        if label:
+            img = _pil_from_editor(resolve_preset(label))
+    if img is None:
+        raise ValueError("no image to annotate (editor empty and no preset)")
+
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    note_text = (note or "").strip()
+    request_text = (request or note_text or "Sync from Dev Console").strip()
+
+    ann_png = ANNOTATIONS_DIR / f"{ts}.png"
+    img.save(ann_png)
+    img.save(LATEST_PNG)
+
+    meta: Dict[str, Any] = {
+        "saved_at": ts,
+        "kind": "sync_packet",
+        "note": note_text,
+        "request": request_text,
+        "image": display_path(LATEST_PNG),
+        "annotation": display_path(ann_png),
+        "latest_png": display_path(LATEST_PNG),
+        "latest_json": display_path(LATEST_JSON),
+        "request_md": display_path(REQUEST_MD),
+        "size": list(img.size),
+    }
+    if extra:
+        meta["extra"] = extra
+
+    ann_json = ANNOTATIONS_DIR / f"{ts}.json"
+    ann_json.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    LATEST_JSON.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    md_lines = [
+        "# Dev Console sync request",
+        "",
+        f"- saved_at: `{ts}`",
+        f"- image: `{display_path(LATEST_PNG)}`",
+        f"- annotation: `{display_path(ann_png)}`",
+    ]
+    if note_text:
+        md_lines.append(f"- note: {note_text}")
+    md_lines.extend(["", "## Request", "", request_text, ""])
+    REQUEST_MD.write_text("\n".join(md_lines), encoding="utf-8")
+    return meta
+
+
+def read_sync_request() -> Dict[str, Any]:
+    """Read the latest agent pickup packet from Data/dev_console/."""
+    packet: Dict[str, Any] = {
+        "kind": "sync_packet",
+        "latest_png": display_path(LATEST_PNG) if LATEST_PNG.is_file() else None,
+        "latest_json": display_path(LATEST_JSON) if LATEST_JSON.is_file() else None,
+        "request_md": display_path(REQUEST_MD) if REQUEST_MD.is_file() else None,
+        "exists": {
+            "png": LATEST_PNG.is_file(),
+            "json": LATEST_JSON.is_file(),
+            "md": REQUEST_MD.is_file(),
+        },
+    }
+    if LATEST_JSON.is_file():
+        try:
+            packet["meta"] = json.loads(LATEST_JSON.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            packet["meta_error"] = str(exc)
+    if REQUEST_MD.is_file():
+        packet["request"] = REQUEST_MD.read_text(encoding="utf-8")
+    return packet
+
+
 def help_text() -> str:
     return (
         "DesktopPet Dev Console 指令：\n"
@@ -271,6 +365,7 @@ def help_text() -> str:
         "/hakoniwa | /proj — 箱庭 oblique_projection.json\n"
         "/shots — 列出截圖預設\n"
         "/save [note] — 儲存 ImageEditor 合成圖到 Data/dev_console/\n"
+        "Sync to Agent — 寫入 latest.png / latest.json / request.md 供 agent 讀取\n"
         "純中文文字 — 視為校正備註並寫入預覽 JSON"
     )
 
@@ -321,6 +416,23 @@ class DevBridge:
         if not label:
             return None
         return editor_value_for_path(resolve_preset(label))
+
+    def save_annotation(
+        self,
+        editor_value: Any = None,
+        *,
+        note: str = "",
+        request: str = "",
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        meta = save_annotation(
+            editor_value, note=note, request=request, extra=extra
+        )
+        self.last_live = {"kind": "sync_packet", **meta}
+        return meta
+
+    def read_sync_request(self) -> Dict[str, Any]:
+        return read_sync_request()
 
     def handle_chat(
         self,
