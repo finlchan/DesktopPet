@@ -5,9 +5,7 @@ Run: python -m dev_console.smoke_test
 
 from __future__ import annotations
 
-import json
 import sys
-import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -15,34 +13,42 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 
+def _ok(name: str) -> None:
+    print(f"  {name}: ok")
+
+
 def main() -> int:
     from PIL import Image
 
     from .bridge import (
-        ANNOTATIONS_DIR,
         DEFAULT_PRESET_LABEL,
         DevBridge,
-        DATA_DIR,
-        LATEST_JSON,
-        LATEST_PNG,
         OBLIQUE_JSON,
-        REQUEST_MD,
+        SESSION_ROOT,
         append_turn,
         display_path,
         ensure_messages,
-        load_oblique_projection,
         list_screenshot_presets,
+        load_oblique_projection,
+        make_demo_markup,
+        plot_alignment,
         read_sync_request,
         resolve_preset,
         run_alignment2,
         save_annotation,
-        save_composite,
     )
+
+    print("Running dev_console smoke checks…")
 
     # --- presets ---
     presets = list_screenshot_presets()
-    assert presets, "expected hakoniwa testdata screenshots"
+    assert presets, "expected screenshot presets"
     assert any("ui_overlay_map_hud" in p for p in presets), presets
+    assert any(p.startswith("fish_tank/side/") for p in presets), presets
+    assert "logo.png" in presets, presets
+    _ok("presets")
+
+    # --- hud load ---
     bridge = DevBridge()
     default = bridge.default_preset()
     assert default == DEFAULT_PRESET_LABEL or DEFAULT_PRESET_LABEL in presets
@@ -52,15 +58,19 @@ def main() -> int:
         assert path.is_file(), path
         editor = bridge.load_preset_editor(DEFAULT_PRESET_LABEL)
         assert editor is not None and editor.get("background") is not None
+    demo = make_demo_markup(bridge.load_preset_editor(default) if default else None)
+    assert demo.size[0] > 0 and demo.size[1] > 0
+    _ok("hud")
 
     # --- oblique json y_scale=0.65 ---
     assert OBLIQUE_JSON.is_file(), OBLIQUE_JSON
     proj = load_oblique_projection()
     assert abs(float(proj["y_scale"]) - 0.65) < 1e-9, proj
-    hist, _cleared, _fig, payload = bridge.handle_chat("/proj", [])
+    hist, _cleared, _preview, _fig, payload = bridge.handle_chat("/proj", [])
     assert payload.get("kind") == "proj"
     assert abs(float(payload["oblique"]["y_scale"]) - 0.65) < 1e-9
     assert all(isinstance(m, dict) and "role" in m for m in hist), hist
+    _ok("oblique")
 
     # --- empty history must stay messages (never tuples) ---
     empty = ensure_messages(None)
@@ -72,114 +82,70 @@ def main() -> int:
         {"role": "user", "content": "hi"},
         {"role": "assistant", "content": "there"},
     ]
+    _ok("messages")
 
     # --- align ---
     result = run_alignment2(step=5.0)
     meta = result["meta"]
     assert meta["count"] >= 2, meta
     assert meta["step"] == 5.0
-    # Path display uses Path.is_relative_to semantics
     wb_disp = meta["workbook"]
-    assert not wb_disp.startswith("/") or "testdata" in wb_disp
     assert "alignment" in wb_disp.lower() or "testdata" in wb_disp
-    hist2, _, fig, payload2 = bridge.handle_chat("/align 10", [])
+    fig = plot_alignment(result)
+    assert fig is not None
+    hist2, _, _, fig2, payload2 = bridge.handle_chat("/align 10", [])
     assert payload2.get("kind") == "align"
     assert payload2["meta"]["step"] == 10.0
-    assert fig is not None
+    assert fig2 is not None
+    hist2b, _, _, _, payload2b = bridge.handle_chat("/align2 2", [])
+    assert payload2b.get("kind") == "align"
+    assert payload2b["meta"]["step"] == 2.0
     assert all(isinstance(m, dict) for m in hist2)
+    assert all(isinstance(m, dict) for m in hist2b)
+    _ok("align")
 
-    # --- save ---
+    # --- save_annotation ---
     img = Image.new("RGBA", (64, 48), (30, 144, 255, 255))
     editor_val = {"background": img, "layers": [], "composite": img.copy()}
-    with tempfile.TemporaryDirectory() as tmp:
-        # save_composite writes under Data/dev_console (gitignored); still assert files.
-        meta_save = save_composite(editor_val, note="smoke")
-        saved = REPO_ROOT / meta_save["image"]
-        if not saved.is_file():
-            # display_path may be relative
-            saved = Path(meta_save["image"])
-            if not saved.is_file():
-                saved = DATA_DIR / Path(meta_save["image"]).name
-        assert saved.is_file(), meta_save
-        assert meta_save["note"] == "smoke"
+    meta_save = save_annotation(editor_val, note="smoke", prefix="smoke")
+    assert meta_save.get("ok") is True
+    anno = REPO_ROOT / meta_save["annotation_png"]
+    assert anno.is_file(), meta_save
+    assert (SESSION_ROOT / "latest.png").is_file()
+    assert (SESSION_ROOT / "latest.json").is_file()
+    assert (SESSION_ROOT / "request.md").is_file()
+    assert meta_save["note"] == "smoke"
+    _ok("save_annotation")
 
-    hist3, _, _, payload3 = bridge.handle_chat("/save smoke-note", [], editor_val)
-    assert payload3.get("kind") == "save"
-    assert "smoke-note" in (payload3.get("note") or "")
-    assert all(isinstance(m, dict) for m in hist3)
+    # --- sync_packet ---
+    packet = read_sync_request()
+    assert packet.get("ok") is True, packet
+    assert packet.get("latest_png"), packet
+    assert "Agent sync request" in (packet.get("request_md") or "")
+    assert isinstance(packet.get("meta"), dict)
+    assert (packet["meta"] or {}).get("note") == "smoke"
+    _ok("sync_packet")
 
-    # --- chat: help / shots / Chinese correction ---
-    hist4, _, _, payload4 = bridge.handle_chat("/help", [])
+    # --- chat: help / align / note ---
+    hist4, _, _, _, payload4 = bridge.handle_chat("/help", [])
     assert payload4.get("kind") == "help"
     assert "/align" in hist4[-1]["content"]
 
-    hist5, _, _, payload5 = bridge.handle_chat("/shots", [])
-    assert payload5.get("kind") == "shots"
-    assert DEFAULT_PRESET_LABEL in (payload5.get("presets") or []) or any(
-        "ui_overlay" in p for p in (payload5.get("presets") or [])
-    )
+    hist5, _, _, _, payload5 = bridge.handle_chat("/align 1", [])
+    assert payload5.get("kind") == "align"
 
-    hist6, _, _, payload6 = bridge.handle_chat("道路偏左需修正", [], editor_val)
-    assert payload6.get("kind") == "correction"
+    hist6, _, preview6, _, payload6 = bridge.handle_chat(
+        "道路偏左需修正", [], editor_val
+    )
+    assert payload6.get("kind") == "note"
     assert payload6.get("note") == "道路偏左需修正"
     assert all(isinstance(m, dict) and set(m) >= {"role", "content"} for m in hist6)
+    assert (SESSION_ROOT / "latest.png").is_file()
+    _ok("chat")
 
     # relative path helper
     rel = display_path(OBLIQUE_JSON)
     assert rel == "hakoniwa/testdata/oblique_projection.json", rel
-    assert OBLIQUE_JSON.resolve().is_relative_to(REPO_ROOT.resolve())
-
-    # --- sync_packet: save_annotation + read_sync_request ---
-    sync_img = Image.new("RGBA", (80, 60), (255, 99, 71, 255))
-    sync_editor = {
-        "background": sync_img,
-        "layers": [],
-        "composite": sync_img.copy(),
-    }
-    sync_meta = save_annotation(
-        sync_editor,
-        note="smoke-sync",
-        request="please review markup",
-    )
-    assert sync_meta.get("kind") == "sync_packet", sync_meta
-    assert LATEST_PNG.is_file(), LATEST_PNG
-    assert LATEST_JSON.is_file(), LATEST_JSON
-    assert REQUEST_MD.is_file(), REQUEST_MD
-    assert ANNOTATIONS_DIR.is_dir()
-    ann_files = list(ANNOTATIONS_DIR.glob("*.png"))
-    assert ann_files, "expected annotations/*.png"
-    packet = read_sync_request()
-    assert packet.get("kind") == "sync_packet", packet
-    assert packet["exists"]["png"] and packet["exists"]["json"] and packet["exists"]["md"]
-    assert "please review markup" in (packet.get("request") or "")
-    assert (packet.get("meta") or {}).get("note") == "smoke-sync"
-    bridge_sync = DevBridge()
-    via_bridge = bridge_sync.save_annotation(sync_editor, note="via-bridge")
-    assert via_bridge.get("kind") == "sync_packet"
-    assert bridge_sync.read_sync_request()["exists"]["png"]
-
-    # app wiring: Sync button + Gradio components exist
-    from . import app as app_mod
-
-    src = Path(app_mod.__file__).read_text(encoding="utf-8")
-    assert "Sync to Agent" in src
-    assert 'type="messages"' in src or "type='messages'" in src
-    assert "ImageEditor" in src and "gr.Plot" in src and "gr.JSON" in src
-    assert "GRADIO_SHARE" in src
-
-    # keep a tiny JSON proof next to Data for local debugging (gitignored Data/)
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    (DATA_DIR / "smoke_ok.json").write_text(
-        json.dumps(
-            {
-                "ok": True,
-                "y_scale": proj["y_scale"],
-                "sync_packet": True,
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
 
     print("All smoke checks passed.")
     return 0

@@ -1,4 +1,4 @@
-"""Gradio three-pane developer console — chat | ImageEditor | live plot+JSON."""
+"""Gradio three-pane developer console — chat | ImageEditor+Sync | live preview."""
 
 from __future__ import annotations
 
@@ -13,11 +13,44 @@ if str(REPO_ROOT) not in sys.path:
 
 from .bridge import (
     BRIDGE,
-    DEFAULT_PRESET_LABEL,
+    SESSION_ROOT,
     display_path,
     ensure_messages,
     help_text,
+    plot_alignment,
+    read_sync_request,
+    run_alignment2,
+    save_annotation,
 )
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or str(raw).strip() == "":
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or str(raw).strip() == "":
+        return default
+    return int(raw)
+
+
+def _resolve_workbook(workbook_path: Optional[str]) -> Optional[str]:
+    if not workbook_path:
+        return None
+    wb = workbook_path.strip()
+    if not wb:
+        return None
+    p = Path(wb)
+    if p.is_file():
+        return str(p)
+    cand = REPO_ROOT / wb
+    if cand.is_file():
+        return str(cand)
+    return wb
 
 
 def _build_ui():
@@ -32,7 +65,9 @@ def _build_ui():
     with gr.Blocks(title="DesktopPet Dev Console") as demo:
         gr.Markdown(
             "# DesktopPet Dev Console\n"
-            "三欄：聊天指令｜可繪製截圖｜Alignment(2)／投影即時面板"
+            "三欄：聊天｜可繪製截圖 + **同步給 Agent**｜即時預覽 / Alignment(2)\n\n"
+            f"Sync packet 目錄：`{display_path(SESSION_ROOT)}` "
+            "（`latest.png` / `latest.json` / `request.md`）"
         )
         with gr.Row():
             with gr.Column(scale=1):
@@ -44,7 +79,7 @@ def _build_ui():
                 )
                 msg = gr.Textbox(
                     label="Message",
-                    placeholder="/help 或輸入中文校正備註…",
+                    placeholder="/help 或輸入校正備註…",
                     lines=2,
                 )
                 workbook = gr.Textbox(
@@ -53,8 +88,8 @@ def _build_ui():
                     placeholder="testdata/alignment2_sample.xlsx",
                 )
                 with gr.Row():
-                    send = gr.Button("Send", variant="primary")
-                    sync_btn = gr.Button("Sync to Agent", variant="secondary")
+                    send = gr.Button("送出")
+                    clear = gr.Button("清除對話")
             with gr.Column(scale=1):
                 preset = gr.Dropdown(
                     label="Screenshot preset",
@@ -66,72 +101,109 @@ def _build_ui():
                     label="Screenshot editor",
                     value=initial_editor,
                     type="pil",
-                    height=480,
+                    height=420,
                 )
-                load_btn = gr.Button("Load preset")
+                with gr.Row():
+                    load_btn = gr.Button("載入樣本")
+                    push_btn = gr.Button("推到右側預覽")
+                sync_btn = gr.Button("同步給 Agent", variant="primary")
             with gr.Column(scale=1):
-                plot = gr.Plot(label="Live Alignment(2) / preview")
+                live_image = gr.Image(label="Live preview", type="pil", height=240)
+                plot = gr.Plot(label="Alignment(2) E/N")
                 live_json = gr.JSON(label="Live JSON", value={"kind": "ready"})
+                align_btn = gr.Button("立刻運算 Alignment(2)")
 
         gr.Markdown(f"```\n{help_text()}\n```")
 
         def on_send(message, history, editor_value, workbook_path):
             history = ensure_messages(history)
-            wb = workbook_path.strip() if workbook_path else None
-            if wb:
-                p = Path(wb)
-                if not p.is_file():
-                    cand = REPO_ROOT / wb
-                    if cand.is_file():
-                        wb = str(cand)
-            new_hist, cleared, fig, payload = bridge.handle_chat(
+            wb = _resolve_workbook(workbook_path)
+            new_hist, cleared, preview, fig, payload = bridge.handle_chat(
                 message, history, editor_value, workbook=wb
             )
-            return new_hist, cleared, fig, payload
+            # Guarantee messages dicts even when starting from empty history.
+            new_hist = ensure_messages(new_hist)
+            return new_hist, cleared, preview, fig, payload
 
-        def on_load_preset(label):
-            if not label:
-                return None, {"kind": "preset", "error": "no preset selected"}
-            value = bridge.load_preset_editor(label)
-            return value, {"kind": "preset", "preset": label}
+        def on_clear():
+            return [], ""
 
-        def on_sync(editor_value, history, message):
-            history = ensure_messages(history)
-            note = (message or "").strip()
-            meta = bridge.save_annotation(
-                editor_value,
-                note=note,
-                request=note or "Sync from Dev Console",
-            )
-            packet = bridge.read_sync_request()
-            reply = (
-                f"Synced for agent pickup → {meta.get('latest_png')} "
-                f"+ {meta.get('request_md')}"
-            )
-            new_hist = history + [
-                {"role": "user", "content": note or "[Sync to Agent]"},
-                {"role": "assistant", "content": reply},
-            ]
-            payload = {"kind": "sync_packet", **meta, "packet": packet}
-            return new_hist, "", None, payload
+        def on_load_sample(label):
+            value = bridge.load_demo_editor(label)
+            return value, {"kind": "sample", "preset": label}
+
+        def on_push_preview(editor_value):
+            from .bridge import _pil_from_editor
+
+            img = _pil_from_editor(editor_value)
+            if img is None:
+                return None, {"kind": "preview", "error": "editor empty"}
+            bridge.last_preview = img
+            return img, {"kind": "preview", "size": list(img.size)}
+
+        def on_sync_to_agent(editor_value, note_text=""):
+            note = (note_text or "").strip()
+            meta = save_annotation(editor_value, note=note, prefix="sync")
+            packet = read_sync_request()
+            from PIL import Image
+
+            preview = None
+            latest = SESSION_ROOT / "latest.png"
+            if latest.is_file():
+                preview = Image.open(latest).convert("RGBA")
+                bridge.last_preview = preview
+            payload = {
+                "kind": "sync",
+                "meta": meta,
+                "sync_packet": {
+                    "ok": packet.get("ok"),
+                    "latest_png": packet.get("latest_png"),
+                    "request_md_len": len(packet.get("request_md") or ""),
+                },
+            }
+            bridge.last_live = payload
+            return preview, payload
+
+        def on_align_now(workbook_path):
+            wb = _resolve_workbook(workbook_path)
+            result = run_alignment2(wb, step=1.0)
+            bridge.last_align = result
+            fig = plot_alignment(result)
+            payload = {
+                "kind": "align",
+                "meta": result.get("meta"),
+                "points_count": len(result.get("points") or []),
+            }
+            bridge.last_live = payload
+            return fig, payload
 
         send.click(
             on_send,
             inputs=[msg, chatbot, editor, workbook],
-            outputs=[chatbot, msg, plot, live_json],
+            outputs=[chatbot, msg, live_image, plot, live_json],
         )
         msg.submit(
             on_send,
             inputs=[msg, chatbot, editor, workbook],
-            outputs=[chatbot, msg, plot, live_json],
+            outputs=[chatbot, msg, live_image, plot, live_json],
         )
+        clear.click(on_clear, inputs=[], outputs=[chatbot, msg])
+        load_btn.click(on_load_sample, inputs=[preset], outputs=[editor, live_json])
+        push_btn.click(on_push_preview, inputs=[editor], outputs=[live_image, live_json])
         sync_btn.click(
-            on_sync,
-            inputs=[editor, chatbot, msg],
-            outputs=[chatbot, msg, plot, live_json],
+            on_sync_to_agent,
+            inputs=[editor, msg],
+            outputs=[live_image, live_json],
         )
-        load_btn.click(on_load_preset, inputs=[preset], outputs=[editor, live_json])
-        preset.change(on_load_preset, inputs=[preset], outputs=[editor, live_json])
+        align_btn.click(on_align_now, inputs=[workbook], outputs=[plot, live_json])
+        preset.change(
+            lambda label: (
+                bridge.load_preset_editor(label),
+                {"kind": "preset", "preset": label},
+            ),
+            inputs=[preset],
+            outputs=[editor, live_json],
+        )
 
     return demo
 
@@ -139,10 +211,12 @@ def _build_ui():
 def main(argv: Optional[List[str]] = None) -> int:
     _ = argv
     demo = _build_ui()
-    share = os.environ.get("GRADIO_SHARE", "").strip() in ("1", "true", "True", "yes")
+    share = _env_bool("GRADIO_SHARE", False)
+    server_name = os.environ.get("GRADIO_SERVER_NAME", "127.0.0.1") or "127.0.0.1"
+    server_port = _env_int("GRADIO_SERVER_PORT", 7860)
     demo.launch(
-        server_name="127.0.0.1",
-        server_port=int(os.environ.get("GRADIO_SERVER_PORT", "7860")),
+        server_name=server_name,
+        server_port=server_port,
         share=share,
         inbrowser=False,
     )
