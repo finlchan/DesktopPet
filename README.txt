@@ -38,6 +38,10 @@ Features
 10. Settings — pet image, shortcuts, document folders, text records, window
     level (Normal / Always on top / Always on bottom), Start with Windows.
 11. Remembers pet position across monitors and resolution changes.
+12. Dev Console (optional) — Gradio three-pane tool under dev_console/:
+    chat + drawable screenshot editor + live Alignment(2) / annotation pane.
+    Run: pip install -r requirements.txt && python -m dev_console.app
+    See: dev_console/README.md
 
 Quick Usage
 --------
