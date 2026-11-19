@@ -1,8 +1,8 @@
 Desktop Pet
 ==================
 
-Version: 261114.01
-Published: 2026-11-14
+Version: 261119.01
+Published: 2026-11-19
 
 A floating shortcut menu and document record gadget on the Windows desktop.
 
@@ -23,21 +23,24 @@ Features
 4. Document Record 文檔紀錄 — browse/search files in one or more storage
    folders; Crumble Down title; Open folder; per-file Time / Comment /
    Publisher / Version.
-5. Mini Programs 副程式 — Text records; Calculations; Pomodoro; Translate;
+5. MAP — interconnected bubbles (topic / local path / website); Social Icon
+   Fill button to the right of Document Record; drag / connect / edit /
+   open path or URL; saved in config map_bubbles (blank in packaging).
+6. Mini Programs 副程式 — Text records; Calculations; Pomodoro; Translate;
    箱庭島（未完成）／Hakoniwa (WIP); 透明魚缸（未完成）／Fish Tank (WIP).
    Panel ambient: Particle Network.
-6. Calculations — Level calc, Slope calc, Free station (resection IMPORT +
+7. Calculations — Level calc, Slope calc, Free station (resection IMPORT +
    pair Prelim/Mirror/Reject/Use mirror; BS4 left blank for manual entry),
    Alignment(1) (point-list interpolate + 大量運算 batch), Alignment(2)
    (OSCH design densify, interval, OSCH2_AOut Excel with LEVEL columns).
-7. Pomodoro — Now / Target / Countdown, duration presets and End-at mode.
-8. Translate — auto-detect source; EN / 繁中 / 简中 / 日本語 / 한국어 /
+8. Pomodoro — Now / Target / Countdown, duration presets and End-at mode.
+9. Translate — auto-detect source; EN / 繁中 / 简中 / 日本語 / 한국어 /
    Français / Deutsch / Español (public web endpoint; no API key).
-9. 箱庭島／Hakoniwa (WIP) and 透明魚缸／Fish Tank (WIP) — entries kept and
-   marked unfinished.
-10. Settings — pet image, shortcuts, document folders, text records, window
+10. 箱庭島／Hakoniwa (WIP) and 透明魚缸／Fish Tank (WIP) — entries kept and
+    marked unfinished.
+11. Settings — pet image, shortcuts, document folders, text records, window
     level (Normal / Always on top / Always on bottom), Start with Windows.
-11. Remembers pet position across monitors and resolution changes.
+12. Remembers pet position across monitors and resolution changes.
 
 Quick Usage
 --------
@@ -47,9 +50,16 @@ Quick Usage
 - Drag-and-drop a file/folder/URL onto the pet: add a shortcut
 - Right-click a Document Record file item: edit Time / Comment / Publisher /
   Version
+- Home toolbar MAP (right of Document Record): open bubble map; Add / Connect /
+  Edit / Open path-URL / Delete; drag to reposition (no float physics yet)
 
 Latest updates (5)
 --------
+261119.01 (2026-11-19)
+1. MAP: home Social Icon Fill button (right of Document Record); bubble
+   window with topic / path / URL; connect / drag / persist blank-safe
+   map_bubbles in config.
+
 261114.01 (2026-11-14)
 1. Free Station IMPORT: BS4 stays blank for manual entry (no longer maps
    Computed Bearing / stray cells into BS4).
@@ -65,10 +75,6 @@ Latest updates (5)
 261106.04 (2026-11-06)
 1. Alignment(2) Output Excel: CHAINAGE / E / N / LEVEL plus LHS/RHS E·N·Lv
    columns from vertical + crossfall.
-
-261106.03 (2026-11-06)
-1. Alignment(1) section 3 大量運算: Import batch / Compute / Output for the
-   dual Input→Output workbook.
 
 Older release notes are on GitHub Releases.
 
