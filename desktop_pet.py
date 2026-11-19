@@ -123,6 +123,12 @@ DEFAULT_CONFIG = {
         "server_url": "",
         "api_key": "",
     },
+    # MAP bubbles: blank graph (no personal topics/paths/URLs in the template).
+    # Shape: {bubbles: [{id,x,y,r,topic,path,url}], edges: [{a,b}]}.
+    "map_bubbles": {
+        "bubbles": [],
+        "edges": [],
+    },
 }
 
 
@@ -3784,6 +3790,7 @@ class DocumentSubMenu(PopupPanel):
 FILE_URL_SHORTCUTS_TITLE = "File/URL Shortcuts 指定傳送"
 JITTER_SETTLE_TEXT = QColor(255, 255, 255)
 JITTER_SETTLE_GLOW = TITLE_GLOW
+MAP_TITLE = "MAP"
 MINI_PROGRAMS_TITLE = "Mini Programs 副程式"
 JITTER_SETTLE_CYCLE_S = 2.4
 JITTER_SETTLE_SHAKE_S = 1.15  # damp window; remainder is pause at rest
@@ -7998,9 +8005,28 @@ def draw_menu_icon_gear(p: QPainter, c: QPointF, r: float, color: QColor) -> Non
         )
 
 
+def draw_menu_icon_map(p: QPainter, c: QPointF, r: float, color: QColor) -> None:
+    """MAP — three linked bubbles (mind-map sketch)."""
+    p.setPen(_menu_sif_pen(color, 1.7))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    # Hub + two satellites
+    hubs = (
+        QPointF(c.x() - r * 0.15, c.y() + r * 0.05),
+        QPointF(c.x() + r * 0.42, c.y() - r * 0.35),
+        QPointF(c.x() + r * 0.38, c.y() + r * 0.42),
+    )
+    radii = (r * 0.32, r * 0.22, r * 0.20)
+    # Links first
+    p.drawLine(hubs[0], hubs[1])
+    p.drawLine(hubs[0], hubs[2])
+    for pt, rr in zip(hubs, radii):
+        p.drawEllipse(QRectF(pt.x() - rr, pt.y() - rr, rr * 2.0, rr * 2.0))
+
+
 MENU_SIF_DRAWERS = {
     "shortcut": draw_menu_icon_shortcut,
     "document": draw_menu_icon_document,
+    "map": draw_menu_icon_map,
     "calculator": draw_menu_icon_calculator,
     "gear": draw_menu_icon_gear,
 }
@@ -8133,6 +8159,7 @@ class PetMenu(PopupPanel):
         self.doc_submenu = None
         self.file_shortcuts_submenu = None
         self.mini_programs_submenu = None
+        self.map_dialog = None
         self._folder_shortcuts = []
         self.build_ui()
 
@@ -8171,10 +8198,10 @@ class PetMenu(PopupPanel):
         sep0.setStyleSheet("background-color: rgba(255,255,255,120);")
         self.main_layout.addWidget(sep0)
 
-        # First-page nav: Social Icon Fill circles (shortcut / document / mini / settings)
+        # First-page nav: Social Icon Fill (File/URL · Document · MAP · Mini · Settings)
         nav_row = QHBoxLayout()
-        nav_row.setSpacing(10)
-        nav_row.setContentsMargins(4, 6, 4, 2)
+        nav_row.setSpacing(8)
+        nav_row.setContentsMargins(2, 6, 2, 2)
         nav_row.addStretch()
 
         self.btn_file_sc_open = MenuSocialIconFillButton(
@@ -8188,6 +8215,10 @@ class PetMenu(PopupPanel):
         )
         self.btn_doc_open.clicked.connect(self.open_document_submenu)
         nav_row.addWidget(self.btn_doc_open)
+
+        self.btn_map_open = MenuSocialIconFillButton("map", MAP_TITLE, self)
+        self.btn_map_open.clicked.connect(self.open_map)
+        nav_row.addWidget(self.btn_map_open)
 
         self.btn_mini_open = MenuSocialIconFillButton(
             "calculator", MINI_PROGRAMS_TITLE, self
@@ -8204,13 +8235,13 @@ class PetMenu(PopupPanel):
 
         # Captions under the icon row (document caption updates from Settings title)
         cap_row = QHBoxLayout()
-        cap_row.setSpacing(6)
-        cap_row.setContentsMargins(2, 0, 2, 2)
+        cap_row.setSpacing(4)
+        cap_row.setContentsMargins(0, 0, 0, 2)
         cap_style = (
             "color: rgba(255,255,255,210); font-size: 7.5pt; "
             "background: transparent; font-weight: normal;"
         )
-        cap_w = MENU_SIF_BTN_SIZE + 8
+        cap_w = MENU_SIF_BTN_SIZE + 4
 
         def _cap(text: str) -> QLabel:
             lab = QLabel(text)
@@ -8224,6 +8255,7 @@ class PetMenu(PopupPanel):
         cap_row.addWidget(_cap("File/URL"))
         self.doc_title = _cap("Document Record")
         cap_row.addWidget(self.doc_title)
+        cap_row.addWidget(_cap("MAP"))
         cap_row.addWidget(_cap("Mini Programs"))
         cap_row.addWidget(_cap("Settings"))
         cap_row.addStretch()
@@ -8337,6 +8369,23 @@ class PetMenu(PopupPanel):
         self.mini_programs_submenu.refresh_and_show(self.geometry())
         QTimer.singleShot(300, self._release_suppress)
 
+    def open_map(self):
+        """Open the MAP bubble window (right of Document record)."""
+        self._hide_other_submenus(keep=None)
+        self._suppress_hide = True
+        try:
+            from map_bubbles import MapDialog as _MapDialog
+        except Exception as exc:
+            QMessageBox.warning(self, "MAP", f"Could not open MAP:\n{exc}")
+            QTimer.singleShot(300, self._release_suppress)
+            return
+        if self.map_dialog is None:
+            self.map_dialog = _MapDialog(self.cfg, None)
+        self.map_dialog.show()
+        self.map_dialog.raise_()
+        self.map_dialog.activateWindow()
+        QTimer.singleShot(300, self._release_suppress)
+
     def _release_suppress(self):
         self._suppress_hide = False
 
@@ -8366,6 +8415,10 @@ class PetMenu(PopupPanel):
             or self.mini_programs_submenu.isActiveWindow()
         ):
             return
+        if self.map_dialog is not None and (
+            self.map_dialog.isVisible() or self.map_dialog.isActiveWindow()
+        ):
+            return
         active = QApplication.activeWindow()
         try:
             from hakoniwa import HakoniwaIslandDialog as _HakoniwaIslandDialog
@@ -8377,6 +8430,10 @@ class PetMenu(PopupPanel):
         except Exception:
             _FishTankDialog = type(None)
             _CaptureCardDialog = type(None)
+        try:
+            from map_bubbles import MapDialog as _MapDialog
+        except Exception:
+            _MapDialog = type(None)
         if isinstance(
             active,
             (
@@ -8397,6 +8454,7 @@ class PetMenu(PopupPanel):
                 _HakoniwaIslandDialog,
                 _FishTankDialog,
                 _CaptureCardDialog,
+                _MapDialog,
             ),
         ):
             return

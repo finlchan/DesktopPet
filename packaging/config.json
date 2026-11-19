@@ -35,5 +35,9 @@
   "hakoniwa": {
     "server_url": "",
     "api_key": ""
+  },
+  "map_bubbles": {
+    "bubbles": [],
+    "edges": []
   }
 }
