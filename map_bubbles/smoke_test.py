@@ -58,10 +58,41 @@ def test_scene_qt() -> None:
     del app
 
 
+def test_water_ripple() -> None:
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    from map_bubbles.save import make_bubble
+    from map_bubbles.scene import MapScene, MapView
+    from map_bubbles.water_ripple import WaterRippleSim
+
+    sim = WaterRippleSim()
+    bw, bh = sim.ensure_size(400, 300)
+    assert bw >= 8 and bh >= 8
+    sim.disturb(bw / 2, bh / 2, radius=3, strength=200)
+    assert sim.active
+    sim.step()
+    frame = sim.render_upscaled(400, 300)
+    assert not frame.isNull()
+    assert frame.width() == 400 and frame.height() == 300
+
+    scene = MapScene()
+    view = MapView(scene)
+    view.resize(400, 300)
+    view.show()
+    scene.add_bubble_from_dict(make_bubble(x=0, y=0, topic="Ripple"))
+    view._splash_at_view(80, 90, 4.0, 300.0)
+    view._on_ripple_tick()
+    assert view._cached_frame is not None and not view._cached_frame.isNull()
+    view.hide()
+    del app
+
+
 def main() -> int:
     test_blank_packaging_template()
     test_save_roundtrip()
     test_scene_qt()
+    test_water_ripple()
     print("map_bubbles smoke_test: OK")
     return 0
 
