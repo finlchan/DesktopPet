@@ -1,8 +1,8 @@
 Desktop Pet
 ==================
 
-Version: 261119.01
-Published: 2026-11-19
+Version: 261122.01
+Published: 2026-11-22
 
 A floating shortcut menu and document record gadget on the Windows desktop.
 
@@ -24,8 +24,10 @@ Features
    folders; Crumble Down title; Open folder; per-file Time / Comment /
    Publisher / Version.
 5. MAP — interconnected bubbles (topic / local path / website); Social Icon
-   Fill button to the right of Document Record; drag / connect / edit /
-   open path or URL; saved in config map_bubbles (blank in packaging).
+   Fill button to the right of Document Record; water-ripple backdrop
+   (cursor path / click / idle drops; bubbles refract under water);
+   drag / connect / edit / open path or URL; saved in config map_bubbles
+   (blank in packaging).
 6. Mini Programs 副程式 — Text records; Calculations; Pomodoro; Translate;
    箱庭島（未完成）／Hakoniwa (WIP); 透明魚缸（未完成）／Fish Tank (WIP).
    Panel ambient: Particle Network.

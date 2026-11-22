@@ -216,8 +216,8 @@ class MapDialog(QDialog):
         root.addLayout(bar)
 
         self.status = QLabel(
-            "Drag to move · Double-click to edit · Connect: click two bubbles · "
-            "Wheel to zoom"
+            "Water ripple · Move cursor / click for waves · Drag bubbles · "
+            "Double-click to edit · Connect · Wheel to zoom"
         )
         self.status.setWordWrap(True)
         self.status.setStyleSheet("color: #c8d8e8; font-size: 8.5pt;")
@@ -309,8 +309,8 @@ class MapDialog(QDialog):
         else:
             self.view.setDragMode(self.view.DragMode.RubberBandDrag)
             self.status.setText(
-                "Drag to move · Double-click to edit · Connect: click two bubbles · "
-                "Wheel to zoom"
+                "Water ripple · Move cursor / click for waves · Drag bubbles · "
+                "Double-click to edit · Connect · Wheel to zoom"
             )
 
     def _edit_selected(self) -> None:
@@ -325,6 +325,7 @@ class MapDialog(QDialog):
         if dlg.exec() == QDialog.DialogCode.Accepted:
             topic, path, url = dlg.values()
             item.set_fields(topic, path, url)
+            self.view.mark_backdrop_dirty()
             self._persist()
 
     def _activate_selected(self) -> None:
