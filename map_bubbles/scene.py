@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .water_ripple import WaterRippleSim, stamp_bubble
+from .water_ripple import WaterRippleSim
 
 # Steel-blue theme (Desktop Pet / menu palette)
 BUBBLE_FILL = QColor(61, 90, 128, 210)          # #3d5a80
@@ -51,17 +51,8 @@ IDLE_RADIUS = 3.2
 IDLE_STRENGTH = 240.0
 
 
-def _view_has_ripple(scene: Optional[QGraphicsScene]) -> bool:
-    if scene is None:
-        return False
-    for v in scene.views():
-        if isinstance(v, MapView) and v.ripple_enabled:
-            return True
-    return False
-
-
 class EdgeItem(QGraphicsLineItem):
-    """Undirected link between two bubbles."""
+    """Undirected link between two bubbles (drawn above the water layer)."""
 
     def __init__(self, a: "BubbleItem", b: "BubbleItem"):
         super().__init__()
@@ -80,17 +71,6 @@ class EdgeItem(QGraphicsLineItem):
         c1 = self.bubble_a.scenePos()
         c2 = self.bubble_b.scenePos()
         self.setLine(c1.x(), c1.y(), c2.x(), c2.y())
-
-    def paint(
-        self,
-        painter: QPainter,
-        option: QStyleOptionGraphicsItem,
-        widget: Optional[QWidget] = None,
-    ) -> None:
-        # Drawn into the refracted underwater backdrop; skip duplicate stroke.
-        if _view_has_ripple(self.scene()):
-            return
-        super().paint(painter, option, widget)
 
 
 class BubbleItem(QGraphicsEllipseItem):
@@ -129,8 +109,8 @@ class BubbleItem(QGraphicsEllipseItem):
         font.setBold(True)
         self._label.setFont(font)
         self._refresh_label()
-        # Label is stamped into the water backdrop; keep item for layout only.
-        self._label.setOpacity(0.0)
+        # Labels stay on the live item (above water) so text is never refracted.
+        self._label.setOpacity(1.0)
 
     def attach_edge(self, edge: EdgeItem) -> None:
         self._edges.add(edge)
@@ -190,7 +170,6 @@ class BubbleItem(QGraphicsEllipseItem):
             scene = self.scene()
             if isinstance(scene, MapScene):
                 scene.bubble_moved.emit()
-                scene._dirty_ripple_views()
         elif change == QGraphicsItem.GraphicsItemChange.ItemSelectedHasChanged:
             if value:
                 self.setBrush(QBrush(BUBBLE_FILL_SEL))
@@ -198,9 +177,6 @@ class BubbleItem(QGraphicsEllipseItem):
             else:
                 self.setBrush(QBrush(BUBBLE_FILL))
                 self.setPen(QPen(BUBBLE_OUTLINE, 2.0))
-            scene = self.scene()
-            if isinstance(scene, MapScene):
-                scene._dirty_ripple_views()
         return super().itemChange(change, value)
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
@@ -220,14 +196,7 @@ class BubbleItem(QGraphicsEllipseItem):
     ) -> None:
         del option, widget
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        # Underwater mode: body/label live in the refracted backdrop.
-        # Keep a thin interactive ring so selection / drag stay readable.
-        if _view_has_ripple(self.scene()):
-            if self.isSelected():
-                painter.setBrush(Qt.BrushStyle.NoBrush)
-                painter.setPen(QPen(BUBBLE_OUTLINE_SEL, 2.6))
-                painter.drawEllipse(self.rect().adjusted(-1, -1, 1, 1))
-            return
+        # Live bubble (and label child) stay above the water layer — never refracted.
         painter.setBrush(self.brush())
         painter.setPen(self.pen())
         painter.drawEllipse(self.rect())
@@ -241,9 +210,6 @@ class BubbleItem(QGraphicsEllipseItem):
         if self.url.strip():
             painter.setBrush(QColor(135, 206, 250, 230))
             painter.drawEllipse(QPointF(x0 + 8, badge_y), 3.5, 3.5)
-        # Restore label visibility when ripple is off.
-        if self._label.opacity() < 0.5:
-            self._label.setOpacity(1.0)
 
 
 class MapScene(QGraphicsScene):
@@ -270,17 +236,11 @@ class MapScene(QGraphicsScene):
     def edges(self) -> List[EdgeItem]:
         return list(self._edges.values())
 
-    def _dirty_ripple_views(self) -> None:
-        for v in self.views():
-            if isinstance(v, MapView):
-                v.mark_backdrop_dirty()
-
     def clear_graph(self) -> None:
         self.clear()
         self._bubbles.clear()
         self._edges.clear()
         self._connect_from = None
-        self._dirty_ripple_views()
 
     def add_bubble_from_dict(self, data: dict) -> BubbleItem:
         item = BubbleItem(
@@ -293,7 +253,6 @@ class MapScene(QGraphicsScene):
         item.setPos(float(data.get("x", 0)), float(data.get("y", 0)))
         self.addItem(item)
         self._bubbles[item.bubble_id] = item
-        self._dirty_ripple_views()
         return item
 
     def add_edge_between(self, a: BubbleItem, b: BubbleItem) -> Optional[EdgeItem]:
@@ -309,7 +268,6 @@ class MapScene(QGraphicsScene):
         a.attach_edge(edge)
         b.attach_edge(edge)
         self._edges[key] = edge
-        self._dirty_ripple_views()
         self.changed_graph.emit()
         return edge
 
@@ -320,7 +278,6 @@ class MapScene(QGraphicsScene):
         edge.bubble_b.detach_edge(edge)
         if edge.scene() is self:
             self.removeItem(edge)
-        self._dirty_ripple_views()
         self.changed_graph.emit()
 
     def remove_bubble(self, item: BubbleItem) -> None:
@@ -331,7 +288,6 @@ class MapScene(QGraphicsScene):
             self.removeItem(item)
         if self._connect_from is item:
             self._connect_from = None
-        self._dirty_ripple_views()
         self.changed_graph.emit()
 
     def set_connect_mode(self, enabled: bool) -> None:
@@ -393,7 +349,7 @@ class MapScene(QGraphicsScene):
 
 
 class MapView(QGraphicsView):
-    """Pan/zoom view with classic water-ripple backdrop (bubbles refract under water)."""
+    """Pan/zoom view with sea-surface water-ripple backdrop (bubbles stay sharp on top)."""
 
     def __init__(self, scene: MapScene, parent=None):
         super().__init__(scene, parent)
@@ -429,16 +385,15 @@ class MapView(QGraphicsView):
         scene = self.scene()
         if not isinstance(scene, MapScene) or not scene.bubbles():
             self.resetTransform()
-            self._backdrop_dirty = True
             return
         rect = QRectF()
         for b in scene.bubbles():
             rect = rect.united(b.sceneBoundingRect())
         rect = rect.adjusted(-40, -40, 40, 40)
         self.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
-        self._backdrop_dirty = True
 
     def mark_backdrop_dirty(self) -> None:
+        """Force sea-texture re-stamp (resize / show). Bubbles are not stamped."""
         self._backdrop_dirty = True
 
     # --- ripple simulation ----------------------------------------------
@@ -467,66 +422,11 @@ class MapView(QGraphicsView):
         self._ripple.disturb(sx, sy, radius=radius, strength=strength)
 
     def _rebuild_backdrop(self) -> None:
-        """Stamp steel-blue water + underwater bubbles/edges into the sim backdrop."""
+        """Paint only the sea-surface texture into the sim backdrop (no bubbles)."""
         sim = self._ripple
-        bw, bh = sim.w, sim.h
-        if bw < 2 or bh < 2:
+        if sim.w < 2 or sim.h < 2:
             return
         sim.paint_base_water()
-        img = sim.backdrop()
-        scene = self.scene()
-        if not isinstance(scene, MapScene):
-            return
-        vw = max(1, self.viewport().width())
-        vh = max(1, self.viewport().height())
-        sx = bw / float(vw)
-        sy = bh / float(vh)
-        zoom = abs(self.transform().m11()) or 1.0
-
-        p = QPainter(img)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-
-        # Edges first (under bubbles).
-        for edge in scene.edges():
-            a = self.mapFromScene(edge.bubble_a.scenePos())
-            b = self.mapFromScene(edge.bubble_b.scenePos())
-            p.setPen(QPen(EDGE_COLOR, max(0.8, 1.2 * min(sx, sy) * zoom)))
-            p.drawLine(
-                QPointF(a.x() * sx, a.y() * sy),
-                QPointF(b.x() * sx, b.y() * sy),
-            )
-
-        for bubble in scene.bubbles():
-            vp = self.mapFromScene(bubble.scenePos())
-            cx = vp.x() * sx
-            cy = vp.y() * sy
-            r = max(3.0, bubble.radius * zoom * sx)
-            fill = BUBBLE_FILL_SEL if bubble.isSelected() else BUBBLE_FILL
-            outline = BUBBLE_OUTLINE_SEL if bubble.isSelected() else BUBBLE_OUTLINE
-            label = bubble.display_text()
-            if len(label) > 14:
-                label = label[:12] + "…"
-            stamp_bubble(
-                p,
-                cx,
-                cy,
-                r,
-                fill,
-                outline,
-                label=label,
-                selected=bubble.isSelected(),
-            )
-            # Path / URL badges (tiny).
-            badge_y = cy + r * 0.55
-            p.setPen(Qt.PenStyle.NoPen)
-            if bubble.path.strip():
-                p.setBrush(QColor(232, 212, 139, 220))
-                p.drawEllipse(QPointF(cx - r * 0.2, badge_y), max(1.2, r * 0.08), max(1.2, r * 0.08))
-            if bubble.url.strip():
-                p.setBrush(QColor(135, 206, 250, 230))
-                p.drawEllipse(QPointF(cx + r * 0.2, badge_y), max(1.2, r * 0.08), max(1.2, r * 0.08))
-
-        p.end()
         self._backdrop_dirty = False
 
     def _on_ripple_tick(self) -> None:
@@ -585,7 +485,7 @@ class MapView(QGraphicsView):
             return
         factor = 1.15 if delta > 0 else 1.0 / 1.15
         self.scale(factor, factor)
-        self._backdrop_dirty = True
+        # Sea texture is viewport-locked; zoom only moves scene items above it.
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
         if self.ripple_enabled:
@@ -600,21 +500,13 @@ class MapView(QGraphicsView):
                 if dx * dx + dy * dy >= MOVE_DRIP_MIN_DIST * MOVE_DRIP_MIN_DIST:
                     self._last_drip = QPointF(pt)
                     self._splash_at_view(pt.x(), pt.y(), MOVE_DRIP_RADIUS, MOVE_DRIP_STRENGTH)
-        # Bubble drag moves the underwater stamps.
-        if event.buttons() & Qt.MouseButton.LeftButton:
-            self._backdrop_dirty = True
         super().mouseMoveEvent(event)
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         if self.ripple_enabled and event.button() == Qt.MouseButton.LeftButton:
             pos = event.position() if hasattr(event, "position") else event.localPos()
             self._splash_at_view(pos.x(), pos.y(), CLICK_RADIUS, CLICK_STRENGTH)
-            self._backdrop_dirty = True
         super().mousePressEvent(event)
-
-    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
-        self._backdrop_dirty = True
-        super().mouseReleaseEvent(event)
 
     def leaveEvent(self, event) -> None:  # noqa: N802
         self._last_drip = None

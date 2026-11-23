@@ -64,7 +64,10 @@ def test_water_ripple() -> None:
     app = QApplication.instance() or QApplication([])
     from map_bubbles.save import make_bubble
     from map_bubbles.scene import MapScene, MapView
-    from map_bubbles.water_ripple import WaterRippleSim
+    from map_bubbles.water_ripple import WaterRippleSim, load_sea_surface
+
+    sea = load_sea_surface()
+    assert sea is not None and not sea.isNull(), "map_bubbles/assets/sea-surface.png must ship"
 
     sim = WaterRippleSim()
     bw, bh = sim.ensure_size(400, 300)
@@ -80,7 +83,9 @@ def test_water_ripple() -> None:
     view = MapView(scene)
     view.resize(400, 300)
     view.show()
-    scene.add_bubble_from_dict(make_bubble(x=0, y=0, topic="Ripple"))
+    bubble = scene.add_bubble_from_dict(make_bubble(x=0, y=0, topic="Ripple"))
+    # Labels stay visible on the live item (not stamped into the refracted sea).
+    assert bubble._label.opacity() > 0.5
     view._splash_at_view(80, 90, 4.0, 300.0)
     view._on_ripple_tick()
     assert view._cached_frame is not None and not view._cached_frame.isNull()
