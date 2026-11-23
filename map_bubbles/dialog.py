@@ -10,6 +10,7 @@ from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QDialog,
+    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
@@ -77,7 +78,7 @@ def _open_url(url: str) -> None:
 
 
 class BubbleEditDialog(QDialog):
-    """Edit 主題 / 電腦路徑 / 網站 — at least one required."""
+    """Edit 主題 / 電腦路徑 / 網站 / 大小 — at least one of topic/path/URL required."""
 
     def __init__(self, bubble: BubbleItem, parent=None):
         super().__init__(parent)
@@ -101,13 +102,22 @@ class BubbleEditDialog(QDialog):
         self.url_edit = QLineEdit(bubble.url)
         self.url_edit.setPlaceholderText("網站 / https://…")
 
+        self.size_spin = QDoubleSpinBox()
+        self.size_spin.setRange(36.0, 120.0)
+        self.size_spin.setDecimals(0)
+        self.size_spin.setSingleStep(4.0)
+        self.size_spin.setSuffix(" px")
+        self.size_spin.setValue(float(bubble.radius))
+        self.size_spin.setToolTip("Bubble radius (config field r); 36–120")
+
         layout.addRow("主題 (topic):", self.topic_edit)
         layout.addRow("電腦路徑 (path):", path_wrap)
         layout.addRow("網站 (URL):", self.url_edit)
+        layout.addRow("大小 (size / r):", self.size_spin)
 
         hint = QLabel(
-            "Fill at least one field. Double-click a bubble to edit; "
-            "Open path/URL (or Enter) activates."
+            "Fill at least one of topic / path / URL. Size is radius in pixels "
+            "(saved as r). Double-click a bubble to edit; Open path/URL (or Enter) activates."
         )
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #9ab; font-size: 8.5pt;")
@@ -144,11 +154,12 @@ class BubbleEditDialog(QDialog):
             return
         self.accept()
 
-    def values(self) -> tuple[str, str, str]:
+    def values(self) -> tuple[str, str, str, float]:
         return (
             self.topic_edit.text().strip(),
             self.path_edit.text().strip(),
             self.url_edit.text().strip(),
+            float(self.size_spin.value()),
         )
 
 
@@ -323,8 +334,8 @@ class MapDialog(QDialog):
     def _edit_bubble(self, item: BubbleItem) -> None:
         dlg = BubbleEditDialog(item, self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            topic, path, url = dlg.values()
-            item.set_fields(topic, path, url)
+            topic, path, url, radius = dlg.values()
+            item.set_fields(topic, path, url, radius=radius)
             self.view.mark_backdrop_dirty()
             self._persist()
 

@@ -17,13 +17,16 @@ def test_save_roundtrip() -> None:
     from map_bubbles.save import load_map, make_bubble, save_map
 
     cfg = {"map_bubbles": {"bubbles": [], "edges": []}}
-    a = make_bubble(x=10, y=20, topic="A", path="/tmp/a")
-    b = make_bubble(x=100, y=40, topic="B", url="https://example.com")
+    a = make_bubble(x=10, y=20, r=64, topic="A", path="/tmp/a")
+    b = make_bubble(x=100, y=40, r=40, topic="B", url="https://example.com")
     save_map(cfg, [a, b], [{"a": a["id"], "b": b["id"]}])
     bubbles, edges = load_map(cfg)
     assert len(bubbles) == 2
     assert len(edges) == 1
     assert edges[0]["a"] < edges[0]["b"] or edges[0]["a"] != edges[0]["b"]
+    by_id = {b["id"]: b for b in bubbles}
+    assert by_id[a["id"]]["r"] == 64.0
+    assert by_id[b["id"]]["r"] == 40.0
 
 
 def test_blank_packaging_template() -> None:
@@ -32,9 +35,13 @@ def test_blank_packaging_template() -> None:
     assert "map_bubbles" in data
     assert data["map_bubbles"]["bubbles"] == []
     assert data["map_bubbles"]["edges"] == []
+    # Blank template stays empty — no sample size / personal paths.
+    assert list(data["map_bubbles"].keys()) == ["bubbles", "edges"]
 
 
 def test_scene_qt() -> None:
+    import math
+
     from PySide6.QtWidgets import QApplication
 
     app = QApplication.instance() or QApplication([])
@@ -42,19 +49,70 @@ def test_scene_qt() -> None:
     from map_bubbles.scene import MapScene
 
     scene = MapScene()
-    a = scene.add_bubble_from_dict(make_bubble(x=0, y=0, topic="Hub"))
-    b = scene.add_bubble_from_dict(make_bubble(x=120, y=40, topic="Leaf"))
+    a = scene.add_bubble_from_dict(make_bubble(x=0, y=0, r=50, topic="Hub"))
+    b = scene.add_bubble_from_dict(make_bubble(x=200, y=0, r=40, topic="Leaf"))
     edge = scene.add_edge_between(a, b)
     assert edge is not None
     assert len(scene.bubbles()) == 2
     assert len(scene.edges()) == 1
-    a.setPos(30, 10)
-    # Edge should track
+    # Edges stop at the outer rim, not centers
     line = edge.line()
-    assert abs(line.x1() - 30) < 0.01
+    assert abs(line.x1() - 50.0) < 0.05, line
+    assert abs(line.y1() - 0.0) < 0.05
+    assert abs(line.x2() - 160.0) < 0.05, line  # 200 - 40
+    assert abs(line.y2() - 0.0) < 0.05
+
+    a.setPos(30, 10)
+    edge.refresh()
+    line = edge.line()
+    c1x, c1y = 30.0, 10.0
+    c2x, c2y = 200.0, 0.0
+    dx, dy = c2x - c1x, c2y - c1y
+    dist = math.hypot(dx, dy)
+    ux, uy = dx / dist, dy / dist
+    expect_x1 = c1x + ux * a.radius
+    expect_y1 = c1y + uy * a.radius
+    assert abs(line.x1() - expect_x1) < 0.05
+    assert abs(line.y1() - expect_y1) < 0.05
+
+    # Per-bubble size update refreshes rim endpoints
+    a.set_radius(70)
+    assert a.radius == 70.0
+    edge.refresh()
+    line = edge.line()
+    dist = math.hypot(c2x - c1x, c2y - c1y)
+    ux, uy = (c2x - c1x) / dist, (c2y - c1y) / dist
+    assert abs(line.x1() - (c1x + ux * 70)) < 0.05
+
     scene.remove_bubble(a)
     assert len(scene.bubbles()) == 1
     assert len(scene.edges()) == 0
+    del app
+
+
+def test_edit_dialog_size_field() -> None:
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    from map_bubbles.dialog import BubbleEditDialog
+    from map_bubbles.save import make_bubble
+    from map_bubbles.scene import BubbleItem
+
+    data = make_bubble(x=0, y=0, r=48, topic="Sized")
+    item = BubbleItem(
+        data["id"],
+        topic=data["topic"],
+        path=data["path"],
+        url=data["url"],
+        radius=data["r"],
+    )
+    dlg = BubbleEditDialog(item)
+    assert abs(dlg.size_spin.value() - 48.0) < 0.01
+    dlg.size_spin.setValue(80)
+    topic, path, url, radius = dlg.values()
+    assert topic == "Sized"
+    assert radius == 80.0
+    dlg.close()
     del app
 
 
@@ -97,6 +155,7 @@ def main() -> int:
     test_blank_packaging_template()
     test_save_roundtrip()
     test_scene_qt()
+    test_edit_dialog_size_field()
     test_water_ripple()
     print("map_bubbles smoke_test: OK")
     return 0

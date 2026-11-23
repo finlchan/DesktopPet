@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import random
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -12,6 +13,7 @@ from PySide6.QtGui import (
     QFont,
     QPainter,
     QPen,
+    QRadialGradient,
     QTransform,
     QWheelEvent,
 )
@@ -52,7 +54,10 @@ IDLE_STRENGTH = 240.0
 
 
 class EdgeItem(QGraphicsLineItem):
-    """Undirected link between two bubbles (drawn above the water layer)."""
+    """Undirected link between two bubbles (drawn above the water layer).
+
+    Endpoints sit on each bubble's outer rim (not the centers).
+    """
 
     def __init__(self, a: "BubbleItem", b: "BubbleItem"):
         super().__init__()
@@ -70,7 +75,28 @@ class EdgeItem(QGraphicsLineItem):
     def refresh(self) -> None:
         c1 = self.bubble_a.scenePos()
         c2 = self.bubble_b.scenePos()
-        self.setLine(c1.x(), c1.y(), c2.x(), c2.y())
+        dx = c2.x() - c1.x()
+        dy = c2.y() - c1.y()
+        dist = math.hypot(dx, dy)
+        r1 = float(self.bubble_a.radius)
+        r2 = float(self.bubble_b.radius)
+        if dist < 1e-6:
+            # Coincident centers — hide the segment
+            self.setLine(c1.x(), c1.y(), c1.x(), c1.y())
+            self.setVisible(False)
+            return
+        # Overlap / touch: no visible gap between rims
+        if dist <= r1 + r2 + 0.5:
+            self.setVisible(False)
+            self.setLine(c1.x(), c1.y(), c2.x(), c2.y())
+            return
+        self.setVisible(True)
+        ux, uy = dx / dist, dy / dist
+        x1 = c1.x() + ux * r1
+        y1 = c1.y() + uy * r1
+        x2 = c2.x() - ux * r2
+        y2 = c2.y() - uy * r2
+        self.setLine(x1, y1, x2, y2)
 
 
 class BubbleItem(QGraphicsEllipseItem):
@@ -138,18 +164,45 @@ class BubbleItem(QGraphicsEllipseItem):
     def _refresh_label(self) -> None:
         text = self.display_text()
         # Soft wrap by truncating for the circle
-        if len(text) > 18:
-            text = text[:16] + "…"
+        max_chars = max(10, int(self.radius / 3.2))
+        if len(text) > max_chars:
+            text = text[: max(1, max_chars - 2)] + "…"
         self._label.setText(text)
         br = self._label.boundingRect()
         self._label.setPos(-br.width() / 2.0, -br.height() / 2.0)
 
-    def set_fields(self, topic: str, path: str, url: str) -> None:
+    def set_radius(self, radius: float) -> None:
+        """Resize the circle (config field ``r``); refresh attached edges."""
+        try:
+            r = float(radius)
+        except (TypeError, ValueError):
+            r = 52.0
+        r = max(36.0, min(r, 120.0))
+        if abs(r - self.radius) < 1e-6:
+            return
+        self.radius = r
+        diam = r * 2.0
+        self.setRect(-r, -r, diam, diam)
+        self._refresh_label()
+        for edge in list(self._edges):
+            edge.refresh()
+        self.update()
+
+    def set_fields(
+        self,
+        topic: str,
+        path: str,
+        url: str,
+        radius: Optional[float] = None,
+    ) -> None:
         self.topic = (topic or "").strip()
         self.path = (path or "").strip()
         self.url = (url or "").strip()
-        self._refresh_label()
-        self.update()
+        if radius is not None:
+            self.set_radius(radius)
+        else:
+            self._refresh_label()
+            self.update()
 
     def to_dict(self) -> dict:
         pos = self.scenePos()
@@ -163,6 +216,12 @@ class BubbleItem(QGraphicsEllipseItem):
             "url": self.url,
         }
 
+    def _fill_color(self) -> QColor:
+        return BUBBLE_FILL_SEL if self.isSelected() else BUBBLE_FILL
+
+    def _outline_color(self) -> QColor:
+        return BUBBLE_OUTLINE_SEL if self.isSelected() else BUBBLE_OUTLINE
+
     def itemChange(self, change, value):  # noqa: N802
         if change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged:
             for edge in list(self._edges):
@@ -171,12 +230,14 @@ class BubbleItem(QGraphicsEllipseItem):
             if isinstance(scene, MapScene):
                 scene.bubble_moved.emit()
         elif change == QGraphicsItem.GraphicsItemChange.ItemSelectedHasChanged:
+            # Brush/pen kept for legacy callers; paint() draws the ring look.
             if value:
                 self.setBrush(QBrush(BUBBLE_FILL_SEL))
                 self.setPen(QPen(BUBBLE_OUTLINE_SEL, 2.4))
             else:
                 self.setBrush(QBrush(BUBBLE_FILL))
                 self.setPen(QPen(BUBBLE_OUTLINE, 2.0))
+            self.update()
         return super().itemChange(change, value)
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
@@ -197,8 +258,30 @@ class BubbleItem(QGraphicsEllipseItem):
         del option, widget
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         # Live bubble (and label child) stay above the water layer — never refracted.
-        painter.setBrush(self.brush())
-        painter.setPen(self.pen())
+        # Ring look: solid outer stroke; inward from the rim the outline soft-fades
+        # into the fill so the center stays readable.
+        fill = self._fill_color()
+        outline = self._outline_color()
+        r = float(self.radius)
+        grad = QRadialGradient(QPointF(0, 0), r)
+        grad.setColorAt(0.0, fill)
+        grad.setColorAt(0.72, fill)
+        # Blend outline into fill near the rim
+        blend = QColor(
+            int(fill.red() * 0.45 + outline.red() * 0.55),
+            int(fill.green() * 0.45 + outline.green() * 0.55),
+            int(fill.blue() * 0.45 + outline.blue() * 0.55),
+            max(fill.alpha(), outline.alpha()),
+        )
+        grad.setColorAt(0.88, blend)
+        rim = QColor(outline)
+        rim.setAlpha(min(255, int(outline.alpha() * 0.85)))
+        grad.setColorAt(0.97, rim)
+        grad.setColorAt(1.0, outline)
+
+        stroke_w = 2.4 if self.isSelected() else 2.0
+        painter.setBrush(QBrush(grad))
+        painter.setPen(QPen(outline, stroke_w, Qt.PenStyle.SolidLine))
         painter.drawEllipse(self.rect())
         # Tiny type hints: path / url badges
         painter.setPen(Qt.PenStyle.NoPen)
