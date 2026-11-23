@@ -1,4 +1,4 @@
-"""MAP window — steel-blue bubble canvas (topic / path / URL)."""
+"""MAP window — single gold frame, sea backdrop, bubble canvas."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ import os
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, QUrl
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtCore import QPoint, QRect, Qt, QTimer, QUrl
+from PySide6.QtGui import QColor, QCursor, QDesktopServices, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
     QDialog,
     QDoubleSpinBox,
@@ -18,12 +18,22 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
 from .save import load_map, make_bubble, save_map
 from .scene import BubbleItem, MapScene, MapView
+
+# Thin gold line around the whole MAP UI (single border — no multi-layer frames).
+MAP_GOLD = QColor(201, 168, 76)          # #c9a84c
+MAP_GOLD_BRIGHT = QColor(232, 212, 139)  # #e8d48b
+MAP_GOLD_DIM = QColor(122, 94, 24)       # #7a5e18
+MAP_BORDER_PX = 1
+MAP_CORNER_ARM = 18          # 『 』 bracket arm length
+MAP_CORNER_HIT = 22          # resize hit size
+MAP_CHROME_PAD = 8           # inset inside the gold line
 
 MAP_FALLBACK_STYLE = """
 QDialog {
@@ -47,6 +57,37 @@ QLineEdit {
     padding: 3px 6px;
 }
 QLabel { color: #e8f2f8; }
+"""
+
+MAP_OVERLAY_STYLE = """
+QWidget#mapChromeOverlay, QWidget#mapChromeBottom {
+    background-color: transparent;
+}
+QLabel#mapTitle {
+    color: #f5e6c8;
+    font-weight: bold;
+    font-size: 11pt;
+    background-color: transparent;
+}
+QLabel#mapStatus {
+    color: #d0e0f0;
+    font-size: 8.5pt;
+    background-color: rgba(20, 32, 48, 120);
+    padding: 2px 6px;
+    border-radius: 2px;
+}
+QPushButton {
+    background-color: rgba(40, 58, 78, 200);
+    color: #f0f6fa;
+    border: 1px solid rgba(201, 168, 76, 160);
+    border-radius: 3px;
+    padding: 4px 10px;
+}
+QPushButton:hover { background-color: rgba(61, 90, 128, 230); }
+QPushButton:checked {
+    background-color: rgba(201, 168, 76, 220);
+    color: #1e2832;
+}
 """
 
 
@@ -163,8 +204,181 @@ class BubbleEditDialog(QDialog):
         )
 
 
+class _CornerResizeGrip(QWidget):
+    """Transparent 『 or 』 corner hit target that resizes the MAP window."""
+
+    def __init__(self, window: QDialog, mode: str, parent=None):
+        super().__init__(parent)
+        self._window = window
+        self._mode = mode  # "tl" | "br"
+        self.setFixedSize(MAP_CORNER_HIT, MAP_CORNER_HIT)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setCursor(QCursor(Qt.CursorShape.SizeFDiagCursor))
+        self.setToolTip("Drag to resize MAP")
+        self._origin = QPoint()
+        self._geom = QRect()
+        self._active = False
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        self._active = True
+        self._origin = event.globalPosition().toPoint()
+        self._geom = QRect(self._window.geometry())
+        self.grabMouse()
+        event.accept()
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        if not self._active:
+            return
+        global_pos = event.globalPosition().toPoint()
+        dx = global_pos.x() - self._origin.x()
+        dy = global_pos.y() - self._origin.y()
+        g = QRect(self._geom)
+        min_w = max(320, self._window.minimumWidth())
+        min_h = max(240, self._window.minimumHeight())
+        if self._mode == "br":
+            self._window.resize(max(min_w, g.width() + dx), max(min_h, g.height() + dy))
+        else:
+            new_w = max(min_w, g.width() - dx)
+            new_h = max(min_h, g.height() - dy)
+            used_dx = g.width() - new_w
+            used_dy = g.height() - new_h
+            self._window.setGeometry(g.x() + used_dx, g.y() + used_dy, new_w, new_h)
+        event.accept()
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton and self._active:
+            self._active = False
+            self.releaseMouse()
+            event.accept()
+
+
+class MapGoldShell(QWidget):
+    """One thin gold border + 『 / 』 corner brackets that resize the MAP window."""
+
+    def __init__(self, window: QDialog, parent=None):
+        super().__init__(parent)
+        self._window = window
+        self.setObjectName("mapGoldShell")
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.setAutoFillBackground(False)
+        self.setMouseTracking(True)
+        self._drag_offset: QPoint | None = None
+
+        inner = QVBoxLayout(self)
+        inner.setContentsMargins(
+            MAP_CHROME_PAD, MAP_CHROME_PAD, MAP_CHROME_PAD, MAP_CHROME_PAD
+        )
+        inner.setSpacing(0)
+        self.content = QWidget(self)
+        self.content.setObjectName("mapGoldContent")
+        self.content.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.content.setAutoFillBackground(False)
+        inner.addWidget(self.content)
+
+        # Raised above content so corner hits are never covered by the sea view.
+        self._grip_tl = _CornerResizeGrip(window, "tl", self)
+        self._grip_br = _CornerResizeGrip(window, "br", self)
+        self._grip_tl.raise_()
+        self._grip_br.raise_()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._grip_tl.move(0, 0)
+        self._grip_br.move(
+            self.width() - MAP_CORNER_HIT, self.height() - MAP_CORNER_HIT
+        )
+        self._grip_tl.raise_()
+        self._grip_br.raise_()
+
+    def _border_band_hit(self, pos: QPoint) -> bool:
+        t = MAP_CHROME_PAD
+        r = self.rect()
+        x, y = pos.x(), pos.y()
+        return (
+            x < t
+            or y < t
+            or x >= r.width() - t
+            or y >= r.height() - t
+        )
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        r = self.rect().adjusted(0, 0, -1, -1)
+
+        # Single thin gold line around the whole MAP UI.
+        painter.setPen(QPen(MAP_GOLD, MAP_BORDER_PX, Qt.PenStyle.SolidLine))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(r)
+
+        # 『 top-left and 』 bottom-right corner brackets (resize grips).
+        arm = MAP_CORNER_ARM
+        pen = QPen(MAP_GOLD_BRIGHT, 2.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.SquareCap)
+        painter.setPen(pen)
+        ox, oy = 3, 3
+        painter.drawLine(ox, oy, ox + arm, oy)
+        painter.drawLine(ox, oy, ox, oy + arm)
+        painter.setPen(QPen(MAP_GOLD_DIM, 1.5))
+        painter.drawLine(ox, oy, ox + 5, oy + 5)
+
+        bx = r.right() - 3
+        by = r.bottom() - 3
+        painter.setPen(pen)
+        painter.drawLine(bx - arm, by, bx, by)
+        painter.drawLine(bx, by - arm, bx, by)
+        painter.setPen(QPen(MAP_GOLD_DIM, 1.5))
+        painter.drawLine(bx, by, bx - 5, by - 5)
+        painter.end()
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if event.button() != Qt.MouseButton.LeftButton:
+            super().mousePressEvent(event)
+            return
+        pos = event.position().toPoint()
+        if self._border_band_hit(pos):
+            self._drag_offset = (
+                event.globalPosition().toPoint() - self._window.frameGeometry().topLeft()
+            )
+            self.setCursor(QCursor(Qt.CursorShape.SizeAllCursor))
+            self.grabMouse()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        if self._drag_offset is not None:
+            self._window.move(
+                event.globalPosition().toPoint() - self._drag_offset
+            )
+            event.accept()
+            return
+        pos = event.position().toPoint()
+        if self._border_band_hit(pos):
+            self.setCursor(QCursor(Qt.CursorShape.SizeAllCursor))
+        else:
+            self.unsetCursor()
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton and self._drag_offset is not None:
+            self._drag_offset = None
+            self.releaseMouse()
+            self.unsetCursor()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+
 class MapDialog(QDialog):
-    """MAP: interconnected bubbles for topic / local path / website."""
+    """MAP: interconnected bubbles for topic / local path / website.
+
+    One composition: sea water + title/toolbar chrome inside a single gold border.
+    『 / 』 corner brackets resize the window; empty-canvas drag pans the view.
+    """
 
     def __init__(self, config_manager, parent=None):
         super().__init__(parent)
@@ -173,37 +387,51 @@ class MapDialog(QDialog):
         self.setMinimumSize(640, 480)
         self.resize(760, 560)
 
-        # Match mini-program frameless / ornate chrome when Desktop Pet helpers exist.
-        dp = None
-        try:
-            import desktop_pet as dp  # noqa: F811
-        except Exception:
-            dp = None
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.Dialog
+            | Qt.WindowType.WindowStaysOnTopHint
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.setAutoFillBackground(False)
+        self.setStyleSheet(MAP_OVERLAY_STYLE + MAP_FALLBACK_STYLE)
 
-        if dp is not None:
-            self.setWindowFlags(
-                Qt.WindowType.FramelessWindowHint
-                | Qt.WindowType.Dialog
-                | Qt.WindowType.WindowStaysOnTopHint
-            )
-            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-            self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
-            self.setAutoFillBackground(False)
-            self._drag_grips = []
-            self.setStyleSheet(dp.CALC_DIALOG_STYLE + dp.MINI_PROGRAM_STYLE)
-            root = dp.install_ornate_calc_frame(self)
-            root.addWidget(dp.make_draggable_title(self, "MAP — bubbles"))
-        else:
-            self.setWindowFlags(
-                Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint
-            )
-            self.setStyleSheet(MAP_FALLBACK_STYLE)
-            root = QVBoxLayout(self)
-            title = QLabel("MAP — bubbles")
-            title.setStyleSheet("font-weight: bold; font-size: 12pt;")
-            root.addWidget(title)
+        shell = QVBoxLayout(self)
+        shell.setContentsMargins(0, 0, 0, 0)
+        shell.setSpacing(0)
 
-        root.setSpacing(6)
+        self._gold = MapGoldShell(self, self)
+        shell.addWidget(self._gold)
+
+        # Body: MapView fills the gold frame; title/toolbar overlay on the sea.
+        body_layout = QVBoxLayout(self._gold.content)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(0)
+
+        self._body = QWidget(self._gold.content)
+        self._body.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self._body.setAutoFillBackground(False)
+        body_layout.addWidget(self._body)
+
+        self.scene = MapScene(self)
+        self.view = MapView(self.scene, self._body)
+        self.view.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+
+        # Overlay chrome (title + toolbar + status) — sits on the sea, not outside.
+        self._top = QWidget(self._body)
+        self._top.setObjectName("mapChromeOverlay")
+        self._top.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        top_col = QVBoxLayout(self._top)
+        top_col.setContentsMargins(8, 6, 8, 4)
+        top_col.setSpacing(4)
+
+        title = QLabel("MAP")
+        title.setObjectName("mapTitle")
+        title.setFont(QFont("Microsoft JhengHei", 11, QFont.Weight.Bold))
+        top_col.addWidget(title)
 
         bar = QHBoxLayout()
         bar.setSpacing(6)
@@ -224,26 +452,27 @@ class MapDialog(QDialog):
         ):
             bar.addWidget(b)
         bar.addStretch()
-        root.addLayout(bar)
+        top_col.addLayout(bar)
 
         self.status = QLabel(
-            "Water ripple · Move cursor / click for waves · Drag bubbles · "
-            "Double-click to edit · Connect · Wheel to zoom"
+            "Pan empty space · Wheel zoom · 『』 corners resize · "
+            "Drag bubbles · Double-click edit · Connect"
         )
+        self.status.setObjectName("mapStatus")
         self.status.setWordWrap(True)
-        self.status.setStyleSheet("color: #c8d8e8; font-size: 8.5pt;")
-        root.addWidget(self.status)
+        top_col.addWidget(self.status)
 
-        self.scene = MapScene(self)
-        self.view = MapView(self.scene, self)
-        root.addWidget(self.view, stretch=1)
-
-        close_row = QHBoxLayout()
-        close_row.addStretch()
+        self._bottom = QWidget(self._body)
+        self._bottom.setObjectName("mapChromeBottom")
+        self._bottom.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        bottom_row = QHBoxLayout(self._bottom)
+        bottom_row.setContentsMargins(8, 4, 8, 6)
+        bottom_row.addStretch()
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.close)
-        close_row.addWidget(close_btn)
-        root.addLayout(close_row)
+        bottom_row.addWidget(close_btn)
+
+        self._body.installEventFilter(self)
 
         self.btn_add.clicked.connect(self._add_bubble)
         self.btn_connect.toggled.connect(self._toggle_connect)
@@ -266,6 +495,31 @@ class MapDialog(QDialog):
         self._persist_timer.timeout.connect(self._persist)
 
         self._load()
+        QTimer.singleShot(0, self._layout_overlays)
+
+    def eventFilter(self, obj, event):  # noqa: N802
+        from PySide6.QtCore import QEvent
+
+        if obj is self._body and event.type() == QEvent.Type.Resize:
+            self._layout_overlays()
+        return super().eventFilter(obj, event)
+
+    def _layout_overlays(self) -> None:
+        """MapView fills the gold content; title/toolbar/close float on the sea."""
+        r = self._body.rect()
+        self.view.setGeometry(r)
+        self._top.adjustSize()
+        top_h = max(self._top.sizeHint().height(), self._top.height())
+        self._top.setGeometry(0, 0, r.width(), top_h)
+        self._bottom.adjustSize()
+        bot_h = max(self._bottom.sizeHint().height(), 36)
+        self._bottom.setGeometry(0, r.height() - bot_h, r.width(), bot_h)
+        self._top.raise_()
+        self._bottom.raise_()
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self._layout_overlays()
 
     def _load(self) -> None:
         bubbles, edges = load_map(self.cfg)
@@ -318,10 +572,10 @@ class MapDialog(QDialog):
             self.view.setDragMode(self.view.DragMode.NoDrag)
             self.status.setText("Connect mode: click first bubble, then second.")
         else:
-            self.view.setDragMode(self.view.DragMode.RubberBandDrag)
+            self.view.setDragMode(self.view.DragMode.ScrollHandDrag)
             self.status.setText(
-                "Water ripple · Move cursor / click for waves · Drag bubbles · "
-                "Double-click to edit · Connect · Wheel to zoom"
+                "Pan empty space · Wheel zoom · 『』 corners resize · "
+                "Drag bubbles · Double-click edit · Connect"
             )
 
     def _edit_selected(self) -> None:

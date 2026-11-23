@@ -31,8 +31,10 @@ from PySide6.QtWidgets import (
 from .water_ripple import WaterRippleSim
 
 # Steel-blue theme (Desktop Pet / menu palette)
-BUBBLE_FILL = QColor(61, 90, 128, 210)          # #3d5a80
-BUBBLE_FILL_SEL = QColor(90, 130, 170, 230)
+# Interior fill ~60% opaque; labels stay full opacity on the live item.
+BUBBLE_FILL_ALPHA = int(round(255 * 0.60))      # ≈153
+BUBBLE_FILL = QColor(61, 90, 128, BUBBLE_FILL_ALPHA)          # #3d5a80
+BUBBLE_FILL_SEL = QColor(90, 130, 170, BUBBLE_FILL_ALPHA)
 BUBBLE_OUTLINE = QColor(135, 206, 250, 220)     # sky
 BUBBLE_OUTLINE_SEL = QColor(232, 212, 139, 240)  # soft gilt
 BUBBLE_TEXT = QColor(240, 246, 250)
@@ -432,24 +434,36 @@ class MapScene(QGraphicsScene):
 
 
 class MapView(QGraphicsView):
-    """Pan/zoom view with sea-surface water-ripple backdrop (bubbles stay sharp on top)."""
+    """Pan/zoom view with sea-surface water-ripple backdrop (bubbles stay sharp on top).
+
+    No visible scrollbars — pan by left-drag on empty canvas (ScrollHandDrag).
+    Bubble drag / connect / edit still receive events on the items themselves.
+    """
 
     def __init__(self, scene: MapScene, parent=None):
         super().__init__(scene, parent)
         self.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        self.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
+        # Empty-space left-drag pans; items keep their own drag handlers.
+        self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
         self.setBackgroundBrush(QBrush(Qt.GlobalColor.transparent))
         self.setFrameShape(QGraphicsView.Shape.NoFrame)
         self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
         self.setMouseTracking(True)
+        # Hide scrollbars (pan still works via hidden bars / hand drag).
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
         self.ripple_enabled = True
         self._ripple = WaterRippleSim()
         self._last_drip: Optional[QPointF] = None
         self._cached_frame = None  # QImage | None
         self._backdrop_dirty = True
+        # Manual empty-space pan (ScrollHandDrag + AlwaysOff bars can be flaky;
+        # we also track pan ourselves when the press is not on a bubble).
+        self._panning = False
+        self._pan_last: Optional[QPointF] = None
 
         self._tick = QTimer(self)
         self._tick.setInterval(RIPPLE_FPS_MS)
@@ -461,6 +475,16 @@ class MapView(QGraphicsView):
 
         self._tick.start()
         self._arm_idle_drop()
+
+    def _item_under(self, view_pos) -> Optional[QGraphicsItem]:
+        scene = self.scene()
+        if scene is None:
+            return None
+        sp = self.mapToScene(view_pos.toPoint() if hasattr(view_pos, "toPoint") else view_pos)
+        item = scene.itemAt(sp, self.transform())
+        while item is not None and not isinstance(item, BubbleItem):
+            item = item.parentItem()
+        return item
 
     # --- public helpers -------------------------------------------------
 
@@ -571,9 +595,34 @@ class MapView(QGraphicsView):
         # Sea texture is viewport-locked; zoom only moves scene items above it.
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        pos = event.position() if hasattr(event, "position") else event.localPos()
+        pt = QPointF(pos)
+        if self._panning and self._pan_last is not None:
+            delta = pt - self._pan_last
+            self._pan_last = QPointF(pt)
+            # Move the scene under the view (same sense as hand-drag).
+            self.horizontalScrollBar().setValue(
+                int(self.horizontalScrollBar().value() - delta.x())
+            )
+            self.verticalScrollBar().setValue(
+                int(self.verticalScrollBar().value() - delta.y())
+            )
+            event.accept()
+            # Still drip while panning for calm water feedback.
+            if self.ripple_enabled:
+                if self._last_drip is None:
+                    self._last_drip = QPointF(pt)
+                    self._splash_at_view(pt.x(), pt.y(), MOVE_DRIP_RADIUS, MOVE_DRIP_STRENGTH)
+                else:
+                    dx = pt.x() - self._last_drip.x()
+                    dy = pt.y() - self._last_drip.y()
+                    if dx * dx + dy * dy >= MOVE_DRIP_MIN_DIST * MOVE_DRIP_MIN_DIST:
+                        self._last_drip = QPointF(pt)
+                        self._splash_at_view(
+                            pt.x(), pt.y(), MOVE_DRIP_RADIUS, MOVE_DRIP_STRENGTH
+                        )
+            return
         if self.ripple_enabled:
-            pos = event.position() if hasattr(event, "position") else event.localPos()
-            pt = QPointF(pos)
             if self._last_drip is None:
                 self._last_drip = QPointF(pt)
                 self._splash_at_view(pt.x(), pt.y(), MOVE_DRIP_RADIUS, MOVE_DRIP_STRENGTH)
@@ -589,8 +638,36 @@ class MapView(QGraphicsView):
         if self.ripple_enabled and event.button() == Qt.MouseButton.LeftButton:
             pos = event.position() if hasattr(event, "position") else event.localPos()
             self._splash_at_view(pos.x(), pos.y(), CLICK_RADIUS, CLICK_STRENGTH)
+        # Empty-space left-drag pans the canvas (not when connecting / on a bubble).
+        scene = self.scene()
+        connect_mode = isinstance(scene, MapScene) and scene.connect_mode
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and not connect_mode
+            and self.dragMode() != QGraphicsView.DragMode.NoDrag
+        ):
+            pos = event.position() if hasattr(event, "position") else event.localPos()
+            if self._item_under(pos) is None:
+                self._panning = True
+                self._pan_last = QPointF(pos)
+                self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
+                event.accept()
+                return
         super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if self._panning and event.button() == Qt.MouseButton.LeftButton:
+            self._panning = False
+            self._pan_last = None
+            self.viewport().unsetCursor()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
     def leaveEvent(self, event) -> None:  # noqa: N802
         self._last_drip = None
+        if self._panning:
+            self._panning = False
+            self._pan_last = None
+            self.viewport().unsetCursor()
         super().leaveEvent(event)
