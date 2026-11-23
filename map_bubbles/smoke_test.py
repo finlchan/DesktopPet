@@ -151,12 +151,59 @@ def test_water_ripple() -> None:
     del app
 
 
+def test_fill_opacity_and_pan_chrome() -> None:
+    """Bubble fill ~60%; text full opacity; no scrollbars; MAP gold shell."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    from map_bubbles.dialog import MapDialog, MapGoldShell
+    from map_bubbles.save import make_bubble
+    from map_bubbles.scene import (
+        BUBBLE_FILL,
+        BUBBLE_FILL_ALPHA,
+        BUBBLE_TEXT,
+        MapScene,
+        MapView,
+    )
+
+    assert BUBBLE_FILL_ALPHA == int(round(255 * 0.60))
+    assert BUBBLE_FILL.alpha() == BUBBLE_FILL_ALPHA
+    assert BUBBLE_TEXT.alpha() == 255
+
+    scene = MapScene()
+    view = MapView(scene)
+    assert (
+        view.horizontalScrollBarPolicy()
+        == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    )
+    assert (
+        view.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    )
+    bubble = scene.add_bubble_from_dict(make_bubble(x=0, y=0, topic="Alpha"))
+    assert bubble._label.opacity() == 1.0
+    assert bubble._fill_color().alpha() == BUBBLE_FILL_ALPHA
+
+    cfg = {"map_bubbles": {"bubbles": [], "edges": []}}
+    dlg = MapDialog(cfg)
+    assert isinstance(dlg._gold, MapGoldShell)
+    assert dlg.view.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    # Title + toolbar live as overlays on the sea body (same gold frame).
+    assert dlg._top.parent() is dlg._body
+    assert dlg.view.parent() is dlg._body
+    assert dlg._gold._grip_tl is not None
+    assert dlg._gold._grip_br is not None
+    dlg.close()
+    del app
+
+
 def main() -> int:
     test_blank_packaging_template()
     test_save_roundtrip()
     test_scene_qt()
     test_edit_dialog_size_field()
     test_water_ripple()
+    test_fill_opacity_and_pan_chrome()
     print("map_bubbles smoke_test: OK")
     return 0
 
