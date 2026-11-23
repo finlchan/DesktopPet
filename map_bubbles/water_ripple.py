@@ -3,30 +3,58 @@
 Algorithm per cell:
     next = (avg(left, right, up, down) * 2 - prev) * damping
 
-Rendering samples a steel-blue backdrop (plus optional underwater stamps) with
-offsets from the height gradient, then the caller upscales to the view.
+Rendering samples a bundled sea-surface photo/texture with offsets from the
+height gradient, then the caller upscales to the view. Bubbles are drawn by
+the scene above this layer (not stamped into the refracted backdrop).
 """
 
 from __future__ import annotations
 
+import sys
 from array import array
+from functools import lru_cache
+from pathlib import Path
 from typing import Optional, Tuple
 
-from PySide6.QtGui import QColor, QImage, QPainter, QLinearGradient, QPen
-from PySide6.QtCore import Qt, QPointF, QRectF
+from PySide6.QtGui import QColor, QImage, QPainter, QLinearGradient
+from PySide6.QtCore import Qt
 
-# Steel-blue pool palette (matches MAP panel polish)
+# Steel-blue pool palette (fallback if sea-surface.png is missing)
 WATER_DEEP = QColor(22, 34, 48)
 WATER_MID = QColor(36, 58, 82)
-WATER_LIGHT = QColor(55, 88, 120)
-WATER_CAUSTIC = QColor(90, 140, 175, 90)
-WATER_HIGHLIGHT = QColor(160, 210, 235, 55)
 
 DEFAULT_DAMPING = 0.965
 # Cap sim resolution so Python loops stay interactive on modest hardware.
 MAX_SIM_W = 220
 MAX_SIM_H = 160
 MIN_SCALE = 3
+
+SEA_SURFACE_NAME = "sea-surface.png"
+
+
+def _assets_root() -> Path:
+    """Locate map_bubbles/assets beside the package (dev) or in PyInstaller extract."""
+    here = Path(__file__).resolve().parent / "assets"
+    candidates = [here, Path.cwd() / "map_bubbles" / "assets"]
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.insert(0, Path(meipass) / "map_bubbles" / "assets")
+    for c in candidates:
+        if c.is_dir():
+            return c
+    return here
+
+
+@lru_cache(maxsize=1)
+def load_sea_surface() -> Optional[QImage]:
+    """Load the bundled calm open-sea texture (RGB32). Cached once per process."""
+    path = _assets_root() / SEA_SURFACE_NAME
+    if not path.is_file():
+        return None
+    img = QImage(str(path))
+    if img.isNull():
+        return None
+    return img.convertToFormat(QImage.Format.Format_RGB32)
 
 
 class WaterRippleSim:
@@ -64,27 +92,27 @@ class WaterRippleSim:
         return self.w, self.h
 
     def paint_base_water(self) -> None:
-        """Fill the backdrop with a steel-blue pool gradient (+ soft caustics)."""
+        """Fill the backdrop with the sea-surface texture (steel-blue fallback)."""
         img = self._backdrop
         if img is None or img.isNull():
             return
+        sea = load_sea_surface()
         p = QPainter(img)
-        grad = QLinearGradient(0, 0, 0, self.h)
-        grad.setColorAt(0.0, WATER_MID)
-        grad.setColorAt(0.45, WATER_DEEP)
-        grad.setColorAt(1.0, QColor(18, 28, 40))
-        p.fillRect(0, 0, self.w, self.h, grad)
-        # Soft diagonal caustic bands (static; refraction animates them).
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(WATER_CAUSTIC)
-        for i in range(-2, self.w // 12 + 3):
-            x = i * 14 + (self.h // 5)
-            p.setOpacity(0.18 + (i % 3) * 0.04)
-            p.drawEllipse(QPointF(x, self.h * 0.35), 18, 10)
-            p.drawEllipse(QPointF(x + 7, self.h * 0.62), 14, 8)
-        p.setOpacity(0.35)
-        p.setBrush(WATER_HIGHLIGHT)
-        p.drawEllipse(QPointF(self.w * 0.3, self.h * 0.22), self.w * 0.25, self.h * 0.12)
+        if sea is not None and not sea.isNull():
+            # Cover the low-res sim buffer; refraction will distort this image.
+            scaled = sea.scaled(
+                self.w,
+                self.h,
+                Qt.AspectRatioMode.IgnoreAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            p.drawImage(0, 0, scaled)
+        else:
+            grad = QLinearGradient(0, 0, 0, self.h)
+            grad.setColorAt(0.0, WATER_MID)
+            grad.setColorAt(0.45, WATER_DEEP)
+            grad.setColorAt(1.0, QColor(18, 28, 40))
+            p.fillRect(0, 0, self.w, self.h, grad)
         p.end()
 
     def disturb(
@@ -222,38 +250,4 @@ class WaterRippleSim:
             max(1, view_h),
             Qt.AspectRatioMode.IgnoreAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
-        )
-
-
-def stamp_bubble(
-    painter: QPainter,
-    cx: float,
-    cy: float,
-    radius: float,
-    fill: QColor,
-    outline: QColor,
-    label: str = "",
-    selected: bool = False,
-) -> None:
-    """Draw one underwater bubble stamp into the low-res backdrop."""
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    painter.setBrush(fill)
-    pen_w = 1.6 if selected else 1.1
-    painter.setPen(QPen(outline, pen_w))
-    painter.drawEllipse(QPointF(cx, cy), radius, radius)
-    # Tiny path/url-agnostic highlight (glass look under water).
-    painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(QColor(220, 240, 255, 50))
-    painter.drawEllipse(QPointF(cx - radius * 0.25, cy - radius * 0.3), radius * 0.35, radius * 0.22)
-    if label:
-        painter.setPen(QColor(240, 246, 250, 220))
-        font = painter.font()
-        font.setPointSizeF(max(5.0, min(8.0, radius * 0.35)))
-        font.setBold(True)
-        painter.setFont(font)
-        br = painter.fontMetrics().boundingRect(label)
-        painter.drawText(
-            QRectF(cx - br.width() / 2.0, cy - br.height() / 2.0, br.width(), br.height()),
-            Qt.AlignmentFlag.AlignCenter,
-            label,
         )
