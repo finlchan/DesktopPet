@@ -105,15 +105,17 @@ class DiagonalBandsCanvas(QWidget):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, False)
-        self._text = "休息中..."
+        self._text1 = "休息中..."
+        self._text2 = "休息中..."
         self._color_key = "steel"
         self._phase = 0.0  # 0..1 over CYCLE_MS
         self._timer = QTimer(self)
         self._timer.setInterval(TICK_MS)
         self._timer.timeout.connect(self._tick)
 
-    def set_status(self, text: str, color_key: str) -> None:
-        self._text = text or "休息中..."
+    def set_status(self, text1: str, text2: str, color_key: str) -> None:
+        self._text1 = text1 or "休息中..."
+        self._text2 = text2 or "休息中..."
         self._color_key = color_key if color_key in COLOR_PRESETS else "steel"
         self.update()
 
@@ -150,8 +152,10 @@ class DiagonalBandsCanvas(QWidget):
         pulse = 0.92 + 0.08 * (0.5 + 0.5 * math.sin(self._phase * math.tau))
 
         # Band A: −angle, scrolls left; Band B: +angle, scrolls right.
+        # Each band can show independent text (settings 文字1／文字2).
         self._paint_band(
             painter,
+            text=self._text1,
             angle_deg=-BAND_ANGLE_DEG,
             bg=_hex_color(preset["band_a"], int(230 * pulse)),
             fg=_hex_color(preset["text"], int(245 * pulse)),
@@ -160,6 +164,7 @@ class DiagonalBandsCanvas(QWidget):
         )
         self._paint_band(
             painter,
+            text=self._text2,
             angle_deg=BAND_ANGLE_DEG,
             bg=_hex_color(preset["band_b"], int(220 * pulse)),
             fg=_hex_color(preset["text"], int(245 * pulse)),
@@ -172,6 +177,7 @@ class DiagonalBandsCanvas(QWidget):
         self,
         painter: QPainter,
         *,
+        text: str,
         angle_deg: float,
         bg: QColor,
         fg: QColor,
@@ -206,7 +212,7 @@ class DiagonalBandsCanvas(QWidget):
         painter.setFont(font)
         painter.setPen(fg)
 
-        unit = self._text + GAP
+        unit = (text or "休息中...") + GAP
         fm = painter.fontMetrics()
         unit_w = max(fm.horizontalAdvance(unit), 1)
         # Opposite directions: phase drives offset; dir flips sense.
@@ -224,7 +230,7 @@ class DiagonalBandsCanvas(QWidget):
 
 
 class StatusMarqueeSettingsDialog(QDialog):
-    """Configure text / theme color / close window."""
+    """Configure per-band text / theme color / close window."""
 
     def __init__(self, host: "StatusMarqueeDialog"):
         super().__init__(host)
@@ -237,9 +243,14 @@ class StatusMarqueeSettingsDialog(QDialog):
         layout = QVBoxLayout(self)
         form = QFormLayout()
 
-        self.text_edit = QLineEdit(effective_text(host._settings))
-        self.text_edit.setPlaceholderText("例：休息中...")
-        form.addRow("文字內容／Text", self.text_edit)
+        # Show stored values (may be blank); placeholder hints the default.
+        self.text1_edit = QLineEdit(host._settings.get("text1") or "")
+        self.text1_edit.setPlaceholderText("例：休息中...（帶一）")
+        form.addRow("文字1／帶一", self.text1_edit)
+
+        self.text2_edit = QLineEdit(host._settings.get("text2") or "")
+        self.text2_edit.setPlaceholderText("例：會議中...（帶二）")
+        form.addRow("文字2／帶二", self.text2_edit)
 
         self.color_combo = QComboBox()
         current = effective_color_key(host._settings)
@@ -268,9 +279,10 @@ class StatusMarqueeSettingsDialog(QDialog):
         layout.addLayout(row)
 
     def _apply(self) -> None:
-        text = self.text_edit.text().strip()
+        text1 = self.text1_edit.text().strip()
+        text2 = self.text2_edit.text().strip()
         color_key = self.color_combo.currentData()
-        self.host.apply_settings(text=text, color_key=color_key)
+        self.host.apply_settings(text1=text1, text2=text2, color_key=color_key)
         self.accept()
 
     def _close_host(self) -> None:
@@ -324,7 +336,8 @@ class StatusMarqueeDialog(QDialog):
 
     def _apply_visual(self) -> None:
         self.canvas.set_status(
-            effective_text(self._settings),
+            effective_text(self._settings, band=1),
+            effective_text(self._settings, band=2),
             effective_color_key(self._settings),
         )
 
@@ -333,8 +346,9 @@ class StatusMarqueeDialog(QDialog):
         if x is not None and y is not None:
             self.move(int(x), int(y))
 
-    def apply_settings(self, *, text: str, color_key: str) -> None:
-        self._settings["text"] = text
+    def apply_settings(self, *, text1: str, text2: str, color_key: str) -> None:
+        self._settings["text1"] = text1
+        self._settings["text2"] = text2
         self._settings["color_key"] = color_key
         self._persist()
         self._apply_visual()

@@ -41,7 +41,8 @@
     "edges": []
   },
   "status_marquee": {
-    "text": "",
+    "text1": "",
+    "text2": "",
     "color_key": "",
     "pos_x": null,
     "pos_y": null,
