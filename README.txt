@@ -1,7 +1,7 @@
 Desktop Pet
 ==================
 
-Version: 261128.03
+Version: 261128.05
 Published: 2026-11-28
 
 A floating shortcut menu and document record gadget on the Windows desktop.
@@ -40,7 +40,8 @@ Features
    Français / Deutsch / Español (public web endpoint; no API key).
 10. 箱庭島／Hakoniwa (WIP) — entry kept and marked unfinished.
     桌面跑馬燈／視窗跑馬燈 — always-on-top Diagonal Text Bands status window
-    (per-band text1/text2 / theme color / close via gear; blank-safe status_marquee).
+    (inline gear settings: text1/text2, theme, single/dual-span display,
+    scroll speed, band size; blank-safe status_marquee).
 11. Settings — pet image, shortcuts, document folders, text records, window
     level (Normal / Always on top / Always on bottom), Start with Windows.
 12. Remembers pet position across monitors and resolution changes.
@@ -58,6 +59,10 @@ Quick Usage
 
 Latest updates (5)
 --------
+261128.05 (2026-11-28)
+1. Status marquee: centered gear; inline settings on the bands window;
+   display modes 單一全視窗化 / 雙顯視屏貫穿; 文字移動速度; 斜線帶的大小.
+
 261128.04 (2026-11-28)
 1. Status marquee: two independent band texts (文字1／帶一, 文字2／帶二);
    migrates legacy single ``text`` to both bands; blank-safe text1/text2.
@@ -75,10 +80,6 @@ Latest updates (5)
 261114.01 (2026-11-14)
 1. Free Station IMPORT: BS4 stays blank for manual entry (no longer maps
    Computed Bearing / stray cells into BS4).
-
-261106.06 (2026-11-07)
-1. Free Station: soft-fail asin/acos domain errors; keep From/To pair rows
-   with Prelim / Mirror / Dist. check and Reject both / Use mirror.
 
 Older release notes are on GitHub Releases.
 

@@ -59,7 +59,7 @@ LEGACY_WINDOW = {label: code for code, label in WINDOW_LABELS.items()}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # App / release version (YYMMDD.NN). Shown in Settings → About.
-APP_VERSION = "261128.02"
+APP_VERSION = "261128.05"
 
 # Windows Run-key name for "Start with Windows".
 AUTOSTART_REG_NAME = "DesktopPet"
@@ -130,12 +130,16 @@ DEFAULT_CONFIG = {
         "edges": [],
     },
     # Desktop status marquee: blank fields only in the packaging template.
-    # Shape: {text1, text2, color_key, pos_x, pos_y, width, height}.
+    # Shape: {text1, text2, color_key, display_mode, scroll_speed, band_size,
+    #         pos_x, pos_y, width, height}.
     # Legacy single ``text`` is migrated to text1/text2 on load.
     "status_marquee": {
         "text1": "",
         "text2": "",
         "color_key": "",
+        "display_mode": "",
+        "scroll_speed": None,
+        "band_size": None,
         "pos_x": None,
         "pos_y": None,
         "width": None,
