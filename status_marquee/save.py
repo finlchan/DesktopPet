@@ -31,8 +31,10 @@ DEFAULT_COLOR_KEY = "steel"
 DEFAULT_WIDTH = 440
 DEFAULT_HEIGHT = 200
 
+# Packaging / DEFAULT_CONFIG shape: empty dual-band fields only (no personal text).
 BLANK_STATUS_MARQUEE = {
-    "text": "",
+    "text1": "",
+    "text2": "",
     "color_key": "",
     "pos_x": None,
     "pos_y": None,
@@ -53,14 +55,32 @@ def normalize_color_key(raw: Any) -> str:
     return DEFAULT_COLOR_KEY
 
 
+def _as_text(value: Any) -> str:
+    if not isinstance(value, str):
+        value = str(value or "")
+    return value.strip()
+
+
 def normalize_settings(raw: Any) -> Dict[str, Any]:
+    """Normalize config; migrate legacy single ``text`` → ``text1``/``text2``.
+
+    Prefer dual fields when either ``text1`` or ``text2`` is present.
+    If only legacy ``text`` exists, copy it onto both bands.
+    """
     if not isinstance(raw, dict):
         raw = {}
 
-    text = raw.get("text", "")
-    if not isinstance(text, str):
-        text = str(text or "")
-    text = text.strip()
+    legacy = _as_text(raw.get("text", ""))
+    has_text1 = "text1" in raw
+    has_text2 = "text2" in raw
+
+    if has_text1 or has_text2:
+        text1 = _as_text(raw.get("text1", "")) if has_text1 else legacy
+        text2 = _as_text(raw.get("text2", "")) if has_text2 else legacy
+    else:
+        # Pure legacy single-string config (v261128.03): both bands get it.
+        text1 = legacy
+        text2 = legacy
 
     color_key_raw = raw.get("color_key", "")
     if isinstance(color_key_raw, str) and color_key_raw.strip():
@@ -84,7 +104,8 @@ def normalize_settings(raw: Any) -> Dict[str, Any]:
         return max(lo, min(hi, val))
 
     return {
-        "text": text,
+        "text1": text1,
+        "text2": text2,
         "color_key": color_key,
         "pos_x": _opt_int("pos_x"),
         "pos_y": _opt_int("pos_y"),
@@ -93,8 +114,10 @@ def normalize_settings(raw: Any) -> Dict[str, Any]:
     }
 
 
-def effective_text(settings: Dict[str, Any]) -> str:
-    text = (settings.get("text") or "").strip()
+def effective_text(settings: Dict[str, Any], band: int = 1) -> str:
+    """Display text for band 1 or 2; blank → default placeholder."""
+    key = "text1" if band != 2 else "text2"
+    text = (settings.get(key) or "").strip()
     return text or DEFAULT_TEXT
 
 

@@ -20,7 +20,9 @@ def test_blank_packaging_template() -> None:
     data = json.loads(path.read_text(encoding="utf-8"))
     assert "status_marquee" in data
     sm = data["status_marquee"]
-    assert sm["text"] == ""
+    assert sm.get("text1") == ""
+    assert sm.get("text2") == ""
+    assert "text" not in sm  # dual fields only in blank template
     assert sm["color_key"] == ""
     assert sm["pos_x"] is None
     assert sm["pos_y"] is None
@@ -37,11 +39,12 @@ def test_save_roundtrip() -> None:
         save_settings,
     )
 
-    cfg = {"status_marquee": {"text": "", "color_key": ""}}
+    cfg = {"status_marquee": {"text1": "", "text2": "", "color_key": ""}}
     save_settings(
         cfg,
         {
-            "text": "會議中",
+            "text1": "休息中",
+            "text2": "會議中",
             "color_key": "gold",
             "pos_x": 10,
             "pos_y": 20,
@@ -50,20 +53,51 @@ def test_save_roundtrip() -> None:
         },
     )
     loaded = load_settings(cfg)
-    assert loaded["text"] == "會議中"
+    assert loaded["text1"] == "休息中"
+    assert loaded["text2"] == "會議中"
     assert loaded["color_key"] == "gold"
-    assert effective_text({"text": ""}) == "休息中..."
+    assert "text" not in loaded
+    assert effective_text({"text1": "", "text2": "x"}, band=1) == "休息中..."
+    assert effective_text({"text1": "a", "text2": ""}, band=2) == "休息中..."
     assert effective_color_key({"color_key": ""}) == "steel"
     assert "gold" in COLOR_PRESETS
     assert "steel" in COLOR_PRESETS
     assert "slate" in COLOR_PRESETS
 
 
+def test_legacy_text_migration() -> None:
+    """Old single ``text`` applies to both bands; dual fields win when present."""
+    from status_marquee.save import load_settings, normalize_settings
+
+    legacy = normalize_settings({"text": "舊狀態", "color_key": "slate"})
+    assert legacy["text1"] == "舊狀態"
+    assert legacy["text2"] == "舊狀態"
+    assert "text" not in legacy
+
+    # Prefer dual fields over legacy when text1/text2 keys exist.
+    dual = normalize_settings(
+        {"text": "舊", "text1": "帶一", "text2": "帶二", "color_key": "steel"}
+    )
+    assert dual["text1"] == "帶一"
+    assert dual["text2"] == "帶二"
+
+    # Partial dual: missing band falls back to legacy text.
+    partial = normalize_settings({"text": "共用", "text1": "只有一"})
+    assert partial["text1"] == "只有一"
+    assert partial["text2"] == "共用"
+
+    loaded = load_settings({"status_marquee": {"text": "從cfg"}})
+    assert loaded["text1"] == "從cfg"
+    assert loaded["text2"] == "從cfg"
+
+
 def test_fish_tank_removed_from_repo() -> None:
     assert not (ROOT / "fish_tank").exists(), "fish_tank package must be deleted"
     readme = (ROOT / "README.txt").read_text(encoding="utf-8")
-    assert "透明魚缸" not in readme
-    assert "Fish Tank" not in readme
+    # Features / Quick Usage must not list the tank (release-note history may mention removal).
+    features = readme.split("Latest updates", 1)[0]
+    assert "透明魚缸" not in features
+    assert "Fish Tank" not in features
     assert "桌面跑馬燈" in readme or "跑馬燈" in readme
 
     desktop = (ROOT / "desktop_pet.py").read_text(encoding="utf-8")
@@ -105,7 +139,8 @@ def test_dialog_qt_offscreen() -> None:
 
     cfg = {
         "status_marquee": {
-            "text": "休息中...",
+            "text1": "休息中...",
+            "text2": "會議中...",
             "color_key": "steel",
             "pos_x": None,
             "pos_y": None,
@@ -117,14 +152,26 @@ def test_dialog_qt_offscreen() -> None:
     assert dlg.windowTitle()
     canvas = dlg.canvas
     assert isinstance(canvas, DiagonalBandsCanvas)
-    canvas.set_status("測試", "gold")
+    assert canvas._text1 == "休息中..."
+    assert canvas._text2 == "會議中..."
+    canvas.set_status("帶一測試", "帶二測試", "gold")
+    assert canvas._text1 == "帶一測試"
+    assert canvas._text2 == "帶二測試"
     canvas._phase = 0.25
     # Force a paint without showing on a real display.
     pix = canvas.grab()
     assert pix.width() > 0 and pix.height() > 0
+
+    # Settings dialog exposes two text fields.
+    from status_marquee.dialog import StatusMarqueeSettingsDialog
+
+    settings = StatusMarqueeSettingsDialog(dlg)
+    assert settings.text1_edit is not None
+    assert settings.text2_edit is not None
+    settings.close()
+
     dlg.close()
     del dlg
-    # Keep app alive for other Qt tests in-process.
     assert app is not None
 
 
@@ -132,6 +179,7 @@ def main() -> int:
     tests = [
         test_blank_packaging_template,
         test_save_roundtrip,
+        test_legacy_text_migration,
         test_fish_tank_removed_from_repo,
         test_menu_entry_present,
         test_dialog_qt_offscreen,

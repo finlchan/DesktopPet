@@ -40,7 +40,7 @@ Features
    Français / Deutsch / Español (public web endpoint; no API key).
 10. 箱庭島／Hakoniwa (WIP) — entry kept and marked unfinished.
     桌面跑馬燈／視窗跑馬燈 — always-on-top Diagonal Text Bands status window
-    (text / theme color / close via top-right gear; blank-safe status_marquee).
+    (per-band text1/text2 / theme color / close via gear; blank-safe status_marquee).
 11. Settings — pet image, shortcuts, document folders, text records, window
     level (Normal / Always on top / Always on bottom), Start with Windows.
 12. Remembers pet position across monitors and resolution changes.
@@ -58,6 +58,10 @@ Quick Usage
 
 Latest updates (5)
 --------
+261128.04 (2026-11-28)
+1. Status marquee: two independent band texts (文字1／帶一, 文字2／帶二);
+   migrates legacy single ``text`` to both bands; blank-safe text1/text2.
+
 261128.03 (2026-11-28)
 1. Removed Transparent Fish Tank（透明魚缸）from Mini Programs and the repo.
 2. Added 桌面跑馬燈／視窗跑馬燈 — always-on-top Diagonal Text Bands status
@@ -75,10 +79,6 @@ Latest updates (5)
 261106.06 (2026-11-07)
 1. Free Station: soft-fail asin/acos domain errors; keep From/To pair rows
    with Prelim / Mirror / Dist. check and Reject both / Use mirror.
-
-261106.05 (2026-11-06)
-1. Alignment(1) 大量運算: right-hand Output is chainage, signed plan offset,
-   and diff level (not chainage-only).
 
 Older release notes are on GitHub Releases.
 

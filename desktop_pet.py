@@ -130,9 +130,11 @@ DEFAULT_CONFIG = {
         "edges": [],
     },
     # Desktop status marquee: blank fields only in the packaging template.
-    # Shape: {text, color_key, pos_x, pos_y, width, height}.
+    # Shape: {text1, text2, color_key, pos_x, pos_y, width, height}.
+    # Legacy single ``text`` is migrated to text1/text2 on load.
     "status_marquee": {
-        "text": "",
+        "text1": "",
+        "text2": "",
         "color_key": "",
         "pos_x": None,
         "pos_y": None,
