@@ -26,16 +26,37 @@ COLOR_PRESETS: Dict[str, Dict[str, str]] = {
     },
 }
 
+# Display modes: single-monitor fill vs bands spanning the virtual desktop.
+DISPLAY_MODE_SINGLE = "single"
+DISPLAY_MODE_DUAL_SPAN = "dual_span"
+DISPLAY_MODE_LABELS: Dict[str, str] = {
+    DISPLAY_MODE_SINGLE: "單一全視窗化／Single fullscreen",
+    DISPLAY_MODE_DUAL_SPAN: "雙顯視屏貫穿／Span dual monitors",
+}
+DEFAULT_DISPLAY_MODE = DISPLAY_MODE_SINGLE
+
 DEFAULT_TEXT = "休息中..."
 DEFAULT_COLOR_KEY = "steel"
 DEFAULT_WIDTH = 440
 DEFAULT_HEIGHT = 200
+
+# Scroll speed 1..10 → cycle duration (ms). 5 ≈ previous ~8s playful cycle.
+DEFAULT_SCROLL_SPEED = 5
+MIN_SCROLL_SPEED = 1
+MAX_SCROLL_SPEED = 10
+# Band thickness in px.
+DEFAULT_BAND_SIZE = 56
+MIN_BAND_SIZE = 28
+MAX_BAND_SIZE = 120
 
 # Packaging / DEFAULT_CONFIG shape: empty dual-band fields only (no personal text).
 BLANK_STATUS_MARQUEE = {
     "text1": "",
     "text2": "",
     "color_key": "",
+    "display_mode": "",
+    "scroll_speed": None,
+    "band_size": None,
     "pos_x": None,
     "pos_y": None,
     "width": None,
@@ -55,10 +76,43 @@ def normalize_color_key(raw: Any) -> str:
     return DEFAULT_COLOR_KEY
 
 
+def normalize_display_mode(raw: Any) -> str:
+    key = (raw or "").strip().lower() if isinstance(raw, str) else ""
+    if key in (DISPLAY_MODE_SINGLE, DISPLAY_MODE_DUAL_SPAN):
+        return key
+    return DEFAULT_DISPLAY_MODE
+
+
 def _as_text(value: Any) -> str:
     if not isinstance(value, str):
         value = str(value or "")
     return value.strip()
+
+
+def _opt_int(raw: Any):
+    if raw is None or raw == "":
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _clamp_int(value: Any, lo: int, hi: int, default: int) -> int:
+    n = _opt_int(value)
+    if n is None:
+        return default
+    return max(lo, min(hi, n))
+
+
+def cycle_ms_for_speed(speed: Any) -> int:
+    """Map scroll_speed 1..10 to one full text-cycle duration in ms.
+
+    Speed 1 ≈ 16s (slow); 5 ≈ 8s (default); 10 ≈ 3.2s (fast).
+    """
+    s = _clamp_int(speed, MIN_SCROLL_SPEED, MAX_SCROLL_SPEED, DEFAULT_SCROLL_SPEED)
+    # Linear map: ms = 18000 - 2000 * s  → 1→16000, 5→8000, 10→2000 (floor).
+    return max(2000, 18000 - 2000 * s)
 
 
 def normalize_settings(raw: Any) -> Dict[str, Any]:
@@ -66,6 +120,9 @@ def normalize_settings(raw: Any) -> Dict[str, Any]:
 
     Prefer dual fields when either ``text1`` or ``text2`` is present.
     If only legacy ``text`` exists, copy it onto both bands.
+    Blank ``display_mode`` / ``scroll_speed`` / ``band_size`` stay empty in
+    the saved payload sense for packaging, but load_settings callers get
+    effective defaults via helpers.
     """
     if not isinstance(raw, dict):
         raw = {}
@@ -88,17 +145,31 @@ def normalize_settings(raw: Any) -> Dict[str, Any]:
     else:
         color_key = ""
 
-    def _opt_int(key: str):
-        val = raw.get(key)
-        if val is None or val == "":
-            return None
-        try:
-            return int(val)
-        except (TypeError, ValueError):
-            return None
+    display_raw = raw.get("display_mode", "")
+    if isinstance(display_raw, str) and display_raw.strip():
+        display_mode = normalize_display_mode(display_raw)
+    else:
+        display_mode = ""
 
-    def _opt_size(key: str, default: int, lo: int, hi: int):
-        val = _opt_int(key)
+    # Persist None when blank/unset so packaging stays empty-safe.
+    scroll_raw = raw.get("scroll_speed", None)
+    if scroll_raw is None or scroll_raw == "":
+        scroll_speed = None
+    else:
+        scroll_speed = _clamp_int(
+            scroll_raw, MIN_SCROLL_SPEED, MAX_SCROLL_SPEED, DEFAULT_SCROLL_SPEED
+        )
+
+    band_raw = raw.get("band_size", None)
+    if band_raw is None or band_raw == "":
+        band_size = None
+    else:
+        band_size = _clamp_int(
+            band_raw, MIN_BAND_SIZE, MAX_BAND_SIZE, DEFAULT_BAND_SIZE
+        )
+
+    def _opt_size(key: str, lo: int, hi: int):
+        val = _opt_int(raw.get(key))
         if val is None:
             return None
         return max(lo, min(hi, val))
@@ -107,10 +178,13 @@ def normalize_settings(raw: Any) -> Dict[str, Any]:
         "text1": text1,
         "text2": text2,
         "color_key": color_key,
-        "pos_x": _opt_int("pos_x"),
-        "pos_y": _opt_int("pos_y"),
-        "width": _opt_size("width", DEFAULT_WIDTH, 280, 900),
-        "height": _opt_size("height", DEFAULT_HEIGHT, 140, 500),
+        "display_mode": display_mode,
+        "scroll_speed": scroll_speed,
+        "band_size": band_size,
+        "pos_x": _opt_int(raw.get("pos_x")),
+        "pos_y": _opt_int(raw.get("pos_y")),
+        "width": _opt_size("width", 280, 900),
+        "height": _opt_size("height", 140, 500),
     }
 
 
@@ -123,6 +197,28 @@ def effective_text(settings: Dict[str, Any], band: int = 1) -> str:
 
 def effective_color_key(settings: Dict[str, Any]) -> str:
     return normalize_color_key(settings.get("color_key") or DEFAULT_COLOR_KEY)
+
+
+def effective_display_mode(settings: Dict[str, Any]) -> str:
+    return normalize_display_mode(settings.get("display_mode") or DEFAULT_DISPLAY_MODE)
+
+
+def effective_scroll_speed(settings: Dict[str, Any]) -> int:
+    return _clamp_int(
+        settings.get("scroll_speed"),
+        MIN_SCROLL_SPEED,
+        MAX_SCROLL_SPEED,
+        DEFAULT_SCROLL_SPEED,
+    )
+
+
+def effective_band_size(settings: Dict[str, Any]) -> int:
+    return _clamp_int(
+        settings.get("band_size"),
+        MIN_BAND_SIZE,
+        MAX_BAND_SIZE,
+        DEFAULT_BAND_SIZE,
+    )
 
 
 def load_settings(cfg) -> Dict[str, Any]:
