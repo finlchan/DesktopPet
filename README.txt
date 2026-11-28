@@ -1,7 +1,7 @@
 Desktop Pet
 ==================
 
-Version: 261128.06
+Version: 261128.07
 Published: 2026-11-28
 
 A floating shortcut menu and document record gadget on the Windows desktop.
@@ -59,6 +59,11 @@ Quick Usage
 
 Latest updates (5)
 --------
+261128.07 (2026-11-28)
+1. MAP: cover-fit high-res sea backdrop (no stretch downsample), soft edge
+   fade; toolbar sits right of the MAP title; Disconnect clears selected
+   bubble links.
+
 261128.06 (2026-11-28)
 1. Status marquee: gear stays on primary top-right in 雙顯視屏貫穿;
    right-click bands / empty area opens the same inline settings panel.
@@ -75,11 +80,6 @@ Latest updates (5)
 1. Removed Transparent Fish Tank（透明魚缸）from Mini Programs and the repo.
 2. Added 桌面跑馬燈／視窗跑馬燈 — always-on-top Diagonal Text Bands status
    marquee (theme steel-blue/gold; blank-safe status_marquee config).
-
-261119.01 (2026-11-19)
-1. MAP: home Social Icon Fill button (right of Document Record); bubble
-   window with topic / path / URL; connect / drag / persist blank-safe
-   map_bubbles in config.
 
 Older release notes are on GitHub Releases.
 

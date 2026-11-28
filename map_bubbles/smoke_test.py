@@ -125,22 +125,44 @@ def test_water_ripple() -> None:
     from map_bubbles.water_ripple import (
         SEA_SURFACE_OPACITY,
         WaterRippleSim,
+        apply_edge_fade,
+        cover_fit_rect,
         load_sea_surface,
+        paint_cover_sea,
     )
+    from PySide6.QtGui import QImage
 
     sea = load_sea_surface()
     assert sea is not None and not sea.isNull(), "map_bubbles/assets/sea-surface.jpg must ship"
+    # Original bundled photo stays high-res on disk (not permanently downsampled).
+    assert sea.width() >= 1280 and sea.height() >= 720, (sea.width(), sea.height())
     assert abs(SEA_SURFACE_OPACITY - 0.60) < 1e-9
+
+    # Cover-fit (not IgnoreAspectRatio stretch) for a wide viewport.
+    scale, ox, oy, _ = cover_fit_rect(sea.width(), sea.height(), 800, 400)
+    assert scale == max(800 / sea.width(), 400 / sea.height())
+    assert ox >= 0 and oy >= 0
 
     sim = WaterRippleSim()
     bw, bh = sim.ensure_size(400, 300)
     assert bw >= 8 and bh >= 8
+    # Quiet frame uses full-viewport cover-fit of the original (sharp).
+    quiet = sim.render_upscaled(400, 300)
+    assert not quiet.isNull()
+    assert quiet.width() == 400 and quiet.height() == 300
+
     sim.disturb(bw / 2, bh / 2, radius=3, strength=200)
     assert sim.active
     sim.step()
     frame = sim.render_upscaled(400, 300)
     assert not frame.isNull()
     assert frame.width() == 400 and frame.height() == 300
+
+    # Edge fade helper is safe on a blank buffer.
+    blank = QImage(64, 48, QImage.Format.Format_RGB32)
+    paint_cover_sea(blank, sea)
+    apply_edge_fade(blank)
+    assert not blank.isNull()
 
     scene = MapScene()
     view = MapView(scene)
@@ -153,6 +175,29 @@ def test_water_ripple() -> None:
     view._on_ripple_tick()
     assert view._cached_frame is not None and not view._cached_frame.isNull()
     view.hide()
+    del app
+
+
+def test_disconnect_clears_links() -> None:
+    """Disconnect removes edges of the selected bubble; bubble stays."""
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    from map_bubbles.save import make_bubble
+    from map_bubbles.scene import MapScene
+
+    scene = MapScene()
+    a = scene.add_bubble_from_dict(make_bubble(x=0, y=0, topic="A"))
+    b = scene.add_bubble_from_dict(make_bubble(x=120, y=0, topic="B"))
+    c = scene.add_bubble_from_dict(make_bubble(x=60, y=80, topic="C"))
+    scene.add_edge_between(a, b)
+    scene.add_edge_between(a, c)
+    assert len(scene.edges()) == 2
+    n = scene.disconnect_bubble(a)
+    assert n == 2
+    assert len(scene.edges()) == 0
+    assert len(scene.bubbles()) == 3
+    assert a in scene.bubbles() or a.bubble_id in {x.bubble_id for x in scene.bubbles()}
     del app
 
 
@@ -239,11 +284,19 @@ def test_fill_opacity_and_pan_chrome() -> None:
     mg = dlg._gold._move_grip
     assert mg.x() > dlg._gold.width() // 2
     assert mg.y() < 40
+    # Toolbar is to the RIGHT of the MAP title (same horizontal row).
+    from PySide6.QtWidgets import QLabel
+
+    title = dlg._top.findChild(QLabel, "mapTitle")
+    assert title is not None
+    assert dlg.btn_add.y() == title.y() or abs(dlg.btn_add.y() - title.y()) <= 6
+    assert dlg.btn_add.x() > title.x() + title.width() - 2
     dlg.hide()
     # Open path/URL toolbar button removed — double-click / Enter open instead.
     assert not hasattr(dlg, "btn_activate")
     assert dlg.btn_edit is not None
     assert dlg.btn_delete is not None
+    assert dlg.btn_disconnect is not None
     dlg.close()
     del app
 
@@ -288,6 +341,7 @@ def main() -> int:
     test_scene_qt()
     test_edit_dialog_size_field()
     test_water_ripple()
+    test_disconnect_clears_links()
     test_rename_refreshes_label()
     test_fill_opacity_and_pan_chrome()
     test_double_click_requests_activate()

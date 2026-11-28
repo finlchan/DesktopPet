@@ -468,6 +468,7 @@ class MapDialog(QDialog):
     """MAP: interconnected bubbles for topic / local path / website.
 
     One composition: sea water + title/toolbar chrome inside a single gold border.
+    Title and toolbar share one horizontal row (MAP … then buttons).
     『 / 』 corner brackets resize; top-right 4-way grip (or gold border) moves the window;
     empty-canvas drag pans the view.
     """
@@ -512,7 +513,7 @@ class MapDialog(QDialog):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
 
-        # Overlay chrome (title + toolbar + status) — sits on the sea, not outside.
+        # Overlay chrome: MAP title + toolbar on one horizontal row (then status).
         self._top = QWidget(self._body)
         self._top.setObjectName("mapChromeOverlay")
         self._top.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
@@ -520,22 +521,27 @@ class MapDialog(QDialog):
         top_col.setContentsMargins(8, 6, 8, 4)
         top_col.setSpacing(4)
 
+        bar = QHBoxLayout()
+        bar.setSpacing(6)
         title = QLabel("MAP")
         title.setObjectName("mapTitle")
         title.setFont(QFont("Microsoft JhengHei", 11, QFont.Weight.Bold))
-        top_col.addWidget(title)
+        bar.addWidget(title)
 
-        bar = QHBoxLayout()
-        bar.setSpacing(6)
         self.btn_add = QPushButton("Add bubble")
         self.btn_connect = QPushButton("Connect")
         self.btn_connect.setCheckable(True)
+        self.btn_disconnect = QPushButton("Disconnect")
+        self.btn_disconnect.setToolTip(
+            "消除指定泡泡的連結 — select a bubble, then clear its links"
+        )
         self.btn_edit = QPushButton("Edit")
         self.btn_delete = QPushButton("Delete")
         self.btn_fit = QPushButton("Fit")
         for b in (
             self.btn_add,
             self.btn_connect,
+            self.btn_disconnect,
             self.btn_edit,
             self.btn_delete,
             self.btn_fit,
@@ -546,7 +552,8 @@ class MapDialog(QDialog):
 
         self.status = QLabel(
             "Pan empty space · Wheel zoom · 『』 resize · "
-            "Top-right ↕↔ moves window · Drag bubbles · Double-click open · Connect"
+            "Top-right ↕↔ moves window · Drag bubbles · Double-click open · "
+            "Connect / Disconnect"
         )
         self.status.setObjectName("mapStatus")
         self.status.setWordWrap(True)
@@ -566,6 +573,7 @@ class MapDialog(QDialog):
 
         self.btn_add.clicked.connect(self._add_bubble)
         self.btn_connect.toggled.connect(self._toggle_connect)
+        self.btn_disconnect.clicked.connect(self._disconnect_selected)
         self.btn_edit.clicked.connect(self._edit_selected)
         self.btn_delete.clicked.connect(self._delete_selected)
         self.btn_fit.clicked.connect(self.view.fit_bubbles)
@@ -664,8 +672,29 @@ class MapDialog(QDialog):
             self.view.setDragMode(self.view.DragMode.ScrollHandDrag)
             self.status.setText(
                 "Pan empty space · Wheel zoom · 『』 resize · "
-                "Top-right ↕↔ moves window · Drag bubbles · Double-click open · Connect"
+                "Top-right ↕↔ moves window · Drag bubbles · Double-click open · "
+                "Connect / Disconnect"
             )
+
+    def _disconnect_selected(self) -> None:
+        """清除選取泡泡的所有連結 (keep bubbles; remove edges only)."""
+        items = self._selected_bubbles()
+        if not items:
+            QMessageBox.information(
+                self,
+                "MAP",
+                "Select a bubble first, then Disconnect to clear its links.\n"
+                "請先選取泡泡，再按 Disconnect 消除連結。",
+            )
+            return
+        removed = 0
+        for item in items:
+            removed += self.scene.disconnect_bubble(item)
+        if removed:
+            self.status.setText(f"Disconnected {removed} link(s) / 已消除 {removed} 條連結")
+            self._persist()
+        else:
+            self.status.setText("Selected bubble has no links / 選取的泡泡沒有連結")
 
     def _edit_selected(self) -> None:
         items = self._selected_bubbles()
