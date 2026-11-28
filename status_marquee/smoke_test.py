@@ -162,6 +162,45 @@ def test_menu_entry_present() -> None:
     assert found_open, "MiniProgramsSubMenu.open_status_marquee missing"
 
 
+def test_keep_awake_toggle() -> None:
+    """Keep-awake module tracks enable/clear; dialog hooks show/hide/close."""
+    from status_marquee import keep_awake
+
+    keep_awake._reset_for_tests()
+    assert keep_awake.is_active() is False
+    assert keep_awake.set_keep_awake(True) is True
+    assert keep_awake.is_active() is True
+    assert keep_awake.set_keep_awake(False) is True
+    assert keep_awake.is_active() is False
+    # Clearing twice is idempotent.
+    assert keep_awake.set_keep_awake(False) is True
+    assert keep_awake.is_active() is False
+
+    # Dialog wires show → on, close/hide → off (offscreen Qt).
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    from status_marquee import StatusMarqueeDialog
+
+    keep_awake._reset_for_tests()
+    dlg = StatusMarqueeDialog({"status_marquee": {}}, None)
+    assert keep_awake.is_active() is False
+    dlg.show()
+    app.processEvents()
+    assert keep_awake.is_active() is True
+    dlg.hide()
+    app.processEvents()
+    assert keep_awake.is_active() is False
+    dlg.show()
+    app.processEvents()
+    assert keep_awake.is_active() is True
+    dlg.close()
+    app.processEvents()
+    assert keep_awake.is_active() is False
+    del dlg
+    keep_awake._reset_for_tests()
+
+
 def test_dialog_qt_offscreen() -> None:
     from PySide6.QtWidgets import QApplication
 
@@ -311,6 +350,7 @@ def main() -> int:
         test_legacy_text_migration,
         test_fish_tank_removed_from_repo,
         test_menu_entry_present,
+        test_keep_awake_toggle,
         test_dialog_qt_offscreen,
     ]
     for fn in tests:
