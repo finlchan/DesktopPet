@@ -12,7 +12,7 @@ import math
 from typing import Optional
 
 from PySide6.QtCore import QPoint, QRect, QRectF, Qt, QTimer
-from PySide6.QtGui import QColor, QFont, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -161,7 +161,11 @@ def _single_screen_geometry(hint: Optional[QPoint] = None) -> QRect:
 
 
 class CenteredGearButton(QToolButton):
-    """Circular gear control with the glyph optically centered in the circle."""
+    """Circular gear control with a geometric glyph centered in the circle.
+
+    Emoji ``⚙`` metrics are font-dependent and often sit high/off-axis in a
+    QToolButton; drawing the teeth ourselves keeps the icon truly centered.
+    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -171,21 +175,39 @@ class CenteredGearButton(QToolButton):
         self.setToolTip("設定／Settings")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setStyleSheet(GEAR_STYLE)
-        # Text is painted manually so Qt's label metrics cannot offset it.
+        # No text — paintEvent draws a centered gear path.
         self.setText("")
 
     def paintEvent(self, event) -> None:  # noqa: N802
         super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
-        font = QFont("Segoe UI Symbol", 13)
-        if not font.exactMatch():
-            font = QFont("Microsoft JhengHei", 12)
-        painter.setFont(font)
-        painter.setPen(QColor("#f5e6c8"))
-        # AlignCenter on the full button rect centers the glyph in the circle.
-        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "⚙")
+        cx = self.width() * 0.5
+        cy = self.height() * 0.5
+        # Fit inside the circle with a small inset so the stroke clears the border.
+        outer_r = min(self.width(), self.height()) * 0.32
+        inner_r = outer_r * 0.58
+        hub_r = outer_r * 0.28
+        teeth = 8
+        path = QPainterPath()
+        # Star-like gear outline around the exact button center.
+        for i in range(teeth * 2):
+            angle = (i / (teeth * 2)) * math.tau - math.pi / 2
+            r = outer_r if i % 2 == 0 else inner_r
+            x = cx + r * math.cos(angle)
+            y = cy + r * math.sin(angle)
+            if i == 0:
+                path.moveTo(x, y)
+            else:
+                path.lineTo(x, y)
+        path.closeSubpath()
+        # Punch the hub so it reads as a gear, not a filled star.
+        hub = QPainterPath()
+        hub.addEllipse(QRectF(cx - hub_r, cy - hub_r, hub_r * 2, hub_r * 2))
+        path = path.subtracted(hub)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#f5e6c8"))
+        painter.drawPath(path)
         painter.end()
 
 
@@ -424,12 +446,14 @@ class StatusMarqueeSettingsPanel(QFrame):
         apply_btn.clicked.connect(self._apply)
         row.addWidget(apply_btn)
 
-        close_win = QPushButton("關閉視窗／Close window")
+        close_win = QPushButton("關閉視窗")
         close_win.setObjectName("dangerClose")
+        close_win.setToolTip("Close window")
         close_win.clicked.connect(self._close_host)
         row.addWidget(close_win)
 
-        hide_btn = QPushButton("關閉設定／Close")
+        hide_btn = QPushButton("關閉設定")
+        hide_btn.setToolTip("Close settings")
         hide_btn.clicked.connect(self.host.hide_settings)
         row.addWidget(hide_btn)
         layout.addLayout(row)
