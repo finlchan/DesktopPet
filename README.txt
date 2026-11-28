@@ -1,7 +1,7 @@
 Desktop Pet
 ==================
 
-Version: 261128.05
+Version: 261128.06
 Published: 2026-11-28
 
 A floating shortcut menu and document record gadget on the Windows desktop.
@@ -59,6 +59,10 @@ Quick Usage
 
 Latest updates (5)
 --------
+261128.06 (2026-11-28)
+1. Status marquee: gear stays on primary top-right in 雙顯視屏貫穿;
+   right-click bands / empty area opens the same inline settings panel.
+
 261128.05 (2026-11-28)
 1. Status marquee: centered gear; inline settings on the bands window;
    display modes 單一全視窗化 / 雙顯視屏貫穿; 文字移動速度; 斜線帶的大小.
@@ -76,10 +80,6 @@ Latest updates (5)
 1. MAP: home Social Icon Fill button (right of Document Record); bubble
    window with topic / path / URL; connect / drag / persist blank-safe
    map_bubbles in config.
-
-261114.01 (2026-11-14)
-1. Free Station IMPORT: BS4 stays blank for manual entry (no longer maps
-   Computed Bearing / stray cells into BS4).
 
 Older release notes are on GitHub Releases.
 

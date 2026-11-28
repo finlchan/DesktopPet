@@ -2,8 +2,9 @@
 
 Two slanted bands cross the view with theme steel-blue / gold fills,
 repeated status text scrolling in opposite directions, soft shadows,
-and a light playful cycle. Top-right gear toggles an *inline* settings
-panel on the same window (no separate dialog).
+and a light playful cycle. Top-right gear (or right-click on the bands)
+toggles an *inline* settings panel on the same window (no separate dialog).
+In dual-span mode the gear stays on the primary monitor's top-right.
 """
 
 from __future__ import annotations
@@ -603,38 +604,91 @@ class StatusMarqueeDialog(QDialog):
         self.settings_panel.show()
         self.gear.setChecked(True)
         self._layout_chrome()
-        self.settings_panel.raise_()
-        self.gear.raise_()
 
     def hide_settings(self) -> None:
         self.settings_panel.hide()
         self.gear.setChecked(False)
+        self._raise_chrome()
+
+    def _chrome_anchor_rect(self) -> QRect:
+        """Local rect for gear/panel placement.
+
+        In dual-span the window covers the virtual desktop; keep chrome on the
+        *primary* monitor's top-right so the gear does not vanish onto a far
+        secondary edge. Single fullscreen uses the whole dialog rect.
+        """
+        mode = effective_display_mode(self._settings)
+        if mode == DISPLAY_MODE_DUAL_SPAN:
+            primary = QApplication.primaryScreen()
+            if primary is not None:
+                g = primary.geometry()
+                top_left = self.mapFromGlobal(g.topLeft())
+                # Intersect with our client area in case screens don't align.
+                local = QRect(top_left.x(), top_left.y(), g.width(), g.height())
+                clipped = local.intersected(self.rect())
+                if clipped.width() >= GEAR_SIZE + 16 and clipped.height() >= GEAR_SIZE + 16:
+                    return clipped
+        return self.rect()
+
+    def _raise_chrome(self) -> None:
+        """Keep gear/panel above the full-bleed canvas (layout sibling)."""
+        self.canvas.lower()
+        if self.settings_panel.isVisible():
+            self.settings_panel.raise_()
         self.gear.raise_()
+        self.gear.show()
 
     def _layout_chrome(self) -> None:
         margin = 8
-        self.gear.move(self.width() - self.gear.width() - margin, margin)
-        self.gear.raise_()
+        anchor = self._chrome_anchor_rect()
+        gx = anchor.right() - self.gear.width() - margin + 1
+        gy = anchor.top() + margin
+        # Clamp inside the dialog so dual-span never parks chrome off-window.
+        gx = max(0, min(gx, self.width() - self.gear.width()))
+        gy = max(0, min(gy, self.height() - self.gear.height()))
+        self.gear.move(gx, gy)
+        self.gear.show()
         if self.settings_panel.isVisible():
-            # Panel sits under the gear, inset from the top-right.
+            # Panel sits under the gear, inset from the anchor top-right.
             pw = self.settings_panel.width()
             self.settings_panel.adjustSize()
             ph = self.settings_panel.sizeHint().height()
-            # Cap height so it fits on small single screens.
-            max_h = max(160, self.height() - margin * 2 - self.gear.height() - 4)
+            max_h = max(
+                160,
+                anchor.height() - margin * 2 - self.gear.height() - 4,
+            )
             ph = min(ph, max_h)
             self.settings_panel.setFixedHeight(ph)
-            x = max(margin, self.width() - pw - margin)
-            y = margin + self.gear.height() + 4
+            x = max(anchor.left() + margin, anchor.right() - pw - margin + 1)
+            y = gy + self.gear.height() + 4
+            # Keep panel inside the dialog bounds.
+            x = max(0, min(x, self.width() - pw))
+            y = max(0, min(y, self.height() - ph))
             self.settings_panel.setGeometry(x, y, pw, ph)
-            self.settings_panel.raise_()
-            self.gear.raise_()
+        self._raise_chrome()
+
+    def _is_under_settings_panel(self, widget) -> bool:
+        walk = widget
+        while walk is not None and walk is not self:
+            if walk is self.settings_panel:
+                return True
+            walk = walk.parentWidget()
+        return False
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
         self._layout_chrome()
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
+        # Right-click bands / empty area → same inline settings as the gear.
+        if event.button() == Qt.MouseButton.RightButton:
+            child = self.childAt(event.position().toPoint())
+            if child is self.gear or self._is_under_settings_panel(child):
+                super().mousePressEvent(event)
+                return
+            self.open_settings()
+            event.accept()
+            return
         if event.button() == Qt.MouseButton.LeftButton:
             child = self.childAt(event.position().toPoint())
             # Don't start a drag from gear or the settings panel.
@@ -681,7 +735,6 @@ class StatusMarqueeDialog(QDialog):
         self.canvas.start()
         self._apply_display_geometry(initial=False)
         self._layout_chrome()
-        self.gear.raise_()
 
 
 # Back-compat alias: older smoke tests imported StatusMarqueeSettingsDialog.

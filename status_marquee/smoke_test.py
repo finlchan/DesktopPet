@@ -244,16 +244,60 @@ def test_dialog_qt_offscreen() -> None:
     assert dlg._settings["band_size"] == 90
     assert canvas._band_size == 90
 
+    # Dual-span: gear stays visible, raised, and on the primary-screen chrome.
+    assert dlg.gear.isVisible()
+    assert not dlg.gear.isHidden()
+    gear_geo = dlg.gear.geometry()
+    assert dlg.rect().contains(gear_geo), "gear must stay inside dialog"
+    anchor = dlg._chrome_anchor_rect()
+    assert anchor.intersects(gear_geo) or anchor.contains(gear_geo.center())
+    # Z-order: gear above the full-bleed canvas.
+    assert dlg.gear.isVisible()
+    assert dlg.canvas.isVisible()
+
     # Gear toggles the same inline panel (no separate window).
     dlg.hide_settings()
     assert not dlg.settings_panel.isVisible()
     dlg.gear.click()
     assert dlg.settings_panel.isVisible()
+    assert dlg.gear.isVisible()
+
+    # Right-click on bands / empty area opens the same inline panel.
+    dlg.hide_settings()
+    assert not dlg.settings_panel.isVisible()
+    from PySide6.QtCore import QPoint, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+
+    # Click near center of the canvas (not on gear/panel).
+    click_pos = QPoint(max(40, dlg.width() // 2), max(40, dlg.height() // 2))
+    # Ensure we are not hitting the gear.
+    assert not dlg.gear.geometry().contains(click_pos)
+    local = QPointF(click_pos)
+    global_pos = QPointF(dlg.mapToGlobal(click_pos))
+    press = QMouseEvent(
+        QMouseEvent.Type.MouseButtonPress,
+        local,
+        local,
+        global_pos,
+        Qt.MouseButton.RightButton,
+        Qt.MouseButton.RightButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    app.sendEvent(dlg, press)
+    assert dlg.settings_panel.isVisible(), "right-click must open inline settings"
+    assert dlg.gear.isChecked()
 
     # Gear glyph paints into a square circle target.
     gear_pix = dlg.gear.grab()
     assert gear_pix.width() == dlg.gear.width()
     assert gear_pix.height() == dlg.gear.height()
+
+    # Switch back to single fullscreen — gear still visible top-right.
+    dlg.settings_panel.mode_single.setChecked(True)
+    dlg.settings_panel._apply()
+    assert dlg._settings["display_mode"] == "single"
+    assert dlg.gear.isVisible()
+    assert dlg.rect().contains(dlg.gear.geometry())
 
     dlg.close()
     del dlg
