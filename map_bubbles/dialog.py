@@ -158,7 +158,8 @@ class BubbleEditDialog(QDialog):
 
         hint = QLabel(
             "Fill at least one of topic / path / URL. Size is radius in pixels "
-            "(saved as r). Double-click a bubble to edit; Open path/URL (or Enter) activates."
+            "(saved as r). Use Edit on the toolbar to change fields; "
+            "double-click a bubble (or Enter) to open its path/URL."
         )
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #9ab; font-size: 8.5pt;")
@@ -439,14 +440,12 @@ class MapDialog(QDialog):
         self.btn_connect = QPushButton("Connect")
         self.btn_connect.setCheckable(True)
         self.btn_edit = QPushButton("Edit")
-        self.btn_activate = QPushButton("Open path/URL")
         self.btn_delete = QPushButton("Delete")
         self.btn_fit = QPushButton("Fit")
         for b in (
             self.btn_add,
             self.btn_connect,
             self.btn_edit,
-            self.btn_activate,
             self.btn_delete,
             self.btn_fit,
         ):
@@ -456,7 +455,7 @@ class MapDialog(QDialog):
 
         self.status = QLabel(
             "Pan empty space · Wheel zoom · 『』 corners resize · "
-            "Drag bubbles · Double-click edit · Connect"
+            "Drag bubbles · Double-click open · Edit · Connect"
         )
         self.status.setObjectName("mapStatus")
         self.status.setWordWrap(True)
@@ -477,7 +476,6 @@ class MapDialog(QDialog):
         self.btn_add.clicked.connect(self._add_bubble)
         self.btn_connect.toggled.connect(self._toggle_connect)
         self.btn_edit.clicked.connect(self._edit_selected)
-        self.btn_activate.clicked.connect(self._activate_selected)
         self.btn_delete.clicked.connect(self._delete_selected)
         self.btn_fit.clicked.connect(self.view.fit_bubbles)
 
@@ -575,7 +573,7 @@ class MapDialog(QDialog):
             self.view.setDragMode(self.view.DragMode.ScrollHandDrag)
             self.status.setText(
                 "Pan empty space · Wheel zoom · 『』 corners resize · "
-                "Drag bubbles · Double-click edit · Connect"
+                "Drag bubbles · Double-click open · Edit · Connect"
             )
 
     def _edit_selected(self) -> None:

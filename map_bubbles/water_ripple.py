@@ -19,7 +19,7 @@ from typing import Optional, Tuple
 from PySide6.QtGui import QColor, QImage, QPainter, QLinearGradient
 from PySide6.QtCore import Qt
 
-# Steel-blue pool palette (fallback if sea-surface.png is missing)
+# Steel-blue pool palette (underlay + fallback if sea-surface.jpg is missing)
 WATER_DEEP = QColor(22, 34, 48)
 WATER_MID = QColor(36, 58, 82)
 
@@ -29,7 +29,9 @@ MAX_SIM_W = 220
 MAX_SIM_H = 160
 MIN_SCALE = 3
 
-SEA_SURFACE_NAME = "sea-surface.png"
+# User-provided ocean photo (bundled). Drawn at SEA_SURFACE_OPACITY over the pool underlay.
+SEA_SURFACE_NAME = "sea-surface.jpg"
+SEA_SURFACE_OPACITY = 0.60
 
 
 def _assets_root() -> Path:
@@ -47,14 +49,19 @@ def _assets_root() -> Path:
 
 @lru_cache(maxsize=1)
 def load_sea_surface() -> Optional[QImage]:
-    """Load the bundled calm open-sea texture (RGB32). Cached once per process."""
-    path = _assets_root() / SEA_SURFACE_NAME
-    if not path.is_file():
-        return None
-    img = QImage(str(path))
-    if img.isNull():
-        return None
-    return img.convertToFormat(QImage.Format.Format_RGB32)
+    """Load the bundled ocean photo (RGB32). Cached once per process.
+
+    Prefers ``sea-surface.jpg``; falls back to legacy ``sea-surface.png``.
+    """
+    root = _assets_root()
+    for name in (SEA_SURFACE_NAME, "sea-surface.png"):
+        path = root / name
+        if not path.is_file():
+            continue
+        img = QImage(str(path))
+        if not img.isNull():
+            return img.convertToFormat(QImage.Format.Format_RGB32)
+    return None
 
 
 class WaterRippleSim:
@@ -92,12 +99,18 @@ class WaterRippleSim:
         return self.w, self.h
 
     def paint_base_water(self) -> None:
-        """Fill the backdrop with the sea-surface texture (steel-blue fallback)."""
+        """Fill the backdrop with the ocean photo at 60% opacity (steel-blue underlay)."""
         img = self._backdrop
         if img is None or img.isNull():
             return
         sea = load_sea_surface()
         p = QPainter(img)
+        # Always paint the pool underlay so the 60%-opaque photo has something to blend onto.
+        grad = QLinearGradient(0, 0, 0, self.h)
+        grad.setColorAt(0.0, WATER_MID)
+        grad.setColorAt(0.45, WATER_DEEP)
+        grad.setColorAt(1.0, QColor(18, 28, 40))
+        p.fillRect(0, 0, self.w, self.h, grad)
         if sea is not None and not sea.isNull():
             # Cover the low-res sim buffer; refraction will distort this image.
             scaled = sea.scaled(
@@ -106,13 +119,9 @@ class WaterRippleSim:
                 Qt.AspectRatioMode.IgnoreAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
+            p.setOpacity(SEA_SURFACE_OPACITY)
             p.drawImage(0, 0, scaled)
-        else:
-            grad = QLinearGradient(0, 0, 0, self.h)
-            grad.setColorAt(0.0, WATER_MID)
-            grad.setColorAt(0.45, WATER_DEEP)
-            grad.setColorAt(1.0, QColor(18, 28, 40))
-            p.fillRect(0, 0, self.w, self.h, grad)
+            p.setOpacity(1.0)
         p.end()
 
     def disturb(
