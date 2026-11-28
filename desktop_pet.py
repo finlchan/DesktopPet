@@ -129,6 +129,16 @@ DEFAULT_CONFIG = {
         "bubbles": [],
         "edges": [],
     },
+    # Desktop status marquee: blank fields only in the packaging template.
+    # Shape: {text, color_key, pos_x, pos_y, width, height}.
+    "status_marquee": {
+        "text": "",
+        "color_key": "",
+        "pos_x": None,
+        "pos_y": None,
+        "width": None,
+        "height": None,
+    },
 }
 
 
@@ -7381,7 +7391,7 @@ class MiniProgramsSubMenu(PopupPanel):
         self.pomodoro_dialog = None
         self.translate_dialog = None
         self.hakoniwa_dialog = None
-        self.fish_tank_dialog = None
+        self.status_marquee_dialog = None
         self.build_ui()
 
     def build_ui(self):
@@ -7439,12 +7449,12 @@ class MiniProgramsSubMenu(PopupPanel):
         self.btn_hakoniwa.clicked.connect(self.open_hakoniwa)
         layout.addWidget(self.btn_hakoniwa)
 
-        # Transparent Fish Tank — below 箱庭島; marked unfinished (2026-11-02).
-        self.btn_fish_tank = ShineSweepButton(
-            "透明魚缸（未完成）／Fish Tank (WIP)", "#1a5a6e", self.content
+        # Desktop status marquee — Diagonal Text Bands (theme steel-blue / gold).
+        self.btn_status_marquee = ShineSweepButton(
+            "桌面跑馬燈／視窗跑馬燈", "#1a5a6e", self.content
         )
-        self.btn_fish_tank.clicked.connect(self.open_fish_tank)
-        layout.addWidget(self.btn_fish_tank)
+        self.btn_status_marquee.clicked.connect(self.open_status_marquee)
+        layout.addWidget(self.btn_status_marquee)
 
         self.setStyleSheet(MENU_STYLE + """
             MiniProgramsSubMenu { background-color: transparent; }
@@ -7543,15 +7553,15 @@ class MiniProgramsSubMenu(PopupPanel):
         self.hakoniwa_dialog.activateWindow()
         QTimer.singleShot(300, self._release_suppress)
 
-    def open_fish_tank(self):
+    def open_status_marquee(self):
         self._suppress_hide = True
-        if self.fish_tank_dialog is None:
-            from fish_tank import FishTankDialog
+        if self.status_marquee_dialog is None:
+            from status_marquee import StatusMarqueeDialog
 
-            self.fish_tank_dialog = FishTankDialog(self.cfg, None)
-        self.fish_tank_dialog.show()
-        self.fish_tank_dialog.raise_()
-        self.fish_tank_dialog.activateWindow()
+            self.status_marquee_dialog = StatusMarqueeDialog(self.cfg, None)
+        self.status_marquee_dialog.show()
+        self.status_marquee_dialog.raise_()
+        self.status_marquee_dialog.activateWindow()
         QTimer.singleShot(300, self._release_suppress)
 
     def _release_suppress(self):
@@ -7585,11 +7595,9 @@ class MiniProgramsSubMenu(PopupPanel):
         except Exception:
             _HakoniwaIslandDialog = type(None)
         try:
-            from fish_tank import FishTankDialog as _FishTankDialog
-            from fish_tank.dialog import CaptureCardDialog as _CaptureCardDialog
+            from status_marquee import StatusMarqueeDialog as _StatusMarqueeDialog
         except Exception:
-            _FishTankDialog = type(None)
-            _CaptureCardDialog = type(None)
+            _StatusMarqueeDialog = type(None)
         if isinstance(
             active,
             (
@@ -7604,8 +7612,7 @@ class MiniProgramsSubMenu(PopupPanel):
                 PomodoroDialog,
                 TranslateDialog,
                 _HakoniwaIslandDialog,
-                _FishTankDialog,
-                _CaptureCardDialog,
+                _StatusMarqueeDialog,
             ),
         ):
             return
@@ -7897,7 +7904,7 @@ class ListRowFillItem(QWidget):
 # ---------------------------------------------------------------------------
 # Menu Social Icon Fill — first-page circular nav (theme steel-blue palette)
 # ---------------------------------------------------------------------------
-# Qt take on CSS “Social Icon Fill” (same motion as fish_tank/social_toolbar):
+# Qt take on CSS “Social Icon Fill” circular nav motion:
 # - Circular outline + centered line icon
 # - Hover (~0.45s): solid fill rises from bottom; idle icon slides up out;
 #   inverted icon slides up from below; button lifts; leave reverses.
@@ -8425,11 +8432,9 @@ class PetMenu(PopupPanel):
         except Exception:
             _HakoniwaIslandDialog = type(None)
         try:
-            from fish_tank import FishTankDialog as _FishTankDialog
-            from fish_tank.dialog import CaptureCardDialog as _CaptureCardDialog
+            from status_marquee import StatusMarqueeDialog as _StatusMarqueeDialog
         except Exception:
-            _FishTankDialog = type(None)
-            _CaptureCardDialog = type(None)
+            _StatusMarqueeDialog = type(None)
         try:
             from map_bubbles import MapDialog as _MapDialog
         except Exception:
@@ -8452,8 +8457,7 @@ class PetMenu(PopupPanel):
                 PomodoroDialog,
                 TranslateDialog,
                 _HakoniwaIslandDialog,
-                _FishTankDialog,
-                _CaptureCardDialog,
+                _StatusMarqueeDialog,
                 _MapDialog,
             ),
         ):

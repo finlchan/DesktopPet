@@ -1,0 +1,119 @@
+"""Blank-safe status marquee persistence (config.json key ``status_marquee``)."""
+
+from __future__ import annotations
+
+from typing import Any, Dict
+
+# Theme-locked color presets (steel-blue / gold — match DesktopPet tokens).
+COLOR_PRESETS: Dict[str, Dict[str, str]] = {
+    "steel": {
+        "label": "Steel blue／鋼藍",
+        "band_a": "#3d5a80",
+        "band_b": "#2a4a6e",
+        "text": "#e8f2f8",
+    },
+    "gold": {
+        "label": "Gold／金",
+        "band_a": "#c9a84c",
+        "band_b": "#7a5e18",
+        "text": "#1e2832",
+    },
+    "slate": {
+        "label": "Slate／石板",
+        "band_a": "#283a4e",
+        "band_b": "#1c2837",
+        "text": "#f5e6c8",
+    },
+}
+
+DEFAULT_TEXT = "休息中..."
+DEFAULT_COLOR_KEY = "steel"
+DEFAULT_WIDTH = 440
+DEFAULT_HEIGHT = 200
+
+BLANK_STATUS_MARQUEE = {
+    "text": "",
+    "color_key": "",
+    "pos_x": None,
+    "pos_y": None,
+    "width": None,
+    "height": None,
+}
+
+
+def blank_status_marquee_config() -> Dict[str, Any]:
+    """Shippable empty fields only (no personal status text)."""
+    return dict(BLANK_STATUS_MARQUEE)
+
+
+def normalize_color_key(raw: Any) -> str:
+    key = (raw or "").strip().lower() if isinstance(raw, str) else ""
+    if key in COLOR_PRESETS:
+        return key
+    return DEFAULT_COLOR_KEY
+
+
+def normalize_settings(raw: Any) -> Dict[str, Any]:
+    if not isinstance(raw, dict):
+        raw = {}
+
+    text = raw.get("text", "")
+    if not isinstance(text, str):
+        text = str(text or "")
+    text = text.strip()
+
+    color_key_raw = raw.get("color_key", "")
+    if isinstance(color_key_raw, str) and color_key_raw.strip():
+        color_key = normalize_color_key(color_key_raw)
+    else:
+        color_key = ""
+
+    def _opt_int(key: str):
+        val = raw.get(key)
+        if val is None or val == "":
+            return None
+        try:
+            return int(val)
+        except (TypeError, ValueError):
+            return None
+
+    def _opt_size(key: str, default: int, lo: int, hi: int):
+        val = _opt_int(key)
+        if val is None:
+            return None
+        return max(lo, min(hi, val))
+
+    return {
+        "text": text,
+        "color_key": color_key,
+        "pos_x": _opt_int("pos_x"),
+        "pos_y": _opt_int("pos_y"),
+        "width": _opt_size("width", DEFAULT_WIDTH, 280, 900),
+        "height": _opt_size("height", DEFAULT_HEIGHT, 140, 500),
+    }
+
+
+def effective_text(settings: Dict[str, Any]) -> str:
+    text = (settings.get("text") or "").strip()
+    return text or DEFAULT_TEXT
+
+
+def effective_color_key(settings: Dict[str, Any]) -> str:
+    return normalize_color_key(settings.get("color_key") or DEFAULT_COLOR_KEY)
+
+
+def load_settings(cfg) -> Dict[str, Any]:
+    raw = None
+    if hasattr(cfg, "get"):
+        raw = cfg.get("status_marquee")
+    elif isinstance(cfg, dict):
+        raw = cfg.get("status_marquee")
+    return normalize_settings(raw)
+
+
+def save_settings(cfg, settings: Dict[str, Any]) -> None:
+    payload = normalize_settings(settings)
+    if hasattr(cfg, "set"):
+        cfg.set(["status_marquee"], payload, save=True)
+    elif isinstance(cfg, dict):
+        cfg["status_marquee"] = payload
