@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .keep_awake import set_keep_awake
 from .save import (
     COLOR_PRESETS,
     DISPLAY_MODE_DUAL_SPAN,
@@ -538,6 +539,20 @@ class StatusMarqueeDialog(QDialog):
 
         self._apply_visual()
         self._apply_display_geometry(initial=True)
+        self._keep_awake_quit_hooked = False
+
+    def _set_marquee_keep_awake(self, enabled: bool) -> None:
+        """Block idle sleep/display-off while the marquee window is up."""
+        set_keep_awake(enabled)
+        if enabled and not self._keep_awake_quit_hooked:
+            app = QApplication.instance()
+            if app is not None:
+                app.aboutToQuit.connect(self._on_app_about_to_quit)
+                self._keep_awake_quit_hooked = True
+
+    def _on_app_about_to_quit(self) -> None:
+        """Clear keep-awake if the app exits while the marquee is still open."""
+        set_keep_awake(False)
 
     def _apply_visual(self) -> None:
         speed = effective_scroll_speed(self._settings)
@@ -727,12 +742,19 @@ class StatusMarqueeDialog(QDialog):
         super().mouseReleaseEvent(event)
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        self._set_marquee_keep_awake(False)
         self._persist()
         super().closeEvent(event)
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        # Closed or hidden → restore normal power policy (toggle-off / quit).
+        self._set_marquee_keep_awake(False)
+        super().hideEvent(event)
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
         self.canvas.start()
+        self._set_marquee_keep_awake(True)
         self._apply_display_geometry(initial=False)
         self._layout_chrome()
 
