@@ -366,6 +366,13 @@ class MapScene(QGraphicsScene):
             self.removeItem(edge)
         self.changed_graph.emit()
 
+    def disconnect_bubble(self, item: BubbleItem) -> int:
+        """Remove every link attached to ``item``; keep the bubble. Returns count removed."""
+        edges = list(item.edges())
+        for edge in edges:
+            self.remove_edge(edge)
+        return len(edges)
+
     def remove_bubble(self, item: BubbleItem) -> None:
         for edge in list(item.edges()):
             self.remove_edge(edge)
