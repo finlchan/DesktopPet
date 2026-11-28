@@ -122,10 +122,15 @@ def test_water_ripple() -> None:
     app = QApplication.instance() or QApplication([])
     from map_bubbles.save import make_bubble
     from map_bubbles.scene import MapScene, MapView
-    from map_bubbles.water_ripple import WaterRippleSim, load_sea_surface
+    from map_bubbles.water_ripple import (
+        SEA_SURFACE_OPACITY,
+        WaterRippleSim,
+        load_sea_surface,
+    )
 
     sea = load_sea_surface()
-    assert sea is not None and not sea.isNull(), "map_bubbles/assets/sea-surface.png must ship"
+    assert sea is not None and not sea.isNull(), "map_bubbles/assets/sea-surface.jpg must ship"
+    assert abs(SEA_SURFACE_OPACITY - 0.60) < 1e-9
 
     sim = WaterRippleSim()
     bw, bh = sim.ensure_size(400, 300)
@@ -148,6 +153,31 @@ def test_water_ripple() -> None:
     view._on_ripple_tick()
     assert view._cached_frame is not None and not view._cached_frame.isNull()
     view.hide()
+    del app
+
+
+def test_rename_refreshes_label() -> None:
+    """Topic rename must update on-bubble text even when radius is unchanged."""
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    from map_bubbles.save import make_bubble
+    from map_bubbles.scene import BubbleItem
+
+    data = make_bubble(x=0, y=0, r=52, topic="BUBBLE2")
+    item = BubbleItem(
+        data["id"],
+        topic=data["topic"],
+        path=data["path"],
+        url=data["url"],
+        radius=data["r"],
+    )
+    assert item._label.text() == "BUBBLE2"
+    # Same radius as before — the old set_radius early-return skipped the label.
+    item.set_fields("Renamed topic", "", "https://example.com", radius=52.0)
+    assert item.topic == "Renamed topic"
+    assert item._label.text() == "Renamed topic"
+    assert item.to_dict()["topic"] == "Renamed topic"
     del app
 
 
@@ -193,7 +223,45 @@ def test_fill_opacity_and_pan_chrome() -> None:
     assert dlg.view.parent() is dlg._body
     assert dlg._gold._grip_tl is not None
     assert dlg._gold._grip_br is not None
+    # Open path/URL toolbar button removed — double-click / Enter open instead.
+    assert not hasattr(dlg, "btn_activate")
+    assert dlg.btn_edit is not None
+    assert dlg.btn_delete is not None
     dlg.close()
+    del app
+
+
+def test_double_click_requests_activate() -> None:
+    """Left double-click on a bubble emits request_activate (open path/URL)."""
+    from PySide6.QtCore import QPointF, Qt
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    from map_bubbles.save import make_bubble
+    from map_bubbles.scene import MapScene
+
+    scene = MapScene()
+    bubble = scene.add_bubble_from_dict(
+        make_bubble(x=0, y=0, topic="ClickMe", url="https://example.com")
+    )
+    activated: list = []
+    edited: list = []
+    scene.request_activate.connect(lambda b: activated.append(b))
+    scene.request_edit.connect(lambda b: edited.append(b))
+
+    class _FakeDbl:
+        def scenePos(self):
+            return QPointF(0, 0)
+
+        def button(self):
+            return Qt.MouseButton.LeftButton
+
+        def accept(self):
+            return None
+
+    scene.mouseDoubleClickEvent(_FakeDbl())
+    assert activated == [bubble], activated
+    assert edited == []
     del app
 
 
@@ -203,7 +271,9 @@ def main() -> int:
     test_scene_qt()
     test_edit_dialog_size_field()
     test_water_ripple()
+    test_rename_refreshes_label()
     test_fill_opacity_and_pan_chrome()
+    test_double_click_requests_activate()
     print("map_bubbles smoke_test: OK")
     return 0
 

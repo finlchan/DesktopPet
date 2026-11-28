@@ -201,10 +201,11 @@ class BubbleItem(QGraphicsEllipseItem):
         self.path = (path or "").strip()
         self.url = (url or "").strip()
         if radius is not None:
+            # set_radius early-returns when r is unchanged — still refresh the label.
             self.set_radius(radius)
-        else:
-            self._refresh_label()
-            self.update()
+        # Always refresh on-bubble text so topic/path/URL renames show immediately.
+        self._refresh_label()
+        self.update()
 
     def to_dict(self) -> dict:
         pos = self.scenePos()
@@ -422,12 +423,9 @@ class MapScene(QGraphicsScene):
         item = self._item_at(event.scenePos())
         while item is not None and not isinstance(item, BubbleItem):
             item = item.parentItem()
-        if isinstance(item, BubbleItem):
-            # Double-click: edit; Ctrl+double-click: activate
-            if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-                self.request_activate.emit(item)
-            else:
-                self.request_edit.emit(item)
+        if isinstance(item, BubbleItem) and event.button() == Qt.MouseButton.LeftButton:
+            # Left double-click opens path/URL (same as former toolbar Open).
+            self.request_activate.emit(item)
             event.accept()
             return
         super().mouseDoubleClickEvent(event)
