@@ -125,20 +125,30 @@ def test_water_ripple() -> None:
     from map_bubbles.water_ripple import (
         MAX_SIM_H,
         MAX_SIM_W,
+        SEA_DISPLAY_DIVISOR,
         SEA_SURFACE_OPACITY,
         WaterRippleSim,
         apply_edge_fade,
         cover_fit_rect,
         load_sea_surface,
         paint_cover_sea,
+        sea_paint_size,
     )
     from PySide6.QtGui import QImage
+    import time
 
     sea = load_sea_surface()
     assert sea is not None and not sea.isNull(), "map_bubbles/assets/sea-surface.jpg must ship"
-    # Original bundled photo stays high-res on disk (not permanently downsampled).
+    # Original bundled photo stays high-res on disk (display buffer is lowered).
     assert sea.width() >= 1280 and sea.height() >= 720, (sea.width(), sea.height())
-    assert abs(SEA_SURFACE_OPACITY - 0.60) < 1e-9
+    assert abs(SEA_SURFACE_OPACITY - 0.80) < 1e-9
+    assert SEA_DISPLAY_DIVISOR == 2
+    paint_w, paint_h = sea_paint_size(1920, 1080, sea.width(), sea.height())
+    assert paint_w <= sea.width() // 2 and paint_h <= sea.height() // 2, (paint_w, paint_h)
+    assert paint_w < 1920 and paint_h < 1080
+    # Default MAP window (760×560) is taller than half the photo, so it drops too.
+    def_w, def_h = sea_paint_size(760, 560, sea.width(), sea.height())
+    assert def_h <= sea.height() // 2 and def_w * def_h < 760 * 560, (def_w, def_h)
 
     # Cover-fit (not IgnoreAspectRatio stretch) for a wide viewport.
     scale, ox, oy, _ = cover_fit_rect(sea.width(), sea.height(), 800, 400)
@@ -148,7 +158,7 @@ def test_water_ripple() -> None:
     sim = WaterRippleSim()
     bw, bh = sim.ensure_size(400, 300)
     assert bw >= 8 and bh >= 8
-    # Quiet frame uses full-viewport cover-fit of the original (sharp).
+    # Quiet frame is the cover-fit sea at the viewport (lowered when the window exceeds half the photo).
     quiet = sim.render_upscaled(400, 300)
     assert not quiet.isNull()
     assert quiet.width() == 400 and quiet.height() == 300
@@ -159,7 +169,7 @@ def test_water_ripple() -> None:
     frame = sim.render_upscaled(400, 300)
     assert not frame.isNull()
     assert frame.width() == 400 and frame.height() == 300
-    # Calm corner stays the sharp cover-fit photo; the overlay does not replace it.
+    # Calm corner stays the unshifted sea; refraction only slides cells that have a gradient.
     assert quiet.pixel(6, 6) == frame.pixel(6, 6)
 
     # A large window must still simulate on the small buffer, not the viewport.
@@ -172,7 +182,11 @@ def test_water_ripple() -> None:
     big.disturb(bw_big / 2, bh_big / 2, radius=4, strength=420)
     assert big.active
     big.step()
+    t0 = time.perf_counter()
     active_big = big.render_upscaled(1920, 1080)
+    refract_s = time.perf_counter() - t0
+    # The old full-window / 640-class Python warp was ~200ms+. Block blits stay well under.
+    assert refract_s < 0.15, refract_s
     assert active_big.width() == 1920 and active_big.height() == 1080
     assert quiet_big.pixel(16, 16) == active_big.pixel(16, 16)
     cx, cy = 960, 540
@@ -181,7 +195,7 @@ def test_water_ripple() -> None:
         for dy in range(-48, 49, 8)
         for dx in range(-48, 49, 8)
     )
-    assert changed, "center splash should composite a visible ripple over the photo"
+    assert changed, "center splash should refract a visible ripple in the sea"
 
     # Edge fade helper is safe on a blank buffer.
     blank = QImage(64, 48, QImage.Format.Format_RGB32)

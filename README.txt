@@ -1,7 +1,7 @@
 Desktop Pet
 ==================
 
-Version: 261128.08
+Version: 261128.09
 Published: 2026-11-28
 
 A floating shortcut menu and document record gadget on the Windows desktop.
@@ -59,6 +59,12 @@ Quick Usage
 
 Latest updates (5)
 --------
+261128.09 (2026-11-28)
+1. MAP: ripples are the earlier refractive blocks again (not the blurred
+   ≤220×160 overlay). Sea backdrop is painted at most half the photo
+   (≤688×384) at 80% opacity. Wave physics stays ≤220×160; frames are
+   cell blits, not the slow full-window warp.
+
 261128.08 (2026-11-28)
 1. MAP: cover-fit sea stays sharp. Ripples composite from a small buffer
    (≤220×160) so pan and bubbles stay smooth (the viewport-sized wave pass
@@ -76,10 +82,6 @@ Latest updates (5)
 261128.05 (2026-11-28)
 1. Status marquee: centered gear; inline settings on the bands window;
    display modes 單一全視窗化 / 雙顯視屏貫穿; 文字移動速度; 斜線帶的大小.
-
-261128.04 (2026-11-28)
-1. Status marquee: two independent band texts (文字1／帶一, 文字2／帶二);
-   migrates legacy single ``text`` to both bands; blank-safe text1/text2.
 
 Older release notes are on GitHub Releases.
 
