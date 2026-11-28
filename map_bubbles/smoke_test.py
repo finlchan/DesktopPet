@@ -123,6 +123,8 @@ def test_water_ripple() -> None:
     from map_bubbles.save import make_bubble
     from map_bubbles.scene import MapScene, MapView
     from map_bubbles.water_ripple import (
+        MAX_SIM_H,
+        MAX_SIM_W,
         SEA_SURFACE_OPACITY,
         WaterRippleSim,
         apply_edge_fade,
@@ -157,6 +159,29 @@ def test_water_ripple() -> None:
     frame = sim.render_upscaled(400, 300)
     assert not frame.isNull()
     assert frame.width() == 400 and frame.height() == 300
+    # Calm corner stays the sharp cover-fit photo; the overlay does not replace it.
+    assert quiet.pixel(6, 6) == frame.pixel(6, 6)
+
+    # A large window must still simulate on the small buffer, not the viewport.
+    big = WaterRippleSim()
+    bw_big, bh_big = big.ensure_size(1920, 1080)
+    assert bw_big <= MAX_SIM_W and bh_big <= MAX_SIM_H, (bw_big, bh_big)
+    assert bw_big * bh_big <= MAX_SIM_W * MAX_SIM_H
+    quiet_big = big.render_upscaled(1920, 1080)
+    assert quiet_big.width() == 1920 and quiet_big.height() == 1080
+    big.disturb(bw_big / 2, bh_big / 2, radius=4, strength=420)
+    assert big.active
+    big.step()
+    active_big = big.render_upscaled(1920, 1080)
+    assert active_big.width() == 1920 and active_big.height() == 1080
+    assert quiet_big.pixel(16, 16) == active_big.pixel(16, 16)
+    cx, cy = 960, 540
+    changed = any(
+        quiet_big.pixel(cx + dx, cy + dy) != active_big.pixel(cx + dx, cy + dy)
+        for dy in range(-48, 49, 8)
+        for dx in range(-48, 49, 8)
+    )
+    assert changed, "center splash should composite a visible ripple over the photo"
 
     # Edge fade helper is safe on a blank buffer.
     blank = QImage(64, 48, QImage.Format.Format_RGB32)
