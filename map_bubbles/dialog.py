@@ -6,8 +6,8 @@ import os
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QRect, Qt, QTimer, QUrl
-from PySide6.QtGui import QColor, QCursor, QDesktopServices, QFont, QPainter, QPen
+from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer, QUrl
+from PySide6.QtGui import QColor, QCursor, QDesktopServices, QFont, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QDialog,
     QDoubleSpinBox,
@@ -19,12 +19,14 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from .save import load_map, make_bubble, save_map
 from .scene import BubbleItem, MapScene, MapView
+from .water_ripple import _assets_root
 
 # Thin gold line around the whole MAP UI (single border — no multi-layer frames).
 MAP_GOLD = QColor(201, 168, 76)          # #c9a84c
@@ -34,6 +36,8 @@ MAP_BORDER_PX = 1
 MAP_CORNER_ARM = 18          # 『 』 bracket arm length
 MAP_CORNER_HIT = 22          # resize hit size
 MAP_CHROME_PAD = 8           # inset inside the gold line
+MAP_MOVE_GRIP_SIZE = 26      # top-right window-move grip
+MAP_MOVE_ICON_NAME = "window-move.png"
 
 MAP_FALLBACK_STYLE = """
 QDialog {
@@ -205,6 +209,20 @@ class BubbleEditDialog(QDialog):
         )
 
 
+def _load_window_move_pixmap(side: int = 20) -> QPixmap:
+    """Bundled 4-way arrow glyph for the top-right MAP window-move grip."""
+    path = _assets_root() / MAP_MOVE_ICON_NAME
+    pix = QPixmap(str(path)) if path.is_file() else QPixmap()
+    if pix.isNull():
+        return QPixmap()
+    return pix.scaled(
+        side,
+        side,
+        Qt.AspectRatioMode.KeepAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+
+
 class _CornerResizeGrip(QWidget):
     """Transparent 『 or 』 corner hit target that resizes the MAP window."""
 
@@ -255,6 +273,69 @@ class _CornerResizeGrip(QWidget):
             event.accept()
 
 
+class _WindowMoveGrip(QToolButton):
+    """Top-right 4-way arrow grip — drag moves the whole MAP window."""
+
+    def __init__(self, window: QDialog, parent=None):
+        super().__init__(parent)
+        self._window = window
+        self._drag_offset: QPoint | None = None
+        self.setObjectName("mapWindowMoveGrip")
+        self.setFixedSize(MAP_MOVE_GRIP_SIZE, MAP_MOVE_GRIP_SIZE)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setCursor(QCursor(Qt.CursorShape.SizeAllCursor))
+        self.setToolTip("Drag to move MAP window")
+        self.setAutoRaise(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        icon_side = max(16, MAP_MOVE_GRIP_SIZE - 6)
+        pix = _load_window_move_pixmap(icon_side)
+        if not pix.isNull():
+            self.setIcon(QIcon(pix))
+            self.setIconSize(QSize(icon_side, icon_side))
+        else:
+            self.setText("✥")
+        self.setStyleSheet(
+            "QToolButton#mapWindowMoveGrip {"
+            "  background: rgba(20, 32, 48, 100);"
+            "  border: 1px solid rgba(201, 168, 76, 140);"
+            "  border-radius: 3px;"
+            "  padding: 1px;"
+            "}"
+            "QToolButton#mapWindowMoveGrip:hover {"
+            "  background: rgba(40, 58, 78, 180);"
+            "  border: 1px solid rgba(232, 212, 139, 200);"
+            "}"
+            "QToolButton#mapWindowMoveGrip:pressed {"
+            "  background: rgba(201, 168, 76, 160);"
+            "}"
+        )
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if event.button() != Qt.MouseButton.LeftButton:
+            super().mousePressEvent(event)
+            return
+        self._drag_offset = (
+            event.globalPosition().toPoint() - self._window.frameGeometry().topLeft()
+        )
+        self.grabMouse()
+        event.accept()
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        if self._drag_offset is None:
+            super().mouseMoveEvent(event)
+            return
+        self._window.move(event.globalPosition().toPoint() - self._drag_offset)
+        event.accept()
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton and self._drag_offset is not None:
+            self._drag_offset = None
+            self.releaseMouse()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+
 class MapGoldShell(QWidget):
     """One thin gold border + 『 / 』 corner brackets that resize the MAP window."""
 
@@ -279,11 +360,13 @@ class MapGoldShell(QWidget):
         self.content.setAutoFillBackground(False)
         inner.addWidget(self.content)
 
-        # Raised above content so corner hits are never covered by the sea view.
+        # Raised above content so corner hits / move grip are never covered by the sea view.
         self._grip_tl = _CornerResizeGrip(window, "tl", self)
         self._grip_br = _CornerResizeGrip(window, "br", self)
+        self._move_grip = _WindowMoveGrip(window, self)
         self._grip_tl.raise_()
         self._grip_br.raise_()
+        self._move_grip.raise_()
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
@@ -291,8 +374,15 @@ class MapGoldShell(QWidget):
         self._grip_br.move(
             self.width() - MAP_CORNER_HIT, self.height() - MAP_CORNER_HIT
         )
+        # Top-right inside the gold frame (clear of 『 TL / 』 BR resize brackets).
+        inset = max(4, MAP_CHROME_PAD - 2)
+        self._move_grip.move(
+            self.width() - inset - MAP_MOVE_GRIP_SIZE,
+            inset,
+        )
         self._grip_tl.raise_()
         self._grip_br.raise_()
+        self._move_grip.raise_()
 
     def _border_band_hit(self, pos: QPoint) -> bool:
         t = MAP_CHROME_PAD
@@ -378,7 +468,8 @@ class MapDialog(QDialog):
     """MAP: interconnected bubbles for topic / local path / website.
 
     One composition: sea water + title/toolbar chrome inside a single gold border.
-    『 / 』 corner brackets resize the window; empty-canvas drag pans the view.
+    『 / 』 corner brackets resize; top-right 4-way grip (or gold border) moves the window;
+    empty-canvas drag pans the view.
     """
 
     def __init__(self, config_manager, parent=None):
@@ -454,8 +545,8 @@ class MapDialog(QDialog):
         top_col.addLayout(bar)
 
         self.status = QLabel(
-            "Pan empty space · Wheel zoom · 『』 corners resize · "
-            "Drag bubbles · Double-click open · Edit · Connect"
+            "Pan empty space · Wheel zoom · 『』 resize · "
+            "Top-right ↕↔ moves window · Drag bubbles · Double-click open · Connect"
         )
         self.status.setObjectName("mapStatus")
         self.status.setWordWrap(True)
@@ -572,8 +663,8 @@ class MapDialog(QDialog):
         else:
             self.view.setDragMode(self.view.DragMode.ScrollHandDrag)
             self.status.setText(
-                "Pan empty space · Wheel zoom · 『』 corners resize · "
-                "Drag bubbles · Double-click open · Edit · Connect"
+                "Pan empty space · Wheel zoom · 『』 resize · "
+                "Top-right ↕↔ moves window · Drag bubbles · Double-click open · Connect"
             )
 
     def _edit_selected(self) -> None:
