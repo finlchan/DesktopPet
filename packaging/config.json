@@ -39,5 +39,13 @@
   "map_bubbles": {
     "bubbles": [],
     "edges": []
+  },
+  "status_marquee": {
+    "text": "",
+    "color_key": "",
+    "pos_x": null,
+    "pos_y": null,
+    "width": null,
+    "height": null
   }
 }

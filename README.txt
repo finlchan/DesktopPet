@@ -1,8 +1,8 @@
 Desktop Pet
 ==================
 
-Version: 261122.01
-Published: 2026-11-22
+Version: 261128.03
+Published: 2026-11-28
 
 A floating shortcut menu and document record gadget on the Windows desktop.
 
@@ -29,7 +29,7 @@ Features
    drag / connect / edit / open path or URL; saved in config map_bubbles
    (blank in packaging).
 6. Mini Programs 副程式 — Text records; Calculations; Pomodoro; Translate;
-   箱庭島（未完成）／Hakoniwa (WIP); 透明魚缸（未完成）／Fish Tank (WIP).
+   箱庭島（未完成）／Hakoniwa (WIP); 桌面跑馬燈／視窗跑馬燈 (status marquee).
    Panel ambient: Particle Network.
 7. Calculations — Level calc, Slope calc, Free station (resection IMPORT +
    pair Prelim/Mirror/Reject/Use mirror; BS4 left blank for manual entry),
@@ -38,8 +38,9 @@ Features
 8. Pomodoro — Now / Target / Countdown, duration presets and End-at mode.
 9. Translate — auto-detect source; EN / 繁中 / 简中 / 日本語 / 한국어 /
    Français / Deutsch / Español (public web endpoint; no API key).
-10. 箱庭島／Hakoniwa (WIP) and 透明魚缸／Fish Tank (WIP) — entries kept and
-    marked unfinished.
+10. 箱庭島／Hakoniwa (WIP) — entry kept and marked unfinished.
+    桌面跑馬燈／視窗跑馬燈 — always-on-top Diagonal Text Bands status window
+    (text / theme color / close via top-right gear; blank-safe status_marquee).
 11. Settings — pet image, shortcuts, document folders, text records, window
     level (Normal / Always on top / Always on bottom), Start with Windows.
 12. Remembers pet position across monitors and resolution changes.
@@ -57,6 +58,11 @@ Quick Usage
 
 Latest updates (5)
 --------
+261128.03 (2026-11-28)
+1. Removed Transparent Fish Tank（透明魚缸）from Mini Programs and the repo.
+2. Added 桌面跑馬燈／視窗跑馬燈 — always-on-top Diagonal Text Bands status
+   marquee (theme steel-blue/gold; blank-safe status_marquee config).
+
 261119.01 (2026-11-19)
 1. MAP: home Social Icon Fill button (right of Document Record); bubble
    window with topic / path / URL; connect / drag / persist blank-safe
@@ -73,10 +79,6 @@ Latest updates (5)
 261106.05 (2026-11-06)
 1. Alignment(1) 大量運算: right-hand Output is chainage, signed plan offset,
    and diff level (not chainage-only).
-
-261106.04 (2026-11-06)
-1. Alignment(2) Output Excel: CHAINAGE / E / N / LEVEL plus LHS/RHS E·N·Lv
-   columns from vertical + crossfall.
 
 Older release notes are on GitHub Releases.
 
