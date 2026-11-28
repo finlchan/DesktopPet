@@ -1,13 +1,14 @@
-"""Classic dual height-buffer water ripple (low-res sim → UV-offset sample → composite).
+"""Classic dual height-buffer water ripple (low-res sim → block refraction).
 
 Algorithm per cell:
     next = (avg(left, right, up, down) * 2 - prev) * damping
 
-The sea photo is cover-fitted once into a viewport-sized backdrop
-(KeepAspectRatioByExpanding + center) so calm water stays sharp. Ripple physics
-and the refraction overlay stay on a small buffer (≤ MAX_SIM_W × MAX_SIM_H).
-That overlay is composited over the backdrop — the per-frame wave pass does not
-run at viewport resolution. Edge fade is baked into the backdrop.
+The sea photo is cover-fitted, painted into a buffer at most half the photo
+(≤688×384 for the bundled 1376×768 file), then smooth-scaled to the window at
+80% opacity. Ripple physics stay on a small height field (≤ MAX_SIM_W ×
+MAX_SIM_H). Each active cell slides its patch of that sea with one blit — the
+pre-composite refractive look — instead of a Python loop over a 640-class or
+full-window warp, and instead of the soft ≤220×160 alpha overlay.
 """
 from __future__ import annotations
 
@@ -26,23 +27,22 @@ WATER_MID = QColor(36, 58, 82)
 WATER_EDGE = QColor(14, 22, 32)  # vignette target (soft outer fade)
 
 DEFAULT_DAMPING = 0.965
-# Ripple physics + refraction overlay. Same cap as the pre-regression stamp
-# (≤220×160). Do not size this to the viewport — a full-window Python warp
-# stalls pan and bubble interaction.
+# Height-field resolution. The refractive *look* is the block slide of the sea,
+# not this grid blown up as a blurred overlay. Do not run a per-pixel Python
+# warp at the window size — that was the ~210ms frame stall.
 MAX_SIM_W = 220
 MAX_SIM_H = 160
 MIN_SCALE = 3
-# Viewport-pixel shift below this leaves the sharp backdrop untouched.
-RIPPLE_ALPHA_MIN = 0.35
-# Alpha reaches opaque around this many viewport pixels of refraction.
-RIPPLE_ALPHA_SPAN = 7.0
 
 # Soft fade band as a fraction of the shorter viewport side (all four edges).
 EDGE_FADE_FRAC = 0.18
 
 # User-provided ocean photo (bundled). Drawn at SEA_SURFACE_OPACITY over the pool underlay.
+# Painted sea is cover-fit into a buffer at most 1/SEA_DISPLAY_DIVISOR of the
+# photo on each axis, then smooth-scaled to the window. The file is not rewritten.
 SEA_SURFACE_NAME = "sea-surface.jpg"
-SEA_SURFACE_OPACITY = 0.60
+SEA_SURFACE_OPACITY = 0.80
+SEA_DISPLAY_DIVISOR = 2
 
 
 def _assets_root() -> Path:
@@ -63,7 +63,8 @@ def load_sea_surface() -> Optional[QImage]:
     """Load the bundled ocean photo (RGB32). Cached once per process.
 
     Prefers ``sea-surface.jpg``; falls back to legacy ``sea-surface.png``.
-    Does not downsample or crop the file on disk — callers cover-fit at draw time.
+    Does not downsample or crop the file on disk — callers lower the painted
+    buffer (see ``sea_paint_size``) and cover-fit at draw time.
     """
     root = _assets_root()
     for name in (SEA_SURFACE_NAME, "sea-surface.png"):
@@ -95,8 +96,23 @@ def cover_fit_rect(
     return scale, ox, oy, 0.0
 
 
+def sea_paint_size(view_w: int, view_h: int, src_w: int, src_h: int) -> Tuple[int, int]:
+    """Size of the lowered sea buffer for a viewport (aspect preserved).
+
+    Caps each axis at ``src // SEA_DISPLAY_DIVISOR`` (half the bundled photo).
+    A window already inside that cap is painted at window size.
+    """
+    vw, vh = max(1, int(view_w)), max(1, int(view_h))
+    cap_w = max(8, int(src_w) // SEA_DISPLAY_DIVISOR)
+    cap_h = max(8, int(src_h) // SEA_DISPLAY_DIVISOR)
+    if vw <= cap_w and vh <= cap_h:
+        return vw, vh
+    scale = min(cap_w / float(vw), cap_h / float(vh))
+    return max(8, int(vw * scale)), max(8, int(vh * scale))
+
+
 def paint_cover_sea(target: QImage, sea: Optional[QImage] = None) -> None:
-    """Fill ``target`` with steel-blue underlay + cover-fitted sea at 60% opacity."""
+    """Fill ``target`` with steel-blue underlay + cover-fitted sea at 80% opacity."""
     if target is None or target.isNull():
         return
     tw, th = target.width(), target.height()
@@ -181,7 +197,7 @@ def apply_edge_fade(img: QImage, fade_frac: float = EDGE_FADE_FRAC) -> None:
 
 
 class WaterRippleSim:
-    """Low-resolution dual-buffer ripple field composited over a sharp cover-fit frame."""
+    """Low-resolution height field; refractive block slide of the lowered sea."""
 
     def __init__(self, damping: float = DEFAULT_DAMPING):
         self.damping = float(damping)
@@ -192,11 +208,9 @@ class WaterRippleSim:
         self._backdrop: Optional[QImage] = None  # low-res stamp for quiet energy checks
         self._frame: Optional[QImage] = None
         self._active = False  # True while energy remains (skip work when quiet)
-        self._view_base: Optional[QImage] = None
+        self._view_base: Optional[QImage] = None  # faded, returned when calm
+        self._view_src: Optional[QImage] = None  # same sea, no vignette (sample source)
         self._view_base_size: Tuple[int, int] = (0, 0)
-        # Filtered downscale of the viewport cover-fit (same crop, sim-sized).
-        self._ripple_src: Optional[QImage] = None
-        self._layer: Optional[QImage] = None  # small ARGB refraction overlay
 
     def ensure_size(self, view_w: int, view_h: int) -> Tuple[int, int]:
         """Size the sim from the viewport; returns (sim_w, sim_h)."""
@@ -217,9 +231,8 @@ class WaterRippleSim:
         self._frame = QImage(bw, bh, QImage.Format.Format_RGB32)
         self._active = False
         self._view_base = None
+        self._view_src = None
         self._view_base_size = (0, 0)
-        self._ripple_src = None
-        self._layer = None
         self.paint_base_water()
         return self.w, self.h
 
@@ -231,11 +244,11 @@ class WaterRippleSim:
         paint_cover_sea(img)
         # Viewport base is rebuilt lazily in render_upscaled.
         self._view_base = None
+        self._view_src = None
         self._view_base_size = (0, 0)
-        self._ripple_src = None
 
     def _ensure_view_base(self, view_w: int, view_h: int) -> QImage:
-        """Full-viewport cover-fit of the original sea (cached; fade baked once)."""
+        """Lower-res cover-fit sea, smooth-scaled to the viewport (fade baked once)."""
         vw, vh = max(1, int(view_w)), max(1, int(view_h))
         if (
             self._view_base is not None
@@ -243,23 +256,28 @@ class WaterRippleSim:
             and self._view_base_size == (vw, vh)
         ):
             return self._view_base
-        base = QImage(vw, vh, QImage.Format.Format_RGB32)
-        paint_cover_sea(base)
-        apply_edge_fade(base)
-        self._view_base = base
-        self._view_base_size = (vw, vh)
-        # Same crop as the sharp photo, filtered down to the sim grid so the
-        # overlay lines up and does not point-sample foam into blocks.
-        if self.w >= 2 and self.h >= 2:
-            self._ripple_src = base.scaled(
-                self.w,
-                self.h,
+        sea = load_sea_surface()
+        if sea is not None and not sea.isNull():
+            bw, bh = sea_paint_size(vw, vh, sea.width(), sea.height())
+        else:
+            bw, bh = vw, vh
+        small = QImage(bw, bh, QImage.Format.Format_RGB32)
+        paint_cover_sea(small, sea)
+        if bw == vw and bh == vh:
+            src = small
+        else:
+            src = small.scaled(
+                vw,
+                vh,
                 Qt.AspectRatioMode.IgnoreAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
-        else:
-            self._ripple_src = None
-        return base
+        faded = src.copy()
+        apply_edge_fade(faded)
+        self._view_src = src
+        self._view_base = faded
+        self._view_base_size = (vw, vh)
+        return faded
 
     def disturb(
         self,
@@ -384,133 +402,107 @@ class WaterRippleSim:
                 dst_buf[d_off : d_off + 4] = src_buf[s_off : s_off + 4]
         return dst
 
-    def _build_ripple_layer(self, view_w: int, view_h: int) -> QImage:
-        """Small ARGB overlay. Alpha is 0 where the height field is flat.
+    def _refract_blocks(self, src: QImage) -> QImage:
+        """Slide each height-field cell's sea patch (nearest-neighbor refraction).
 
-        Samples the filtered sim-sized cover-fit (same crop as the sharp photo).
-        Calm texels stay transparent so the full-resolution backdrop shows
-        through. Loop cost tracks the sim buffer, not the viewport.
+        In-bounds cells are one Qt blit. Cells that would read past the edge
+        copy clamped pixels. Flat cells stay the unshifted sea. This is the
+        same block refraction as the old 640-class warp, without a Python
+        loop over every output pixel.
         """
-        self._ensure_view_base(view_w, view_h)
-        src = self._ripple_src
+        vw, vh = src.width(), src.height()
+        out = src.copy()
         sw, sh = self.w, self.h
-        if src is None or src.isNull() or src.width() != sw or src.height() != sh:
-            # No filtered source yet — return an empty overlay.
-            layer = QImage(max(1, sw), max(1, sh), QImage.Format.Format_ARGB32)
-            layer.fill(0)
-            return layer
-        vw = max(1, int(view_w))
-        vh = max(1, int(view_h))
-        layer = self._layer
-        if layer is None or layer.width() != sw or layer.height() != sh:
-            layer = QImage(sw, sh, QImage.Format.Format_ARGB32)
-            self._layer = layer
-        layer.fill(0)
+        if sw < 3 or sh < 3 or vw < 2 or vh < 2:
+            return out
         curr = self._curr
-        src_bpl = src.bytesPerLine()
-        dst_bpl = layer.bytesPerLine()
-        src_buf = memoryview(src.constBits()).cast("B")
-        dst_buf = memoryview(layer.bits()).cast("B")
-        dx_to_view = vw / max(1, sw)
-        dy_to_view = vh / max(1, sh)
-        band = max(2.0, min(sw, sh) * EDGE_FADE_FRAC)
-        alpha_span = RIPPLE_ALPHA_SPAN
-        alpha_min = RIPPLE_ALPHA_MIN
-        max_x = sw - 1
-        max_y = sh - 1
-        for y in range(1, sh - 1):
-            row = y * sw
+        xscale = vw / float(sw)
+        yscale = vh / float(sh)
+        gain = 0.08
+        painter = QPainter(out)
+        clipped: list = []
+        for syi in range(1, sh - 1):
+            row = syi * sw
             row_u = row - sw
             row_d = row + sw
-            dst_row = y * dst_bpl
-            edge_y = min(y, sh - 1 - y) / band
-            for x in range(1, sw - 1):
-                i = row + x
-                dxs = (curr[i + 1] - curr[i - 1]) * 0.08
-                dys = (curr[row_d + x] - curr[row_u + x]) * 0.08
-                mag = abs(dxs) * dx_to_view + abs(dys) * dy_to_view
-                if mag < alpha_min:
+            y0 = syi * vh // sh
+            y1 = (syi + 1) * vh // sh
+            th = y1 - y0
+            if th <= 0:
+                continue
+            for sxi in range(1, sw - 1):
+                i = row + sxi
+                dx = int((curr[i + 1] - curr[i - 1]) * gain * xscale)
+                dy = int((curr[row_d + sxi] - curr[row_u + sxi]) * gain * yscale)
+                if dx == 0 and dy == 0:
                     continue
-                edge = min(edge_y, min(x, sw - 1 - x) / band)
-                if edge <= 0.0:
+                x0 = sxi * vw // sw
+                x1 = (sxi + 1) * vw // sw
+                tw = x1 - x0
+                if tw <= 0:
                     continue
-                if edge > 1.0:
-                    edge = 1.0
-                sx = x + dxs
-                sy = y + dys
-                if sx < 0.0:
-                    sx = 0.0
-                elif sx > max_x:
-                    sx = float(max_x)
-                if sy < 0.0:
-                    sy = 0.0
-                elif sy > max_y:
-                    sy = float(max_y)
-                x0 = int(sx)
-                y0 = int(sy)
-                x1 = x0 + 1 if x0 < max_x else x0
-                y1 = y0 + 1 if y0 < max_y else y0
-                tx = sx - x0
-                ty = sy - y0
-                o00 = y0 * src_bpl + x0 * 4
-                o10 = y0 * src_bpl + x1 * 4
-                o01 = y1 * src_bpl + x0 * 4
-                o11 = y1 * src_bpl + x1 * 4
-                alpha = mag / alpha_span * 255.0 * edge
-                if alpha > 255.0:
-                    alpha = 255.0
-                d_off = dst_row + x * 4
-                for k in range(3):
-                    c00 = src_buf[o00 + k]
-                    c10 = src_buf[o10 + k]
-                    c01 = src_buf[o01 + k]
-                    c11 = src_buf[o11 + k]
-                    top = c00 + (c10 - c00) * tx
-                    bot = c01 + (c11 - c01) * tx
-                    dst_buf[d_off + k] = int(top + (bot - top) * ty)
-                dst_buf[d_off + 3] = int(alpha)
-        return layer
-
-    @staticmethod
-    def _soften_layer(layer: QImage) -> QImage:
-        """Hide the sim-cell grid with a cheap smooth downsample/upsample."""
-        w, h = layer.width(), layer.height()
-        if w < 4 or h < 4:
-            return layer
-        half = layer.scaled(
-            max(2, w // 2),
-            max(2, h // 2),
-            Qt.AspectRatioMode.IgnoreAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        return half.scaled(
-            w,
-            h,
-            Qt.AspectRatioMode.IgnoreAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
+                if (
+                    x0 + dx >= 0
+                    and y0 + dy >= 0
+                    and x1 - 1 + dx < vw
+                    and y1 - 1 + dy < vh
+                ):
+                    painter.drawImage(x0, y0, src, x0 + dx, y0 + dy, tw, th)
+                else:
+                    clipped.append((x0, y0, tw, th, dx, dy))
+        painter.end()
+        if clipped:
+            _blit_clamped_cells(src, out, clipped)
+        return out
 
     def render_upscaled(self, view_w: int, view_h: int) -> QImage:
-        """Sharp cover-fit backdrop, with the small ripple buffer composited on top.
+        """Lower-res sea at the window, with refractive blocks while waves are active.
 
         Quiet frames return the cached backdrop (edge fade already baked).
-        Active frames copy it and draw the softened sim-sized overlay scaled
-        up — they do not refract every viewport pixel.
+        Active frames slide sea patches from the height field, then re-apply
+        the screen-fixed edge fade. They do not run a per-pixel Python warp.
         """
         vw = max(1, int(view_w))
         vh = max(1, int(view_h))
         base = self._ensure_view_base(vw, vh)
         if not (self._active and self.w >= 3 and self.h >= 3):
             return base
-        layer = self._soften_layer(self._build_ripple_layer(vw, vh))
-        scaled = layer.scaled(
-            vw,
-            vh,
-            Qt.AspectRatioMode.IgnoreAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        out = base.copy()
-        painter = QPainter(out)
-        painter.drawImage(0, 0, scaled)
-        painter.end()
+        src = self._view_src if self._view_src is not None else base
+        out = self._refract_blocks(src)
+        apply_edge_fade(out)
         return out
+
+
+def _blit_clamped_cells(src: QImage, dst: QImage, cells) -> None:
+    """Copy shifted cells that cross the image edge, clamping the sample."""
+    vw, vh = src.width(), src.height()
+    src_bpl = src.bytesPerLine()
+    dst_bpl = dst.bytesPerLine()
+    sb = memoryview(src.constBits()).cast("B")
+    db = memoryview(dst.bits()).cast("B")
+    max_x = vw - 1
+    max_y = vh - 1
+    for x0, y0, tw, th, dx, dy in cells:
+        for y in range(y0, y0 + th):
+            sy = y + dy
+            if sy < 0:
+                sy = 0
+            elif sy > max_y:
+                sy = max_y
+            dst_row = y * dst_bpl + x0 * 4
+            sx = x0 + dx
+            if 0 <= sx and sx + tw <= vw:
+                s_off = sy * src_bpl + sx * 4
+                span = tw * 4
+                db[dst_row : dst_row + span] = sb[s_off : s_off + span]
+            else:
+                d = dst_row
+                for x in range(x0, x0 + tw):
+                    sxx = x + dx
+                    if sxx < 0:
+                        sxx = 0
+                    elif sxx > max_x:
+                        sxx = max_x
+                    s_off = sy * src_bpl + sxx * 4
+                    db[d : d + 4] = sb[s_off : s_off + 4]
+                    d += 4

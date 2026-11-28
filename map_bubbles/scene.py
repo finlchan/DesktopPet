@@ -551,9 +551,9 @@ class MapView(QGraphicsView):
         dirty = self._backdrop_dirty
         if dirty:
             self._rebuild_backdrop()
-        # Always step so damping settles. Skip the composite when the field is
-        # already quiet and the sharp backdrop is cached. One extra frame after
-        # the field goes flat drops the overlay so it does not freeze in place.
+        # Always step so damping settles. Skip the refraction blit when the field
+        # is already quiet and the sea backdrop is cached. One extra frame after
+        # the field goes flat drops the warped frame so it does not freeze.
         active = self._ripple.step()
         if active or self._cached_frame is None or dirty or self._ripple_painted:
             self._cached_frame = self._ripple.render_upscaled(vw, vh)
