@@ -223,6 +223,23 @@ def test_fill_opacity_and_pan_chrome() -> None:
     assert dlg.view.parent() is dlg._body
     assert dlg._gold._grip_tl is not None
     assert dlg._gold._grip_br is not None
+    assert dlg._gold._move_grip is not None
+    from map_bubbles.dialog import MAP_MOVE_ICON_NAME, _load_window_move_pixmap
+    from map_bubbles.water_ripple import _assets_root
+
+    icon_path = _assets_root() / MAP_MOVE_ICON_NAME
+    assert icon_path.is_file(), f"missing MAP move icon: {icon_path}"
+    pix = _load_window_move_pixmap(20)
+    assert not pix.isNull()
+    assert not dlg._gold._move_grip.icon().isNull()
+    dlg.resize(700, 500)
+    dlg.show()
+    app.processEvents()
+    # Top-right placement inside the gold frame.
+    mg = dlg._gold._move_grip
+    assert mg.x() > dlg._gold.width() // 2
+    assert mg.y() < 40
+    dlg.hide()
     # Open path/URL toolbar button removed — double-click / Enter open instead.
     assert not hasattr(dlg, "btn_activate")
     assert dlg.btn_edit is not None
