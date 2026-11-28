@@ -465,6 +465,7 @@ class MapView(QGraphicsView):
         self._last_drip: Optional[QPointF] = None
         self._cached_frame = None  # QImage | None
         self._backdrop_dirty = True
+        self._ripple_painted = False  # last frame drew the refraction overlay
         # Manual empty-space pan (ScrollHandDrag + AlwaysOff bars can be flaky;
         # we also track pan ourselves when the press is not on a bubble).
         self._panning = False
@@ -547,13 +548,16 @@ class MapView(QGraphicsView):
         vw = max(1, self.viewport().width())
         vh = max(1, self.viewport().height())
         self._ripple.ensure_size(vw, vh)
-        if self._backdrop_dirty:
+        dirty = self._backdrop_dirty
+        if dirty:
             self._rebuild_backdrop()
-        # Always step a little so damping settles; skip refract when bone-dry
-        # only after we have a cached frame.
+        # Always step so damping settles. Skip the composite when the field is
+        # already quiet and the sharp backdrop is cached. One extra frame after
+        # the field goes flat drops the overlay so it does not freeze in place.
         active = self._ripple.step()
-        if active or self._cached_frame is None or self._backdrop_dirty:
+        if active or self._cached_frame is None or dirty or self._ripple_painted:
             self._cached_frame = self._ripple.render_upscaled(vw, vh)
+            self._ripple_painted = active
             self.viewport().update()
 
     # --- painting -------------------------------------------------------
